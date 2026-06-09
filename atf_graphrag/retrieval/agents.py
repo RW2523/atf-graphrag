@@ -204,16 +204,36 @@ class CorpusSelectionAgent:
     def select(self, plan: QueryPlan, engine: Engine) -> List[str]:
         q = plan.question.lower()
         available = [c for c in engine.corpora if engine.vstore(c).count() > 0]
+
+        # 1) Explicit programmatic isolation: the API/UI can pin one or more
+        #    corpuses via plan.filters["corpus"]. Honoured verbatim (intersected
+        #    with what's available) — this is how a caller queries in isolation.
+        explicit = plan.filters.get("corpus")
+        if explicit:
+            req = [explicit] if isinstance(explicit, str) else list(explicit)
+            scoped = [c for c in req if c in available]
+            return scoped or req
+
         if plan.intent == "multi" or not available:
             return available or list(engine.corpora)
+
         chosen = []
+        # 2) Explicit corpus name mentioned in the question ("the web corpus",
+        #    "pdf documents", "visual data") scopes retrieval to that corpus.
+        for name in engine.corpora:
+            if f"{name} corpus" in q or f"{name} documents" in q:
+                chosen.append(name)
+        # 3) Heuristic routing by topic words.
         if any(w in q for w in ("website", "web ", "site", "online", "url")):
             chosen.append("web")
         if any(w in q for w in VISUAL_WORDS) or plan.intent == "visual":
             chosen.append("visual")
         if "collection" in q or "across documents" in q:
             chosen.append("connected")
-        chosen = [c for c in chosen if c in available]
+        # De-dup, keep order, intersect with available.
+        seen = set()
+        chosen = [c for c in chosen if c in available
+                  and not (c in seen or seen.add(c))]
         return chosen or available
 
 
