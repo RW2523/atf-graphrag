@@ -110,7 +110,9 @@ DEFAULTS: Dict[str, Any] = {
     "corpora": ["pdf", "web", "connected", "visual"],
 
     # ---- API server -------------------------------------------------------
-    "server": {"host": "127.0.0.1", "port": 8077},
+    # auth_token: empty = open (local dev). Set it (or env ATF_API_TOKEN) to
+    # require "Authorization: Bearer <token>" on POST endpoints before deploy.
+    "server": {"host": "127.0.0.1", "port": 8077, "auth_token": ""},
 }
 
 
