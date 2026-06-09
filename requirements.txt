@@ -7,6 +7,14 @@ numpy>=1.24
 # PDF parsing (required only to ingest .pdf files)
 pypdf>=3.17
 
+# Advanced PDF ingestion: layout-aware text (PyMuPDF sort=True) + table detection.
+# Used by ingestion/advanced_loader.py; falls back to pypdf if absent.
+pymupdf>=1.24
+pdfplumber>=0.11
+
+# Local neural embeddings (default embedder). Falls back to LocalEmbedder if absent.
+sentence-transformers>=2.7
+
 # Faster HTTP (optional; stdlib urllib is used if absent)
 requests>=2.31
 
