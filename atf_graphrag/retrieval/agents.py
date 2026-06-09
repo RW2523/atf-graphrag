@@ -575,6 +575,15 @@ class RerankingAgent:
             h.rerank_score = round(0.7 * (h.eval_score or 0) + 0.3 * coverage + ctype_bonus, 4)
         if rcfg["provider"] == "llm" and engine.llm.name != "offline":
             self._llm_rerank(plan, hits, engine)
+
+        # Provider reranker (e.g. cross-encoder BGEReranker). Returns a reordered
+        # list to override the linear blend, or None to keep it (local/llm).
+        reranker = getattr(engine, "reranker", None)
+        if reranker is not None:
+            reordered = reranker.rerank(plan.question, hits)
+            if reordered is not None:
+                return reordered[:plan.top_k]
+
         hits.sort(key=lambda h: (-(h.rerank_score or 0), h.chunk.chunk_id))
         return hits[:plan.top_k]
 
