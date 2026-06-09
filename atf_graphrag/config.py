@@ -113,6 +113,16 @@ DEFAULTS: Dict[str, Any] = {
             "max_cluster_size": 10,
             "min_community_size": 3,
         },
+        # Noise pruning (Phase A): drop weak, untyped edges between obscure nodes
+        # before clustering/traversal so communities tighten and context stays clean.
+        "prune": {
+            "enabled": False,
+            "min_edge_weight": 2,      # weight < this is "weak"
+            "min_degree": 2,           # both endpoints below this are "obscure"
+            "keep_typed": True,        # never prune evidence-backed typed edges
+            "drop_hub_percentile": 0,  # >0 drops top-X% highest-degree super-nodes
+                                       # before clustering (splits co-occ hairball)
+        },
     },
 
     # ---- Corpuses ---------------------------------------------------------

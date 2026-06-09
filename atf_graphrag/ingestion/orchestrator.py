@@ -215,11 +215,13 @@ class IngestionOrchestrator:
         (also persisted to storage/graph/communities.json). No-op result when
         disabled or the graph is too small.
         """
-        ccfg = (self.e.settings.get("graph", {}) or {}).get("communities", {}) or {}
+        gcfg = self.e.settings.get("graph", {}) or {}
+        ccfg = gcfg.get("communities", {}) or {}
         if not force and not ccfg.get("enabled", False):
             return {}
         from ..graph.communities import build_and_persist
-        return build_and_persist(self.e.graph, llm=self.e.llm, cfg=ccfg)
+        return build_and_persist(self.e.graph, llm=self.e.llm, cfg=ccfg,
+                                 prune_cfg=gcfg.get("prune", {}))
 
     # ---- public API -------------------------------------------------------
     def ingest(self, source: str, corpus: Optional[str] = None,

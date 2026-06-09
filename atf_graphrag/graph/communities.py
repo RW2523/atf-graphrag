@@ -36,29 +36,23 @@ def _members_key(members: List[str]) -> str:
 
 class CommunityBuilder:
     def __init__(self, graph_store, llm=None, max_cluster_size: int = 10,
-                 min_community_size: int = 3, cache_dir: Optional[str] = None):
+                 min_community_size: int = 3, cache_dir: Optional[str] = None,
+                 prune_cfg: Optional[Dict] = None):
         self.g = graph_store
         self.llm = llm
         self.max_cluster_size = max_cluster_size
         self.min_community_size = min_community_size
+        self.prune_cfg = prune_cfg or {}      # graph.prune config (Phase A)
         root = cache_dir or os.path.dirname(getattr(graph_store, "file", "") or ".")
         self.cache_path = os.path.join(root or ".", "community_cache.json")
         self.out_path = os.path.join(root or ".", "communities.json")
         self._cache: Dict[str, str] = self._load_cache()
         self.llm_calls = 0      # observability: how many summaries were generated
 
-    # ---- graph -> networkx --------------------------------------------------
+    # ---- graph -> networkx (with Phase-A pruning) ---------------------------
     def _to_nx(self):
-        G = nx.Graph()
-        for key in self.g.nodes:
-            G.add_node(key)
-        for (s, d), e in self.g.edges.items():
-            w = float(e.get("weight", 1)) * (_TYPED_EDGE_BOOST if e.get("typed") else 1.0)
-            if G.has_edge(s, d):
-                G[s][d]["weight"] += w
-            else:
-                G.add_edge(s, d, weight=w)
-        return G
+        from .pruning import build_nx
+        return build_nx(self.g, self.prune_cfg, typed_boost=_TYPED_EDGE_BOOST)
 
     # ---- detection ----------------------------------------------------------
     def detect(self) -> Dict[int, List[str]]:
@@ -219,14 +213,26 @@ class CommunityStore:
         return [c for _, c in scored[:top_k]]
 
 
-def build_and_persist(graph_store, llm=None, cfg: Optional[Dict] = None
-                      ) -> Dict[str, Any]:
+def community_stats(communities: Dict[str, Any]) -> Dict[str, Any]:
+    """Tightness metrics for a community map (lower avg/max size = tighter)."""
+    sizes = sorted((c["member_count"] for c in communities.values()), reverse=True)
+    if not sizes:
+        return {"n": 0, "avg_size": 0, "max_size": 0, "p90_size": 0}
+    return {"n": len(sizes),
+            "avg_size": round(sum(sizes) / len(sizes), 1),
+            "max_size": sizes[0],
+            "p90_size": sizes[min(len(sizes) - 1, int(len(sizes) * 0.1))]}
+
+
+def build_and_persist(graph_store, llm=None, cfg: Optional[Dict] = None,
+                      prune_cfg: Optional[Dict] = None) -> Dict[str, Any]:
     """Convenience entry used by the ingestion orchestrator post-index step."""
     cfg = cfg or {}
     b = CommunityBuilder(
         graph_store, llm=llm,
         max_cluster_size=cfg.get("max_cluster_size", 10),
-        min_community_size=cfg.get("min_community_size", 3))
+        min_community_size=cfg.get("min_community_size", 3),
+        prune_cfg=prune_cfg or {})
     comms = b.build()
     b.persist(comms)
     return comms
