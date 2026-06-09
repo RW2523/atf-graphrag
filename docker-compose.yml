@@ -1,0 +1,28 @@
+# Optional stack for the hybrid profile (app + Neo4j).
+# Local profile needs none of this — `python -m atf_graphrag serve` is enough.
+services:
+  app:
+    build: .
+    ports:
+      - "8077:8077"
+    environment:
+      - ATF_PROFILE=${ATF_PROFILE:-local}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=testpassword
+    depends_on:
+      - neo4j
+
+  neo4j:
+    image: neo4j:5
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/testpassword
+    volumes:
+      - neo4j_data:/data
+
+volumes:
+  neo4j_data:

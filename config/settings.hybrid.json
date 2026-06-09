@@ -1,0 +1,10 @@
+{
+  "profile": "hybrid",
+  "llm": {"provider": "openrouter", "model": "anthropic/claude-3.5-sonnet"},
+  "vision": {"provider": "openrouter", "model": "anthropic/claude-3.5-sonnet"},
+  "embeddings": {"provider": "openrouter", "model": "text-embedding-3-small", "dim": 1536},
+  "reranker": {"provider": "llm", "model": "openai/gpt-4o-mini"},
+  "vector_store": {"provider": "local"},
+  "graph_store": {"provider": "neo4j"},
+  "ingestion": {"ocr": {"provider": "tesseract"}}
+}

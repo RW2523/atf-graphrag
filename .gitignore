@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Generated stores & caches
+storage/
+*.log
+
+# Large corpora & ad-hoc eval dumps (keep eval/ harness + golden set)
+data/eval/*.pdf
+eval_results*.json
+.DS_Store
+
+# Secrets
+.env

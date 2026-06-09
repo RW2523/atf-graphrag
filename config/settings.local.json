@@ -1,0 +1,9 @@
+{
+  "profile": "local",
+  "llm": {"provider": "openrouter", "model": "openai/gpt-4o-mini"},
+  "vision": {"provider": "openrouter", "model": "openai/gpt-4o-mini"},
+  "embeddings": {"provider": "sentence_transformer", "model": "all-MiniLM-L6-v2", "dim": 384, "batch_size": 64},
+  "reranker": {"provider": "local"},
+  "vector_store": {"provider": "local"},
+  "graph_store": {"provider": "local"}
+}

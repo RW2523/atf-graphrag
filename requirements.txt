@@ -1,0 +1,20 @@
+# Core runtime has NO hard dependencies — the app runs on the Python stdlib.
+# These are OPTIONAL and improve performance / unlock providers.
+
+# Faster vector math (recommended)
+numpy>=1.24
+
+# PDF parsing (required only to ingest .pdf files)
+pypdf>=3.17
+
+# Faster HTTP (optional; stdlib urllib is used if absent)
+requests>=2.31
+
+# --- Optional production API server (instead of the bundled stdlib server) ---
+# fastapi>=0.110
+# uvicorn>=0.29
+
+# --- Optional providers ---
+# neo4j>=5.0           # graph_store.provider = neo4j
+# pytesseract>=0.3     # OCR (also needs the tesseract binary)
+# pillow>=10.0         # image loading for OCR/vision

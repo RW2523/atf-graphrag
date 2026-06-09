@@ -1,0 +1,4 @@
+# Install for the AWS-native profile (ATF_PROFILE=aws)
+-r requirements.txt
+boto3>=1.34          # Bedrock, Textract, S3
+opensearch-py>=2.4   # vector + hybrid search (OpenSearch k-NN)
