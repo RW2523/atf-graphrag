@@ -31,6 +31,10 @@ class Indexer:
         self.size = ic["chunk_size"]
         self.overlap = ic["chunk_overlap"]
         self._seen_hashes: set = set()
+        # Entity resolver: collapses surface variants (S&W == Smith & Wesson)
+        # to one canonical graph node for cross-document linking (§3.4, §6, §12).
+        from ..extraction.entity_resolution import EntityResolver
+        self.resolver = EntityResolver()
 
     # ---------- public API ----------
     def index_file(self, path: str, corpus: str = "pdf",
@@ -199,31 +203,41 @@ class Indexer:
 
     def _build_graph(self, rec: ChunkRecord) -> None:
         g = self.e.graph
+        R = self.resolver
+        # Canonicalise every entity name BEFORE node/edge creation so surface
+        # variants across documents resolve to one node (cross-document linking).
         typed: List[Tuple[str, str]] = []
         for m in rec.manufacturers:
-            typed.append((m, "manufacturer"))
+            typed.append((R.canonical(m, "manufacturer"), "manufacturer"))
         for s in rec.sellers:
-            typed.append((s, "seller"))
+            typed.append((R.canonical(s, "seller"), "seller"))
         for b in rec.buyers:
-            typed.append((b, "buyer"))
+            typed.append((R.canonical(b, "buyer"), "buyer"))
         if rec.firearm_type:
-            typed.append((rec.firearm_type, "firearm_type"))
+            typed.append((R.canonical(rec.firearm_type, "firearm_type"), "firearm_type"))
         if rec.incident_type:
-            typed.append((rec.incident_type, "incident_type"))
+            typed.append((R.canonical(rec.incident_type, "incident_type"), "incident_type"))
         if rec.location:
-            typed.append((rec.location, "location"))
+            typed.append((R.canonical(rec.location, "location"), "location"))
         if rec.case_reference:
-            typed.append((rec.case_reference, "case"))
+            typed.append((R.canonical(rec.case_reference, "case"), "case"))
         for name, et in typed:
-            g.add_entity(name, et, rec.chunk_id, rec.corpus)
-        generic = [(e, "entity") for e in rec.entities[:12]]
-        nodes = typed + generic
+            if name:
+                g.add_entity(name, et, rec.chunk_id, rec.corpus)
+        generic = [(R.canonical(e, "entity"), "entity") for e in rec.entities[:12]]
+        nodes = [(n, t) for n, t in (typed + generic) if n]
+        # Co-occurrence edges between distinct nodes (self-loops dropped — they
+        # arise when resolution collapses two variants in the same chunk).
         for (a, _), (b, _) in combinations(nodes, 2):
-            g.add_relation(a, b, "co_occurs", rec.chunk_id, rec.corpus)
-        # typed relations from LLM extraction (Phase 2), if any
+            if a != b:
+                g.add_relation(a, b, "co_occurs", rec.chunk_id, rec.corpus)
+        # Typed relations from LLM extraction (Phase 2), repointed to canonical ids.
         for r in rec.relationships:
-            g.add_relation(r.get("source", ""), r.get("target", ""),
-                           r.get("relation", "related_to"), rec.chunk_id, rec.corpus)
+            src = R.canonical(r.get("source", ""), "entity")
+            dst = R.canonical(r.get("target", ""), "entity")
+            if src and dst and src != dst:
+                g.add_relation(src, dst, r.get("relation", "related_to"),
+                               rec.chunk_id, rec.corpus)
 
     def _llm_augment(self, rec: ChunkRecord) -> None:
         """Phase 2: use the LLM to extract entities/relations when a key exists."""

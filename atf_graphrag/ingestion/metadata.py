@@ -144,8 +144,22 @@ def enrich_metadata(chunk: ChunkRecord) -> ChunkRecord:
     if its:
         chunk.incident_type = its[0]
 
-    mfrs = [m for m in KNOWN_MFRS if m in low]
-    chunk.manufacturers = sorted({m.title() for m in mfrs})
+    # Manufacturer detection on NORMALISED text so surface variants all match:
+    # "Smith & Wesson", "Smith and Wesson, Inc." and the acronym "S&W" all
+    # resolve to one canonical form — which is what lets entity resolution link
+    # the same maker across documents (§3.4). Stored as canonical (normalised).
+    from ..extraction.entity_resolution import normalise as _norm_ent, _DEFAULT_ALIAS
+    text_norm = " " + _norm_ent(text) + " "
+    mfrs_found = set()
+    for m in KNOWN_MFRS:
+        mc = _norm_ent(m)
+        if mc and f" {mc} " in text_norm:
+            mfrs_found.add(mc)
+    for akey, canon in _DEFAULT_ALIAS.items():       # acronyms: S&W, H&K, ...
+        if f" {akey} " in text_norm:
+            mfrs_found.add(canon)
+    mfrs = sorted(mfrs_found)
+    chunk.manufacturers = mfrs
 
     # For table/chart/figure chunks: skip seller/buyer/entity noise extraction.
     # The graph should not be polluted with column headers or row labels.
