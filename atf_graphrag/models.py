@@ -78,6 +78,7 @@ class RetrievalHit:
 class QueryPlan:
     question: str
     intent: str = "fact"              # fact|entity|relationship|pattern|timeline|table|visual|multi
+    mode: str = "local"               # local|global|mixed — exploration routing
     corpora: List[str] = field(default_factory=list)
     top_k: int = 6
     use_vector: bool = True
