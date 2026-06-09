@@ -79,6 +79,17 @@ DEFAULTS: Dict[str, Any] = {
         "chunk_size": 900,        # characters (approx tokens*4)
         "chunk_overlap": 150,
         "ocr": {"provider": "auto"},        # auto | tesseract | textract | off
+        "parser": {"provider": "advanced"}, # advanced | docling
+    },
+
+    # ---- Web crawling (sitemap.xml ingestion) -----------------------------
+    "web": {
+        "sitemaps": [],            # sitemap.xml URLs to crawl
+        "max_pages": 50,           # cap pages per sitemap
+        "crawl_delay": 1.0,        # polite delay (s) between requests
+        "respect_robots": True,    # honour robots.txt
+        "ingest_linked_pdfs": True,  # queue linked PDFs into the pdf corpus
+        "pdf_corpus": "pdf",
     },
 
     # ---- Retrieval --------------------------------------------------------
