@@ -20,11 +20,13 @@ from ..engine import Engine
 from ..indexing import Indexer
 from ..retrieval import Retriever
 from ..config import Settings
+from ..ingestion.orchestrator import IngestionOrchestrator
 from .ui import INDEX_HTML
 
 _engine: Engine | None = None
 _indexer: Indexer | None = None
 _retriever: Retriever | None = None
+_orch: IngestionOrchestrator | None = None
 
 
 def expected_token() -> str:
@@ -45,12 +47,17 @@ def token_ok(auth_header: str, expected: str) -> bool:
 
 
 def _boot() -> None:
-    global _engine, _indexer, _retriever
+    global _engine, _indexer, _retriever, _orch
     if _engine is None:
         _engine = Engine()
         use_llm = _engine.llm.name != "offline"
         _indexer = Indexer(_engine, use_llm_extraction=use_llm)
         _retriever = Retriever(_engine)
+        _orch = IngestionOrchestrator(_engine, _indexer)
+
+
+def _storage_root() -> str:
+    return os.path.dirname(_engine.settings["vector_store"]["path"])
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -129,11 +136,66 @@ class Handler(BaseHTTPRequestHandler):
                 res = _retriever.answer(data["question"],
                                         trace=bool(data.get("trace")))
                 return self._send(200, res)
+            if self.path == "/api/upload":
+                return self._upload(data)
+            if self.path == "/api/chunk":
+                ch = None
+                for corpus in _engine.corpora:
+                    ch = _engine.vstore(corpus).get(data.get("chunk_id", ""))
+                    if ch:
+                        break
+                if not ch:
+                    return self._send(404, {"error": "chunk not found"})
+                return self._send(200, {
+                    "text": ch.text, "source_name": ch.source_name,
+                    "document_title": ch.document_title,
+                    "page_number": ch.page_number, "content_type": ch.content_type})
+            if self.path == "/api/communities/build":
+                comms = _orch.build_communities(force=True)
+                _retriever.reload_communities()
+                return self._send(200, {"communities": len(comms)})
             return self._send(404, {"error": "not found"})
         except KeyError as e:
             return self._send(400, {"error": f"missing field {e}"})
         except Exception as e:  # noqa: BLE001
             return self._send(500, {"error": str(e)})
+
+    def _upload(self, data: dict):
+        """Accept base64-encoded uploaded files (single, multiple, or a whole
+        folder), save them under storage/uploads, and ingest each through the
+        agentic orchestrator (routing + idempotency + entity resolution)."""
+        import base64
+        files = data.get("files", [])
+        corpus = data.get("corpus", "pdf")
+        if not files:
+            return self._send(400, {"error": "no files provided"})
+        updir = os.path.join(_storage_root(), "uploads")
+        os.makedirs(updir, exist_ok=True)
+        results = []
+        for f in files:
+            name = os.path.basename(f.get("name", "upload"))
+            b64 = (f.get("content_b64") or "").split(",")[-1]
+            try:
+                raw = base64.b64decode(b64)
+            except Exception as e:  # noqa: BLE001
+                results.append({"name": name, "status": "error",
+                                "error": f"decode: {e}", "chunks": 0})
+                continue
+            path = os.path.join(updir, name)
+            try:
+                with open(path, "wb") as fh:
+                    fh.write(raw)
+                r = _orch.ingest(path, corpus=corpus)
+                results.append({"name": name, "status": r.get("status", "?"),
+                                "chunks": r.get("chunks", 0),
+                                "type": r.get("decision", {}).get("input_type", "?")})
+            except Exception as e:  # noqa: BLE001
+                results.append({"name": name, "status": "error",
+                                "error": str(e), "chunks": 0})
+        _engine.commit()
+        total = sum(r.get("chunks", 0) for r in results)
+        return self._send(200, {"results": results, "total_chunks": total,
+                                "stats": _engine.stats()})
 
     def _ingest(self, data: dict):
         corpus = data.get("corpus", "pdf")
