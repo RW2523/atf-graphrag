@@ -80,6 +80,25 @@ _PROMPTS: Dict[str, str] = {
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+# VLM refusal / no-content markers. Vision models sometimes decline on cover or
+# decorative pages ("I can't analyze this image…") — that text must NOT be stored
+# as a chunk or it pollutes the index. We detect and drop such responses.
+_VLM_REFUSAL = (
+    "i can't analyze", "i cannot analyze", "i'm unable to", "i am unable to",
+    "unable to extract", "can't help with", "cannot help with", "i can't assist",
+    "i can't extract", "i cannot extract", "provide the details", "no text",
+    "i'm not able to", "i am not able to", "can't process", "cannot process",
+)
+
+
+def _is_vlm_refusal(text: str) -> bool:
+    t = (text or "").strip().lower()
+    if len(t) < 25:
+        return True
+    head = t[:200]
+    return any(m in head for m in _VLM_REFUSAL)
+
+
 def _file_hash(path: str) -> str:
     h = hashlib.md5()
     with open(path, "rb") as f:
@@ -444,14 +463,16 @@ class AdvancedPDFLoader:
             result = self.vision.describe_rich(image_path, prompt=prompt,
                                                max_tokens=self.vlm_max_tokens)
             text = result.get("summary", "")
-            if text:
+            # Drop refusals / empty / "[vision unavailable]" so junk never enters
+            # the index (e.g. the model declining on a cover or decorative page).
+            if text and not _is_vlm_refusal(text) and not text.startswith("[vision"):
                 prefix = f"[VLM {page_type.upper()} ({label})]\n"
                 return prefix + text
         except AttributeError:
             # Fallback: older vision provider without describe_rich
             result = self.vision.describe(image_path)
             text = result.get("summary", "")
-            if text:
+            if text and not _is_vlm_refusal(text):
                 return f"[VLM ({label})]\n" + text
         except Exception as exc:
             print(f"[advanced_loader] VLM call failed ({label}): {exc}")
