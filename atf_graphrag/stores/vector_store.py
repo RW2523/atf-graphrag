@@ -68,6 +68,26 @@ class LocalVectorStore:
     def count(self) -> int:
         return len(self._ids)
 
+    def has_document(self, document_id: str) -> bool:
+        return any(p.get("document_id") == document_id
+                   for p in self._payloads.values())
+
+    def delete_document(self, document_id: str) -> int:
+        """Remove all chunks for a document (used for idempotent re-ingest).
+        Returns the number of chunks removed. Caller should commit() after."""
+        victims = [cid for cid, p in self._payloads.items()
+                   if p.get("document_id") == document_id]
+        if not victims:
+            return 0
+        vset = set(victims)
+        keep = [(cid, vec) for cid, vec in zip(self._ids, self._vecs)
+                if cid not in vset]
+        self._ids = [cid for cid, _ in keep]
+        self._vecs = [vec for _, vec in keep]
+        for cid in victims:
+            self._payloads.pop(cid, None)
+        return len(victims)
+
     def get(self, chunk_id: str) -> Optional[ChunkRecord]:
         p = self._payloads.get(chunk_id)
         return ChunkRecord.from_dict(p) if p else None
