@@ -59,6 +59,14 @@ class Retriever:
         return getattr(self, "communities", None) is not None \
             and self.communities.count() > 0
 
+    def reload_communities(self) -> int:
+        """Reload community summaries after a (re)build. Returns the count."""
+        import os as _os
+        from ..graph.communities import CommunityStore
+        gpath = self.e.settings["graph_store"]["path"]
+        self.communities = CommunityStore(_os.path.join(gpath, "communities.json"))
+        return self.communities.count()
+
     def answer(self, question: str, trace: bool = False) -> Dict[str, Any]:
         cfg = self.e.settings["retrieval"]
         steps: Dict[str, Any] = {}
