@@ -330,7 +330,13 @@ class RetrievalAgent:
 
         graph_paths: List[str] = []
         if plan.use_graph:
-            graph_paths = self._graph_expand(plan, corpora, engine, add)
+            # Personalized-PageRank retrieval for relationship/pattern queries
+            # when enabled (HippoRAG-style); otherwise BFS subgraph expansion.
+            gr_mode = engine.settings["retrieval"].get("graph_retriever", "bfs")
+            if gr_mode == "ppr" and plan.intent in ("relationship", "pattern"):
+                graph_paths = self._graph_expand_ppr(plan, corpora, engine, add)
+            else:
+                graph_paths = self._graph_expand(plan, corpora, engine, add)
 
         hits = list(merged.values())
 
@@ -434,6 +440,49 @@ class RetrievalAgent:
                     return False
             return True
         return where
+
+    def _graph_expand_ppr(self, plan, corpora, engine, add) -> List[str]:
+        """Personalized-PageRank graph retrieval over the typed graph.
+
+        Seeds on the query's entity nodes, ranks chunks by centrality, and adds
+        them scaled into the 0.5-0.7 band (above co-occurrence, below direct
+        vector hits). Falls back to BFS expansion if networkx is unavailable."""
+        from .graph_retriever import GraphRetriever
+        g = engine.graph
+        if not hasattr(self, "_ppr") or self._ppr.g is not g:
+            self._ppr = GraphRetriever(g)
+        if not self._ppr.available():
+            return self._graph_expand(plan, corpora, engine, add)
+
+        terms = content_tokens(plan.question)
+        seeds, matched = [], []
+        for t in terms:
+            node = g.find(t)
+            if node and node not in seeds:
+                seeds.append(node)
+                matched.append(node)
+        ranked = self._ppr.rank_chunks(seeds, top_k=max(plan.top_k * 3, 30))
+        if not ranked:
+            return self._graph_expand(plan, corpora, engine, add)
+
+        # Normalise PageRank scores into a 0.50-0.70 contribution band.
+        top = ranked[0][1] or 1.0
+        cid_score = {cid: 0.50 + 0.20 * (s / top) for cid, s in ranked}
+        for corpus in corpora:
+            vs = engine.vstore(corpus)
+            for cid, sc in cid_score.items():
+                ch = vs.get(cid)
+                if ch:
+                    add(ch, sc, "graph")
+
+        # Typed relationship paths for the answer's evidence.
+        paths: List[str] = []
+        for i in range(len(matched)):
+            for j in range(i + 1, min(i + 3, len(matched))):
+                labelled = g.path_labeled(matched[i], matched[j])
+                if labelled:
+                    paths.append(labelled)
+        return paths[:8]
 
     def _graph_expand(self, plan, corpora, engine, add) -> List[str]:
         g = engine.graph

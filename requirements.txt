@@ -15,6 +15,9 @@ pdfplumber>=0.11
 # Local neural embeddings (default embedder). Falls back to LocalEmbedder if absent.
 sentence-transformers>=2.7
 
+# Graph algorithms for personalized-PageRank retrieval (retrieval.graph_retriever=ppr)
+networkx>=3.0
+
 # Faster HTTP (optional; stdlib urllib is used if absent)
 requests>=2.31
 
