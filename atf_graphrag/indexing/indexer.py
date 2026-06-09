@@ -44,10 +44,16 @@ class Indexer:
         if ext not in SUPPORTED:
             raise ValueError(f"Unsupported file type: {ext}")
         name = os.path.basename(path)
-        # Pass the vision provider so the advanced loader can call VLM for
-        # scanned pages and embedded charts.
+        # Parse via the configured parser provider (advanced | docling), selected
+        # by config. The parser returns the same (page_no, text) contract and the
+        # advanced parser preserves the VLM cache + scanned-page fallback. Falls
+        # back to load_file directly if no parser is wired (older Engine).
         vision = getattr(self.e, "vision", None)
-        pages = load_file(path, vision_provider=vision)
+        parser = getattr(self.e, "parser", None)
+        if parser is not None:
+            pages = parser.load(path, vision_provider=vision)
+        else:
+            pages = load_file(path, vision_provider=vision)
         st = source_type or ("pdf" if ext == ".pdf" else
                              "website" if ext in (".html", ".htm") else "document")
         # Extract year from filename so date-filtered queries route correctly
