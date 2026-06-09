@@ -286,11 +286,13 @@ class RetrievalAgent:
                 merged[chunk.chunk_id] = RetrievalHit(chunk=chunk, score=score,
                                                       source=source)
 
-        # Small boost for table/chart/figure chunks when the query intent is table/visual.
-        # Kept small (1.05) to avoid over-boosting NOTE/caption chunks that the chunker
-        # mis-classifies as tables; higher values caused state-list text chunks to lose
-        # to low-content table-typed NOTE chunks for source-state queries.
-        content_boost = 1.05 if plan.intent in ("table", "visual") else 1.0
+        # Boost for table/chart/figure chunks when the query intent is table/visual.
+        # Configurable via retrieval.visual_boost (default 1.05) — kept small to
+        # avoid over-boosting NOTE/caption chunks the chunker mis-classifies as
+        # tables. For an explicit visual intent a slightly stronger visual_boost
+        # can be set without affecting fact/table queries.
+        _vb = float(engine.settings["retrieval"].get("visual_boost", 1.05))
+        content_boost = _vb if plan.intent in ("table", "visual") else 1.0
 
         where = self._filter(plan)
         all_source_counts: Dict[str, int] = {}
@@ -623,8 +625,14 @@ class GenerationAgent:
                     "confidence": h.eval_score, "method": c.extraction_method,
                     "content_type": c.content_type}
             citations.append(cite)
+            # For visual content (chart/figure/table), prefer the VLM-extracted
+            # structured summary when present — it holds the actual data values.
+            body = c.text
+            if c.content_type in ("chart", "figure", "table") and \
+                    c.extraction_summary and c.extraction_summary not in c.text:
+                body = f"{c.extraction_summary}\n{c.text}"
             ctx_lines.append(f"{tag}{ctype_label} ({c.source_name or c.document_title}, {loc}) "
-                             f"{c.text}")
+                             f"{body}")
         context = "\n".join(ctx_lines) if ctx_lines else "(no evidence retrieved)"
         gp = ("\nKNOWN RELATIONSHIP PATHS:\n" + "\n".join(graph_paths)) \
             if graph_paths else ""
