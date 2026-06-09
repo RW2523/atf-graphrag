@@ -1,0 +1,232 @@
+"""Community detection + summarization (addendum Step 6b, client §10-§12).
+
+Turns a corpus-wide entity graph into explorable knowledge: cluster the resolved,
+typed graph into communities (Leiden via graspologic, else networkx Louvain), then
+write a short LLM briefing per cluster ("a trafficking cluster centered on dealer
+X spanning N incidents across TX/LA, linked to manufacturer Y"). Every summary
+keeps its member entities AND source chunk_ids so a discovered pattern always
+traces back to documents.
+
+PREREQUISITES (hard): entity resolution + typed edges — community summaries over a
+co-occurrence hairball or unresolved entities produce confident-but-wrong findings.
+
+Cost control: summaries are cached by a hash of each cluster's member set, so
+re-indexing unchanged clusters makes zero new LLM calls (mirrors the VLM cache).
+Use the cheap model for summaries; gate the whole build behind config.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from typing import Any, Dict, List, Optional
+
+try:
+    import networkx as nx
+    _HAVE_NX = True
+except Exception:  # noqa: BLE001
+    _HAVE_NX = False
+
+_TYPED_EDGE_BOOST = 3.0
+
+
+def _members_key(members: List[str]) -> str:
+    return hashlib.md5("|".join(sorted(members)).encode()).hexdigest()[:16]
+
+
+class CommunityBuilder:
+    def __init__(self, graph_store, llm=None, max_cluster_size: int = 10,
+                 min_community_size: int = 3, cache_dir: Optional[str] = None):
+        self.g = graph_store
+        self.llm = llm
+        self.max_cluster_size = max_cluster_size
+        self.min_community_size = min_community_size
+        root = cache_dir or os.path.dirname(getattr(graph_store, "file", "") or ".")
+        self.cache_path = os.path.join(root or ".", "community_cache.json")
+        self.out_path = os.path.join(root or ".", "communities.json")
+        self._cache: Dict[str, str] = self._load_cache()
+        self.llm_calls = 0      # observability: how many summaries were generated
+
+    # ---- graph -> networkx --------------------------------------------------
+    def _to_nx(self):
+        G = nx.Graph()
+        for key in self.g.nodes:
+            G.add_node(key)
+        for (s, d), e in self.g.edges.items():
+            w = float(e.get("weight", 1)) * (_TYPED_EDGE_BOOST if e.get("typed") else 1.0)
+            if G.has_edge(s, d):
+                G[s][d]["weight"] += w
+            else:
+                G.add_edge(s, d, weight=w)
+        return G
+
+    # ---- detection ----------------------------------------------------------
+    def detect(self) -> Dict[int, List[str]]:
+        """Return {community_id: [node_key, ...]} for communities >= min size."""
+        if not _HAVE_NX or len(self.g.nodes) == 0:
+            return {}
+        G = self._to_nx()
+        if G.number_of_edges() == 0:
+            return {}
+        clusters: List[List[str]] = []
+        try:
+            from graspologic.partition import hierarchical_leiden
+            res = hierarchical_leiden(G, max_cluster_size=self.max_cluster_size,
+                                      random_seed=42)
+            by_cluster: Dict[Any, List[str]] = {}
+            for part in res:
+                by_cluster.setdefault(part.cluster, []).append(part.node)
+            clusters = list(by_cluster.values())
+        except Exception:  # noqa: BLE001  fall back to networkx Louvain
+            from networkx.algorithms.community import louvain_communities
+            clusters = [list(c) for c in
+                        louvain_communities(G, weight="weight", seed=42)]
+        out: Dict[int, List[str]] = {}
+        cid = 0
+        for members in clusters:
+            if len(members) >= self.min_community_size:
+                out[cid] = sorted(members)
+                cid += 1
+        return out
+
+    # ---- per-cluster info ---------------------------------------------------
+    def _collect_info(self, members: List[str]) -> Dict[str, Any]:
+        mset = set(members)
+        ents = []
+        chunk_ids: set = set()
+        for key in members:
+            node = self.g.nodes.get(key, {})
+            ents.append({"key": key, "label": node.get("label", key),
+                         "type": node.get("type", "entity"),
+                         "count": node.get("count", 1)})
+            chunk_ids |= set(node.get("chunks", ()))
+        rels = []
+        for (s, d), e in self.g.edges.items():
+            if s in mset and d in mset:
+                rels.append({"source": self.g.nodes.get(s, {}).get("label", s),
+                             "target": self.g.nodes.get(d, {}).get("label", d),
+                             "relation": e.get("rel", "related_to"),
+                             "weight": e.get("weight", 1),
+                             "typed": e.get("typed", False)})
+        # most-central entities first (by degree count) for a readable summary
+        ents.sort(key=lambda x: -x["count"])
+        rels.sort(key=lambda x: (-int(x["typed"]), -x["weight"]))
+        return {"entities": ents, "relations": rels,
+                "chunk_ids": sorted(chunk_ids)}
+
+    # ---- summarization ------------------------------------------------------
+    def _summarize(self, info: Dict[str, Any]) -> str:
+        ents = info["entities"][:12]
+        rels = info["relations"][:15]
+        ent_str = ", ".join(f"{e['label']} ({e['type']})" for e in ents)
+        rel_str = "; ".join(f"{r['source']} --{r['relation']}--> {r['target']}"
+                            for r in rels) or "(co-occurrence only)"
+        if self.llm is not None and getattr(self.llm, "name", "offline") != "offline":
+            sys = ("You are an ATF analyst. Given a cluster of related entities and "
+                   "their relationships, write a 3-5 sentence briefing: name the main "
+                   "entities, how they connect, and any pattern, recurrence, or tension. "
+                   "Be specific and factual; do not invent links not present.")
+            prompt = f"ENTITIES: {ent_str}\n\nRELATIONSHIPS: {rel_str}\n\nBriefing:"
+            try:
+                self.llm_calls += 1
+                return self.llm.complete(prompt, system=sys, temperature=0.1,
+                                         max_tokens=220).strip()
+            except Exception:  # noqa: BLE001
+                pass
+        # Offline deterministic briefing.
+        top = ", ".join(e["label"] for e in ents[:6])
+        return (f"Cluster of {len(info['entities'])} related entities centered on "
+                f"{top}. Key relationships: {rel_str[:300]}.")
+
+    # ---- build --------------------------------------------------------------
+    def build(self) -> Dict[str, Any]:
+        communities = self.detect()
+        result: Dict[str, Any] = {}
+        for cid, members in communities.items():
+            info = self._collect_info(members)
+            ck = _members_key(members)
+            summary = self._cache.get(ck)
+            if summary is None:
+                summary = self._summarize(info)
+                self._cache[ck] = summary       # cache by member-set hash
+            result[str(cid)] = {
+                "summary": summary,
+                "members": [e["label"] for e in info["entities"]],
+                "member_keys": members,
+                "member_count": len(members),
+                "chunk_ids": info["chunk_ids"],
+                "relations": info["relations"][:20],
+            }
+        self._save_cache()
+        return result
+
+    def persist(self, communities: Dict[str, Any]) -> str:
+        os.makedirs(os.path.dirname(self.out_path) or ".", exist_ok=True)
+        tmp = self.out_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(communities, f)
+        os.replace(tmp, self.out_path)
+        return self.out_path
+
+    # ---- cache --------------------------------------------------------------
+    def _load_cache(self) -> Dict[str, str]:
+        if os.path.exists(self.cache_path):
+            try:
+                return json.loads(open(self.cache_path).read())
+            except Exception:  # noqa: BLE001
+                return {}
+        return {}
+
+    def _save_cache(self) -> None:
+        os.makedirs(os.path.dirname(self.cache_path) or ".", exist_ok=True)
+        tmp = self.cache_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(self._cache, f)
+        os.replace(tmp, self.cache_path)
+
+
+class CommunityStore:
+    """Loads persisted community summaries for the global query mode."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self.communities: Dict[str, Any] = {}
+        if os.path.exists(path):
+            try:
+                self.communities = json.loads(open(path).read())
+            except Exception:  # noqa: BLE001
+                self.communities = {}
+
+    def all(self) -> List[Dict[str, Any]]:
+        return list(self.communities.values())
+
+    def count(self) -> int:
+        return len(self.communities)
+
+    def relevant(self, question: str, top_k: int = 6) -> List[Dict[str, Any]]:
+        """Rank communities by lexical overlap of the question with member names
+        and summary text — cheap pre-filter before the map-reduce LLM pass."""
+        from ..util import content_tokens
+        qtok = set(content_tokens(question))
+        scored = []
+        for c in self.communities.values():
+            hay = (" ".join(c.get("members", [])) + " " + c.get("summary", "")).lower()
+            htok = set(content_tokens(hay))
+            overlap = len(qtok & htok)
+            if overlap:
+                scored.append((overlap, c))
+        scored.sort(key=lambda x: -x[0])
+        return [c for _, c in scored[:top_k]]
+
+
+def build_and_persist(graph_store, llm=None, cfg: Optional[Dict] = None
+                      ) -> Dict[str, Any]:
+    """Convenience entry used by the ingestion orchestrator post-index step."""
+    cfg = cfg or {}
+    b = CommunityBuilder(
+        graph_store, llm=llm,
+        max_cluster_size=cfg.get("max_cluster_size", 10),
+        min_community_size=cfg.get("min_community_size", 3))
+    comms = b.build()
+    b.persist(comms)
+    return comms
