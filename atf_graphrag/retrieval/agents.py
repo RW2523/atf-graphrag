@@ -173,8 +173,10 @@ class QueryUnderstandingAgent:
                        f"meta={plan.use_metadata}; hybrid={plan.use_bm25}; "
                        f"domain={plan.filters.get('domain', '')}")
 
-        # Optional LLM refinement (only if a real LLM is configured)
-        if engine.llm.name != "offline":
+        # Optional LLM refinement (only if a real LLM is configured AND enabled).
+        # Gated by config so the eval harness can pin deterministic retrieval
+        # (LLM refinement varies top_k run-to-run even at temperature 0).
+        if engine.llm.name != "offline" and cfg.get("llm_refine", True):
             self._llm_refine(question, plan, engine)
         return plan
 
@@ -372,7 +374,10 @@ class RetrievalAgent:
                 if any(kw in src for kw in kws):
                     h.score = h.score * 1.80    # strong domain-source boost
 
-        hits.sort(key=lambda h: -h.score)
+        # Stable tie-break by chunk_id: equal-score hits (e.g. graph-expansion
+        # hits all at 0.5) are otherwise ordered by set-iteration, which varies
+        # across processes under PYTHONHASHSEED and makes NDCG/MRR non-reproducible.
+        hits.sort(key=lambda h: (-h.score, h.chunk.chunk_id))
         # Keep a wider pool before diversity capping so boosts can reorder things.
         hits = hits[:max(plan.top_k * 5, 60)]
 
@@ -462,8 +467,9 @@ class EvaluationAgent:
             kept.append(h)
         thr = engine.settings["retrieval"]["min_confidence"]
         strong = [h for h in kept if (h.eval_score or 0) >= thr]
-        strong.sort(key=lambda h: -(h.eval_score or 0))
-        return strong or sorted(kept, key=lambda h: -(h.eval_score or 0))[:plan.top_k]
+        strong.sort(key=lambda h: (-(h.eval_score or 0), h.chunk.chunk_id))
+        return strong or sorted(
+            kept, key=lambda h: (-(h.eval_score or 0), h.chunk.chunk_id))[:plan.top_k]
 
 
 class RerankingAgent:
@@ -481,7 +487,7 @@ class RerankingAgent:
             h.rerank_score = round(0.7 * (h.eval_score or 0) + 0.3 * coverage + ctype_bonus, 4)
         if rcfg["provider"] == "llm" and engine.llm.name != "offline":
             self._llm_rerank(plan, hits, engine)
-        hits.sort(key=lambda h: -(h.rerank_score or 0))
+        hits.sort(key=lambda h: (-(h.rerank_score or 0), h.chunk.chunk_id))
         return hits[:plan.top_k]
 
     def _llm_rerank(self, plan, hits, engine) -> None:

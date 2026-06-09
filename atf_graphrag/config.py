@@ -88,6 +88,7 @@ DEFAULTS: Dict[str, Any] = {
         "hybrid": True,                    # vector + BM25 fusion
         "evaluate": True,
         "rerank": True,
+        "llm_refine": True,                # LLM query-plan refinement (eval pins off for determinism)
         "min_confidence": 0.10,            # lowered to let more evidence reach LLM
     },
 
