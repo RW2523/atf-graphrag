@@ -3,6 +3,7 @@
 the control flow and contracts are identical."""
 from __future__ import annotations
 
+import time
 from typing import Any, Dict
 
 from ..engine import Engine
@@ -36,14 +37,22 @@ class Retriever:
     def answer(self, question: str, trace: bool = False) -> Dict[str, Any]:
         cfg = self.e.settings["retrieval"]
         steps: Dict[str, Any] = {}
+        timings: Dict[str, float] = {}        # per-stage wall time (ms)
 
-        plan = self.understand.plan(question, self.e)
+        def _timed(name, fn):
+            t0 = time.perf_counter()
+            out = fn()
+            timings[name] = round((time.perf_counter() - t0) * 1000, 1)
+            return out
+
+        plan = _timed("understand", lambda: self.understand.plan(question, self.e))
         steps["1_query_understanding"] = plan.reason
 
-        corpora = self.select.select(plan, self.e)
+        corpora = _timed("select", lambda: self.select.select(plan, self.e))
         steps["2_corpus_selection"] = corpora
 
-        hits = self.retrieve_agent.retrieve(plan, corpora, self.e)
+        hits = _timed("retrieve",
+                      lambda: self.retrieve_agent.retrieve(plan, corpora, self.e))
         graph_paths = getattr(self.retrieve_agent, "last_graph_paths", [])
         # Expose ranked ids (not just counts) so the eval harness can compute
         # recall@k / NDCG / MRR against a golden set. Additive — does not change
@@ -56,11 +65,13 @@ class Retriever:
         }
 
         if cfg.get("evaluate", True):
-            hits = self.evaluate.evaluate(plan, hits, self.e)
+            hits = _timed("evaluate",
+                          lambda: self.evaluate.evaluate(plan, hits, self.e))
         steps["4_evaluation"] = {"kept": len(hits)}
 
         if cfg.get("rerank", True):
-            hits = self.rerank.rerank(plan, hits, self.e)
+            hits = _timed("rerank",
+                          lambda: self.rerank.rerank(plan, hits, self.e))
         else:
             hits = hits[:plan.top_k]
         steps["5_reranking"] = {
@@ -69,9 +80,13 @@ class Retriever:
             "reranked_doc_ids": _unique([h.chunk.document_id for h in hits]),
         }
 
-        ans: Answer = self.generate.generate(plan, hits, graph_paths, self.e)
+        ans: Answer = _timed(
+            "generate",
+            lambda: self.generate.generate(plan, hits, graph_paths, self.e))
         steps["6_generation"] = {"confidence": ans.confidence,
                                  "citations": len(ans.citations)}
+        timings["total"] = round(sum(timings.values()), 1)
+        steps["timings_ms"] = timings
 
         result = {
             "question": question,

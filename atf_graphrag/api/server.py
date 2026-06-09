@@ -13,6 +13,7 @@ Routes:
 from __future__ import annotations
 
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from ..engine import Engine
@@ -24,6 +25,23 @@ from .ui import INDEX_HTML
 _engine: Engine | None = None
 _indexer: Indexer | None = None
 _retriever: Retriever | None = None
+
+
+def expected_token() -> str:
+    """Configured API token (env ATF_API_TOKEN or server.auth_token). Empty =
+    auth disabled (open, for local dev)."""
+    if os.environ.get("ATF_API_TOKEN"):
+        return os.environ["ATF_API_TOKEN"]
+    if _engine is not None:
+        return _engine.settings["server"].get("auth_token", "") or ""
+    return ""
+
+
+def token_ok(auth_header: str, expected: str) -> bool:
+    """True if auth is disabled (no expected token) or the bearer token matches."""
+    if not expected:
+        return True
+    return auth_header.strip() == f"Bearer {expected}"
 
 
 def _boot() -> None:
@@ -79,6 +97,9 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- POST ----
     def do_POST(self):
+        # Optional bearer-token auth (enabled when a token is configured).
+        if not token_ok(self.headers.get("Authorization", ""), expected_token()):
+            return self._send(401, {"error": "unauthorized"})
         try:
             data = self._read()
         except Exception as e:  # noqa: BLE001
