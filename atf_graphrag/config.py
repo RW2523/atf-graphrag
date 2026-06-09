@@ -106,6 +106,15 @@ DEFAULTS: Dict[str, Any] = {
         "min_confidence": 0.10,            # lowered to let more evidence reach LLM
     },
 
+    # ---- Graph exploration (community detection + summaries) --------------
+    "graph": {
+        "communities": {
+            "enabled": False,          # gate the expensive build (LLM per cluster)
+            "max_cluster_size": 10,
+            "min_community_size": 3,
+        },
+    },
+
     # ---- Corpuses ---------------------------------------------------------
     "corpora": ["pdf", "web", "connected", "visual"],
 

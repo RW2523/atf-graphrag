@@ -206,6 +206,21 @@ class IngestionOrchestrator:
         self._manifest[f"{corpus}:{doc_id}"] = {"hash": chash, "chunks": chunks}
         self._save_manifest()
 
+    # ---- post-index: corpus-wide sensemaking ------------------------------
+    def build_communities(self, force: bool = False) -> Dict[str, Any]:
+        """Detect graph communities and write LLM cluster summaries (Step 6b).
+
+        Runs after the graph is assembled. Gated by config
+        graph.communities.enabled unless force=True. Returns the community map
+        (also persisted to storage/graph/communities.json). No-op result when
+        disabled or the graph is too small.
+        """
+        ccfg = (self.e.settings.get("graph", {}) or {}).get("communities", {}) or {}
+        if not force and not ccfg.get("enabled", False):
+            return {}
+        from ..graph.communities import build_and_persist
+        return build_and_persist(self.e.graph, llm=self.e.llm, cfg=ccfg)
+
     # ---- public API -------------------------------------------------------
     def ingest(self, source: str, corpus: Optional[str] = None,
                probe: bool = True) -> Dict[str, Any]:
