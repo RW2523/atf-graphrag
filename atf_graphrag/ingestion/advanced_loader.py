@@ -88,6 +88,32 @@ def _file_hash(path: str) -> str:
     return h.hexdigest()[:16]
 
 
+_NUM_RE = re.compile(r"\d[\d,\.]*%?")
+
+
+def _has_tabular_signal(text: str, min_rows: int = 3) -> bool:
+    """Cheap check: does this page's text look like it contains a table?
+
+    Avoids running the expensive table scanners on prose pages. True when at
+    least ``min_rows`` lines each carry 2+ numeric fields (rates, counts,
+    dollar amounts) or wide multi-space column gaps — typical of ATF data tables.
+    """
+    if not text:
+        return False
+    rows = 0
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        nums = len(_NUM_RE.findall(s))
+        wide_gap = "   " in s          # 3+ spaces => aligned columns
+        if nums >= 2 or (nums >= 1 and wide_gap):
+            rows += 1
+            if rows >= min_rows:
+                return True
+    return False
+
+
 def _cells_to_markdown(cells: List[List]) -> str:
     """Convert a 2-D cell list from pdfplumber/PyMuPDF into markdown table text."""
     if not cells:
@@ -133,12 +159,20 @@ class AdvancedPDFLoader:
         cache_dir: Optional[str] = None,
         vlm_max_tokens: int = 1800,
         min_image_px: int = 600,
+        pdfplumber_max_pages: int = 60,
     ):
         self.vision = vision_provider
         self.vlm_enabled = vlm_enabled and vision_provider is not None
         self.dpi = dpi
         self.vlm_max_tokens = vlm_max_tokens
         self.min_image_px = min_image_px
+        # pdfplumber table detection is accurate on ruled tables but expensive
+        # (it fully parses each page's vector content — ~10s on a 200-page report).
+        # For large docs we skip it and rely on PyMuPDF text(sort=True) + PyMuPDF
+        # find_tables, which are far faster. Small docs keep pdfplumber for max
+        # ruled-table fidelity.
+        self.pdfplumber_max_pages = pdfplumber_max_pages
+        self._use_pdfplumber = True
         # Cache directory — default to storage/vlm_cache/
         if cache_dir:
             self._cache_dir = Path(cache_dir)
@@ -180,14 +214,22 @@ class AdvancedPDFLoader:
 
         pages: List[Tuple[int, str]] = []
         mu_doc = fitz.open(path)
+        # Decide whether the (expensive) pdfplumber pass is worth it for this doc.
+        self._use_pdfplumber = len(mu_doc) <= self.pdfplumber_max_pages
         try:
-            with pdfplumber.open(path) as plumber_doc:
+            plumber_doc = pdfplumber.open(path) if self._use_pdfplumber else None
+            try:
                 for page_idx in range(len(mu_doc)):
                     mu_page = mu_doc[page_idx]
-                    pl_page = plumber_doc.pages[page_idx] if page_idx < len(plumber_doc.pages) else None
+                    pl_page = None
+                    if plumber_doc is not None and page_idx < len(plumber_doc.pages):
+                        pl_page = plumber_doc.pages[page_idx]
                     page_no = page_idx + 1
                     rich = self._extract_page(mu_doc, path, page_no, mu_page, pl_page)
                     pages.append((page_no, rich))
+            finally:
+                if plumber_doc is not None:
+                    plumber_doc.close()
         finally:
             mu_doc.close()
             self._save_cache()
@@ -217,42 +259,39 @@ class AdvancedPDFLoader:
         # (occasional word concatenation in tight layouts).
         body_text = mu_page.get_text("text", sort=True).strip()
 
-        # ── Stage 1b: pdfplumber table detection (supplementary) ──────────────
-        # pdfplumber excels at detecting bordered/ruled tables.  We use it
-        # ONLY for table extraction, not as the primary text source.
-        table_bboxes: List[tuple] = []
+        # ── Stage 1b: table detection (gated) ─────────────────────────────────
+        # Table detection (pdfplumber + PyMuPDF find_tables) is the dominant cost
+        # on large reports (~16s on a 200-page AFMER). Most pages are prose with
+        # no tables, so we first run a CHEAP tabular-signal check on the already-
+        # extracted body text and only scan pages that look tabular. On those, we
+        # try pdfplumber first and use PyMuPDF only as a FALLBACK when pdfplumber
+        # finds nothing — never both on the same page (removes the redundant
+        # double scan). Quality on real table pages is preserved.
         table_blocks: List[str] = []
-
-        if pl_page is not None:
-            try:
-                pl_tables = pl_page.find_tables()
-                for t in pl_tables:
-                    cells = t.extract()
-                    md = _cells_to_markdown(cells)
-                    if md:
-                        caption = self._find_caption(pl_page, t.bbox)
-                        header = (f"\n[EXTRACTED TABLE: {caption}]\n"
-                                  if caption else "\n[EXTRACTED TABLE]\n")
-                        table_blocks.append(header + md)
-                        table_bboxes.append(t.bbox)
-            except Exception:
-                pass
+        if _has_tabular_signal(body_text):
+            if pl_page is not None:
+                try:
+                    for t in pl_page.find_tables():
+                        md = _cells_to_markdown(t.extract())
+                        if md:
+                            caption = self._find_caption(pl_page, t.bbox)
+                            header = (f"\n[EXTRACTED TABLE: {caption}]\n"
+                                      if caption else "\n[EXTRACTED TABLE]\n")
+                            table_blocks.append(header + md)
+                except Exception:
+                    pass
+            if not table_blocks:    # fallback: borderless grids pdfplumber misses
+                try:
+                    for tab in mu_page.find_tables().tables:
+                        md = _cells_to_markdown(tab.extract())
+                        if md:
+                            table_blocks.append("\n[EXTRACTED TABLE]\n" + md)
+                except Exception:
+                    pass
 
         if body_text:
             parts.append(body_text)
         parts.extend(table_blocks)
-
-        # ── Stage 1c: PyMuPDF find_tables() second pass ─────────────────────
-        # Catches text-based grids (no visible lines) that pdfplumber misses.
-        try:
-            fitz_tabs = mu_page.find_tables()
-            for tab in fitz_tabs.tables:
-                cells = tab.extract()
-                md = _cells_to_markdown(cells)
-                if md and md not in "\n".join(parts):
-                    parts.append("\n[EXTRACTED TABLE]\n" + md)
-        except Exception:
-            pass
 
         # ── Stage 2: embedded image → VLM ─────────────────────────────────────
         if self.vlm_enabled:
