@@ -80,6 +80,7 @@ DEFAULTS: Dict[str, Any] = {
         "chunk_overlap": 150,
         "ocr": {"provider": "auto"},        # auto | tesseract | textract | off
         "parser": {"provider": "advanced"}, # advanced | docling
+        "orchestrator": "sequential",       # sequential | langgraph
     },
 
     # ---- Web crawling (sitemap.xml ingestion) -----------------------------
