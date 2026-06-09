@@ -101,6 +101,7 @@ DEFAULTS: Dict[str, Any] = {
         "evaluate": True,
         "rerank": True,
         "llm_refine": True,                # LLM query-plan refinement (eval pins off for determinism)
+        "graph_retriever": "bfs",          # bfs | ppr (personalized PageRank for relationship/pattern)
         "min_confidence": 0.10,            # lowered to let more evidence reach LLM
     },
 
