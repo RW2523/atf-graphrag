@@ -6,11 +6,13 @@ from __future__ import annotations
 import time
 from typing import Any, Dict
 
+import os
+
 from ..engine import Engine
 from ..models import Answer
 from .agents import (QueryUnderstandingAgent, CorpusSelectionAgent,
                      RetrievalAgent, EvaluationAgent, RerankingAgent,
-                     GenerationAgent)
+                     GenerationAgent, GlobalAnswerAgent)
 
 
 def _unique(seq):
@@ -33,6 +35,15 @@ class Retriever:
         self.evaluate = EvaluationAgent()
         self.rerank = RerankingAgent()
         self.generate = GenerationAgent()
+        self.global_agent = GlobalAnswerAgent()
+        # Community summaries for the global query mode (empty if not built).
+        from ..graph.communities import CommunityStore
+        gpath = engine.settings["graph_store"]["path"]
+        self.communities = CommunityStore(os.path.join(gpath, "communities.json"))
+
+    def _has_communities(self) -> bool:
+        return getattr(self, "communities", None) is not None \
+            and self.communities.count() > 0
 
     def answer(self, question: str, trace: bool = False) -> Dict[str, Any]:
         cfg = self.e.settings["retrieval"]
@@ -47,13 +58,39 @@ class Retriever:
 
         plan = _timed("understand", lambda: self.understand.plan(question, self.e))
         steps["1_query_understanding"] = plan.reason
+        steps["mode"] = plan.mode
+
+        # ── Global mode: answer from community summaries (map-reduce) ─────────
+        # Only when communities have been built; otherwise fall through to the
+        # local hybrid lane (the default that holds the retrieval baseline).
+        if plan.mode == "global" and self._has_communities():
+            gans = _timed("global", lambda: self.global_agent.answer(
+                plan, self.e, self.communities))
+            if gans is not None:
+                timings["total"] = round(sum(timings.values()), 1)
+                steps["global"] = {"communities_used": gans.evidence_count}
+                result = {
+                    "question": question, "answer": gans.answer,
+                    "confidence": gans.confidence, "citations": gans.citations,
+                    "graph_paths": [], "evidence_count": gans.evidence_count,
+                    "intent": plan.intent, "mode": "global",
+                }
+                if trace:
+                    steps["timings_ms"] = timings
+                    result["trace"] = steps
+                return result
 
         corpora = _timed("select", lambda: self.select.select(plan, self.e))
         steps["2_corpus_selection"] = corpora
 
         hits = _timed("retrieve",
                       lambda: self.retrieve_agent.retrieve(plan, corpora, self.e))
-        graph_paths = getattr(self.retrieve_agent, "last_graph_paths", [])
+        graph_paths = list(getattr(self.retrieve_agent, "last_graph_paths", []))
+        # Mixed mode: enrich the local answer with corpus-wide community context
+        # (the generator renders graph_paths as "KNOWN RELATIONSHIP PATHS").
+        if plan.mode == "mixed" and self._has_communities():
+            for c in self.communities.relevant(question, top_k=3):
+                graph_paths.append("[COMMUNITY] " + c.get("summary", "")[:300])
         # Expose ranked ids (not just counts) so the eval harness can compute
         # recall@k / NDCG / MRR against a golden set. Additive — does not change
         # the Answer shape used by the UI.
@@ -96,6 +133,7 @@ class Retriever:
             "graph_paths": ans.graph_paths,
             "evidence_count": ans.evidence_count,
             "intent": plan.intent,
+            "mode": plan.mode,
         }
         if trace:
             result["trace"] = steps

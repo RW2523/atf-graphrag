@@ -26,6 +26,12 @@ VISUAL_WORDS = ("chart", "graph", "figure", "image", "photo", "diagram", "map")
 ENTITY_WORDS = ("who is", "what is", "tell me about", "profile of")
 ALL_WORDS = ("all sources", "everything", "every", "across all", "all data",
              "entire dataset", "all corpus", "all corpuses", "all corpora")
+# Global/sensemaking questions — answered from community summaries, not chunks.
+GLOBAL_WORDS = ("across the", "across all", "across these", "across documents",
+                "overall", "in general", "common themes", "recurring", "recur",
+                "patterns", "cluster", "clusters", "most frequent", "most common",
+                "which dealers", "who appears", "how are", "connected across",
+                "themes", "trends across", "main categories", "summarize the")
 MANUFACTURE_WORDS = ("manufactur", "production volume", "produced by", "made in",
                      "how many made", "total produced", "pistols made", "rifles made",
                      "manufacturing output", "firearms produced")
@@ -169,9 +175,26 @@ class QueryUnderstandingAgent:
         # date / location filters -> metadata retrieval
         if re.search(r"\b(19|20)\d{2}\b", q) or " in 20" in q:
             plan.use_metadata = True
-        plan.reason = (f"intent={plan.intent}; graph={plan.use_graph}; "
-                       f"meta={plan.use_metadata}; hybrid={plan.use_bm25}; "
-                       f"domain={plan.filters.get('domain', '')}")
+
+        # Mode routing (addendum Step 6c): global/sensemaking questions are
+        # answered from community summaries; direct facts stay on the hybrid
+        # vector lane. A global question that also names a specific year/entity
+        # is "mixed" (run both, merge with provenance).
+        is_global = (any(w in q for w in GLOBAL_WORDS)
+                     or plan.intent in ("relationship", "pattern", "multi"))
+        if is_global:
+            has_specific = bool(re.search(r"\b(19|20)\d{2}\b", q)) or \
+                plan.intent in ("table",)
+            plan.mode = "mixed" if has_specific else "global"
+            # NOTE: mode is additive metadata only — it does NOT change use_graph
+            # or any local-lane behaviour, so the hybrid baseline is unchanged.
+            # The global branch acts only when community summaries exist.
+        else:
+            plan.mode = "local"
+
+        plan.reason = (f"intent={plan.intent}; mode={plan.mode}; "
+                       f"graph={plan.use_graph}; meta={plan.use_metadata}; "
+                       f"hybrid={plan.use_bm25}; domain={plan.filters.get('domain', '')}")
 
         # Optional LLM refinement (only if a real LLM is configured AND enabled).
         # Gated by config so the eval harness can pin deterministic retrieval
@@ -604,6 +627,53 @@ class RerankingAgent:
                         (len(order) - rank) * 0.05
         except Exception:  # noqa: BLE001
             pass
+
+
+class GlobalAnswerAgent:
+    """Global/sensemaking answers via map-reduce over community summaries
+    (addendum Step 6c). MAP: select communities relevant to the question and
+    take their briefings. REDUCE: synthesize one source-traced answer. Every
+    claim resolves back to the communities' member chunk_ids (provenance)."""
+
+    def answer(self, plan: QueryPlan, engine: Engine, store) -> Optional[Answer]:
+        comms = store.relevant(plan.question, top_k=6)
+        if not comms:
+            return None
+        briefings = []
+        citations = []
+        for i, c in enumerate(comms, 1):
+            briefings.append(f"[C{i}] {c.get('summary', '')}")
+            chunk_ids = c.get("chunk_ids", [])[:5]
+            # Resolve a representative source name for provenance.
+            srcs = []
+            for cid in chunk_ids:
+                for corpus in engine.corpora:
+                    ch = engine.vstore(corpus).get(cid)
+                    if ch:
+                        srcs.append(ch.source_name or ch.document_title)
+                        break
+            citations.append({
+                "ref": i, "community": True,
+                "members": c.get("members", [])[:8],
+                "sources": sorted(set(s for s in srcs if s)),
+                "chunk_ids": chunk_ids,
+            })
+        context = "\n".join(briefings)
+        if engine.llm.name != "offline":
+            sys = ("You are an ATF analyst answering a corpus-wide question. Use ONLY "
+                   "the community briefings below. Identify patterns/recurrences and "
+                   "cite the communities you used as [Cn]. If they are insufficient, "
+                   "say so. Do not invent connections.")
+            prompt = (f"QUESTION: {plan.question}\n\nCOMMUNITY BRIEFINGS:\n{context}\n\n"
+                      "Synthesize a clear, source-traced answer.")
+            answer_text = engine.llm.complete(prompt, system=sys)
+        else:
+            answer_text = ("[corpus-wide synthesis from graph communities]\n" + context)
+        conf = round(min(1.0, 0.4 + 0.1 * len(comms)), 3)
+        return Answer(question=plan.question, answer=answer_text,
+                      citations=citations, confidence=conf,
+                      plan=plan.__dict__, graph_paths=[],
+                      evidence_count=len(comms))
 
 
 class GenerationAgent:
