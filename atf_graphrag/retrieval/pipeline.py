@@ -26,6 +26,20 @@ def _unique(seq):
     return out
 
 
+_INSUFFICIENT_MARKERS = (
+    "does not contain", "not contain", "cannot provide", "no information",
+    "insufficient", "does not provide", "not found", "unable to",
+    "no relevant", "not specify", "do not provide", "don't provide",
+)
+
+
+def _insufficient(answer: str) -> bool:
+    """True when an answer is effectively a refusal — used to trigger the
+    global→local fallback so a community miss doesn't surface as 'no answer'."""
+    a = (answer or "").lower()
+    return (len(a.strip()) < 25) or any(m in a for m in _INSUFFICIENT_MARKERS)
+
+
 class Retriever:
     def __init__(self, engine: Engine):
         self.e = engine
@@ -66,7 +80,11 @@ class Retriever:
         if plan.mode == "global" and self._has_communities():
             gans = _timed("global", lambda: self.global_agent.answer(
                 plan, self.e, self.communities))
-            if gans is not None:
+            # Global → local fallback: if the community map-reduce can't answer
+            # (insufficient / refusal), drop to the hybrid lane instead of
+            # refusing. This recovers specific-data questions ("most common X")
+            # that route global but whose answer lives in a document table.
+            if gans is not None and not _insufficient(gans.answer):
                 timings["total"] = round(sum(timings.values()), 1)
                 steps["global"] = {"communities_used": gans.evidence_count}
                 result = {
@@ -79,6 +97,7 @@ class Retriever:
                     steps["timings_ms"] = timings
                     result["trace"] = steps
                 return result
+            steps["global_fallback"] = "insufficient → local lane"
 
         corpora = _timed("select", lambda: self.select.select(plan, self.e))
         steps["2_corpus_selection"] = corpora
