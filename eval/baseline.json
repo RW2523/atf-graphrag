@@ -3,15 +3,15 @@
     "n_questions": 20,
     "n_retrieval": 18,
     "n_refusal": 2,
-    "recall_at_5": 0.9259,
-    "ndcg_at_10": 0.8681,
-    "mrr": 0.8611,
-    "precision_at_5": 0.3574,
-    "hit_rate": 0.9444,
+    "recall_at_5": 0.9537,
+    "ndcg_at_10": 0.8896,
+    "mrr": 0.8889,
+    "precision_at_5": 0.3685,
+    "hit_rate": 1.0,
     "refusal_accuracy": 1.0,
-    "faithfulness": 0.6667,
+    "faithfulness": 0.5,
     "faithfulness_judged": 18,
-    "elapsed_s": 92.7
+    "elapsed_s": 106.6
   },
   "per_question": [
     {
@@ -57,13 +57,13 @@
       "id": "q04",
       "intent": "fact",
       "expected_refusal": false,
-      "answer_preview": "The neural scaling laws that govern how model performance improves with compute and data can be summarized as follows:\n\n1. **Scaling Laws**: There is a predicta",
+      "answer_preview": "The neural scaling laws that govern how model performance improves with compute and data are characterized by predictable relationships between model size, trai",
       "recall_at_5": 1.0,
       "ndcg_at_10": 0.6934264036172708,
       "mrr": 0.5,
       "precision_at_5": 0.4,
       "hit": 1.0,
-      "faithfulness": 1.0,
+      "faithfulness": 0.0,
       "faithfulness_skipped": false
     },
     {
@@ -83,7 +83,7 @@
       "id": "q06",
       "intent": "fact",
       "expected_refusal": false,
-      "answer_preview": "The core idea behind diffusion models for image generation is that they are a class of latent variable models that utilize principles from nonequilibrium thermo",
+      "answer_preview": "The core idea behind diffusion models for image generation is that they are a class of latent variable models that utilize a parameterized Markov chain trained ",
       "recall_at_5": 1.0,
       "ndcg_at_10": 1.0,
       "mrr": 1.0,
@@ -109,27 +109,27 @@
       "id": "q08",
       "intent": "fact",
       "expected_refusal": true,
-      "answer_preview": "The context provided does not contain any specific information about the CLIP model or its connection between vision and language. Therefore, I cannot provide a",
+      "answer_preview": "The provided context does not contain any information about the CLIP model or its connection between vision and language. Therefore, I cannot provide an answer ",
       "refusal_correct": 1.0
     },
     {
       "id": "q09",
       "intent": "fact",
       "expected_refusal": true,
-      "answer_preview": "The context does not provide specific benchmark results for LLaMA or a direct comparison to GPT models. It mentions that LLaMA models have achieved \"very excell",
+      "answer_preview": "The context provided does not contain specific benchmark results for LLaMA or a direct comparison of its performance against GPT models. It mentions that LLaMA ",
       "refusal_correct": 1.0
     },
     {
       "id": "q10",
       "intent": "fact",
       "expected_refusal": false,
-      "answer_preview": "The context provided does not contain specific information about \"chain-of-thought prompting\" or its benefits for reasoning. Therefore, I cannot provide a clear",
-      "recall_at_5": 0.0,
-      "ndcg_at_10": 0.0,
-      "mrr": 0.0,
-      "precision_at_5": 0.0,
-      "hit": 0.0,
-      "faithfulness": 1.0,
+      "answer_preview": "Chain-of-thought prompting is a technique used in large language models (LLMs) that involves breaking down complex reasoning tasks into simpler, sequential step",
+      "recall_at_5": 0.5,
+      "ndcg_at_10": 0.38685280723454163,
+      "mrr": 0.5,
+      "precision_at_5": 0.2,
+      "hit": 1.0,
+      "faithfulness": 0.0,
       "faithfulness_skipped": false
     },
     {
@@ -168,7 +168,7 @@
       "mrr": 1.0,
       "precision_at_5": 0.4,
       "hit": 1.0,
-      "faithfulness": 0.0,
+      "faithfulness": 1.0,
       "faithfulness_skipped": false
     },
     {
@@ -233,7 +233,7 @@
       "mrr": 1.0,
       "precision_at_5": 1.0,
       "hit": 1.0,
-      "faithfulness": 1.0,
+      "faithfulness": 0.0,
       "faithfulness_skipped": false
     },
     {
@@ -253,13 +253,13 @@
       "id": "q20",
       "intent": "multi",
       "expected_refusal": false,
-      "answer_preview": "Recent research on large language models (LLMs) reveals several common themes:\n\n1. **Alignment and Optimization**: There is a focus on aligning LLMs with human ",
+      "answer_preview": "Recent research on large language models (LLMs) reveals several common themes:\n\n1. **Multi-task Learning**: There is a significant focus on optimizing LLMs for ",
       "recall_at_5": 0.6666666666666666,
       "ndcg_at_10": 0.7653606369886217,
       "mrr": 1.0,
       "precision_at_5": 0.4,
       "hit": 1.0,
-      "faithfulness": 1.0,
+      "faithfulness": 0.0,
       "faithfulness_skipped": false
     }
   ]
