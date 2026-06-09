@@ -148,7 +148,10 @@ def _apply_env(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 class Settings:
     def __init__(self, profile: str | None = None):
-        cfg = dict(DEFAULTS)
+        import copy
+        # Deep copy so per-instance edits to nested config (e.g. ingestion.parser)
+        # never leak back into the module-global DEFAULTS.
+        cfg = copy.deepcopy(DEFAULTS)
         cfg = _deep_merge(cfg, _load_json(ROOT / "config" / "settings.json"))
         prof = profile or os.environ.get("ATF_PROFILE") or cfg.get("profile", "local")
         cfg["profile"] = prof
