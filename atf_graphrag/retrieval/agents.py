@@ -475,7 +475,8 @@ class RetrievalAgent:
         from .graph_retriever import GraphRetriever
         g = engine.graph
         if not hasattr(self, "_ppr") or self._ppr.g is not g:
-            self._ppr = GraphRetriever(g)
+            prune_cfg = (engine.settings.get("graph", {}) or {}).get("prune", {})
+            self._ppr = GraphRetriever(g, prune_cfg=prune_cfg)
         if not self._ppr.available():
             return self._graph_expand(plan, corpora, engine, add)
 

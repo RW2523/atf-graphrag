@@ -27,8 +27,9 @@ class GraphRetriever:
     """Builds a weighted undirected networkx graph from the LocalGraphStore and
     ranks chunks by personalized PageRank seeded on query entities."""
 
-    def __init__(self, graph_store):
+    def __init__(self, graph_store, prune_cfg=None):
         self.g = graph_store
+        self.prune_cfg = prune_cfg or {}     # Phase-A pruning (optional)
         self._nx = None
         self._sig = None     # (n_nodes, n_edges) to invalidate the cache
 
@@ -39,19 +40,10 @@ class GraphRetriever:
         sig = (len(self.g.nodes), len(self.g.edges))
         if self._nx is not None and self._sig == sig:
             return self._nx
-        G = nx.Graph()
-        for key, node in self.g.nodes.items():
-            G.add_node(key)
-        for (s, d), e in self.g.edges.items():
-            w = float(e.get("weight", 1))
-            if e.get("typed"):
-                w *= _TYPED_EDGE_BOOST
-            if G.has_edge(s, d):
-                G[s][d]["weight"] += w
-            else:
-                G.add_edge(s, d, weight=w)
-        self._nx, self._sig = G, sig
-        return G
+        from ..graph.pruning import build_nx
+        self._nx = build_nx(self.g, self.prune_cfg, typed_boost=_TYPED_EDGE_BOOST)
+        self._sig = sig
+        return self._nx
 
     def rank_chunks(self, seeds: List[str], top_k: int = 30
                     ) -> List[Tuple[str, float]]:
