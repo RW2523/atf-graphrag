@@ -20,10 +20,16 @@ class LocalGraphStore:
         self.file = os.path.join(path, "graph.json")
         # node -> {type, count, chunks:set, corpus:set}
         self.nodes: Dict[str, Dict] = {}
-        # (src,dst) -> {rel, weight, chunks:set}
+        # (src,dst) -> {rel, weight, chunks:set, typed:bool}
         self.edges: Dict[Tuple[str, str], Dict] = {}
         self.adj: Dict[str, Set[str]] = defaultdict(set)
+        # Typed-only adjacency (excludes generic co_occurs) for high-signal
+        # traversal of relationship/pattern queries.
+        self.adj_typed: Dict[str, Set[str]] = defaultdict(set)
         self._load()
+
+    # Relations treated as low-signal "just appeared together".
+    _GENERIC_RELS = ("co_occurs", "related_to")
 
     # ---- persistence ----
     def _load(self) -> None:
@@ -36,11 +42,15 @@ class LocalGraphStore:
                 "chunks": set(n.get("chunks", [])), "corpus": set(n.get("corpus", []))}
         for e in data["edges"]:
             key = (e["src"], e["dst"])
-            self.edges[key] = {"rel": e.get("rel", "related_to"),
-                               "weight": e.get("weight", 1),
-                               "chunks": set(e.get("chunks", []))}
+            rel = e.get("rel", "related_to")
+            typed = e.get("typed", rel not in self._GENERIC_RELS)
+            self.edges[key] = {"rel": rel, "weight": e.get("weight", 1),
+                               "chunks": set(e.get("chunks", [])), "typed": typed}
             self.adj[e["src"]].add(e["dst"])
             self.adj[e["dst"]].add(e["src"])
+            if typed:
+                self.adj_typed[e["src"]].add(e["dst"])
+                self.adj_typed[e["dst"]].add(e["src"])
 
     def commit(self) -> None:
         data = {
@@ -48,6 +58,7 @@ class LocalGraphStore:
                        "chunks": list(v["chunks"]), "corpus": list(v["corpus"])}
                       for k, v in self.nodes.items()],
             "edges": [{"src": s, "dst": d, "rel": v["rel"], "weight": v["weight"],
+                       "typed": v.get("typed", False),
                        "chunks": list(v["chunks"])}
                       for (s, d), v in self.edges.items()],
         }
@@ -101,19 +112,32 @@ class LocalGraphStore:
         return key
 
     def add_relation(self, src: str, dst: str, rel: str = "related_to",
-                     chunk_id: str = "", corpus: str = "") -> None:
+                     chunk_id: str = "", corpus: str = "",
+                     weight: int = 1) -> None:
         s, d = self._norm(src), self._norm(dst)
         if not s or not d or s == d:
             return
         self.add_entity(src, chunk_id=chunk_id, corpus=corpus)
         self.add_entity(dst, chunk_id=chunk_id, corpus=corpus)
         key = (s, d)
-        e = self.edges.setdefault(key, {"rel": rel, "weight": 0, "chunks": set()})
-        e["weight"] += 1
+        is_typed = rel not in self._GENERIC_RELS
+        e = self.edges.get(key)
+        if e is None:
+            e = {"rel": rel, "weight": 0, "chunks": set(), "typed": is_typed}
+            self.edges[key] = e
+        elif is_typed and not e.get("typed"):
+            # A typed relation upgrades a previously generic (co_occurs) edge:
+            # high-signal relations take precedence over mere co-occurrence.
+            e["rel"] = rel
+            e["typed"] = True
+        e["weight"] += weight                 # recurrence strengthens the link
         if chunk_id:
             e["chunks"].add(chunk_id)
         self.adj[s].add(d)
         self.adj[d].add(s)
+        if e["typed"]:
+            self.adj_typed[s].add(d)
+            self.adj_typed[d].add(s)
 
     # ---- query ----
     def neighbors(self, name: str, hops: int = 1) -> List[str]:
@@ -140,6 +164,38 @@ class LocalGraphStore:
                 chunks |= self.nodes[n]["chunks"]
         return chunks
 
+    def neighbors_typed(self, name: str, hops: int = 1) -> List[str]:
+        """BFS over typed edges only (excludes generic co_occurrence)."""
+        start = self._norm(name)
+        if start not in self.nodes:
+            return []
+        seen, frontier, out = {start}, {start}, []
+        for _ in range(hops):
+            nxt = set()
+            for n in frontier:
+                for m in self.adj_typed.get(n, ()):
+                    if m not in seen:
+                        seen.add(m)
+                        nxt.add(m)
+                        out.append(m)
+            frontier = nxt
+        return out
+
+    def subgraph_chunks_typed(self, name: str, hops: int = 2) -> Set[str]:
+        """Chunks reachable from *name* following ONLY typed edges."""
+        nodes = [self._norm(name)] + self.neighbors_typed(name, hops)
+        chunks: Set[str] = set()
+        for n in nodes:
+            if n in self.nodes:
+                chunks |= self.nodes[n]["chunks"]
+        return chunks
+
+    def edge_rel(self, a: str, b: str) -> str:
+        """Return the relation label between two nodes (either direction)."""
+        s, d = self._norm(a), self._norm(b)
+        e = self.edges.get((s, d)) or self.edges.get((d, s))
+        return e["rel"] if e else ""
+
     def path(self, a: str, b: str, max_hops: int = 4) -> List[str]:
         s, t = self._norm(a), self._norm(b)
         if s not in self.nodes or t not in self.nodes:
@@ -150,6 +206,37 @@ class LocalGraphStore:
             p = q.popleft()
             if p[-1] == t:
                 return [self.nodes[n].get("label", n) for n in p]
+            if len(p) > max_hops:
+                continue
+            for m in self.adj[p[-1]]:
+                if m not in seen:
+                    seen.add(m)
+                    q.append(p + [m])
+        return []
+
+    def path_labeled(self, a: str, b: str, max_hops: int = 4) -> str:
+        """Shortest path rendered with edge relations, e.g.
+        'acme --SOLD_BY--> smith and wesson'. Empty string if no path."""
+        nodes_path = self._path_ids(a, b, max_hops)
+        if not nodes_path:
+            return ""
+        parts = [self.nodes[nodes_path[0]].get("label", nodes_path[0])]
+        for u, v in zip(nodes_path, nodes_path[1:]):
+            rel = (self.edges.get((u, v)) or self.edges.get((v, u))
+                   or {}).get("rel", "related_to")
+            parts.append(f"--{rel}--> {self.nodes[v].get('label', v)}")
+        return " ".join(parts)
+
+    def _path_ids(self, a: str, b: str, max_hops: int = 4) -> List[str]:
+        s, t = self._norm(a), self._norm(b)
+        if s not in self.nodes or t not in self.nodes:
+            return []
+        q = deque([[s]])
+        seen = {s}
+        while q:
+            p = q.popleft()
+            if p[-1] == t:
+                return p
             if len(p) > max_hops:
                 continue
             for m in self.adj[p[-1]]:

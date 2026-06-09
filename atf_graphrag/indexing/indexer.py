@@ -226,18 +226,24 @@ class Indexer:
                 g.add_entity(name, et, rec.chunk_id, rec.corpus)
         generic = [(R.canonical(e, "entity"), "entity") for e in rec.entities[:12]]
         nodes = [(n, t) for n, t in (typed + generic) if n]
-        # Co-occurrence edges between distinct nodes (self-loops dropped — they
-        # arise when resolution collapses two variants in the same chunk).
-        for (a, _), (b, _) in combinations(nodes, 2):
-            if a != b:
-                g.add_relation(a, b, "co_occurs", rec.chunk_id, rec.corpus)
-        # Typed relations from LLM extraction (Phase 2), repointed to canonical ids.
+
+        # 1) Typed relations from LLM extraction take precedence (high signal).
+        #    Repoint endpoints to canonical ids; remember which pairs are typed.
+        typed_pairs: set = set()
         for r in rec.relationships:
             src = R.canonical(r.get("source", ""), "entity")
             dst = R.canonical(r.get("target", ""), "entity")
+            rel = r.get("relation", "related_to")
             if src and dst and src != dst:
-                g.add_relation(src, dst, r.get("relation", "related_to"),
-                               rec.chunk_id, rec.corpus)
+                g.add_relation(src, dst, rel, rec.chunk_id, rec.corpus, weight=2)
+                typed_pairs.add(frozenset((src, dst)))
+
+        # 2) Co-occurrence ONLY between pairs without a typed relation, at a
+        #    lower weight — keeps the graph from being a dense low-signal clique.
+        for (a, _), (b, _) in combinations(nodes, 2):
+            if a != b and frozenset((a, b)) not in typed_pairs:
+                g.add_relation(a, b, "co_occurs", rec.chunk_id, rec.corpus,
+                               weight=1)
 
     def _llm_augment(self, rec: ChunkRecord) -> None:
         """Phase 2: use the LLM to extract entities/relations when a key exists."""

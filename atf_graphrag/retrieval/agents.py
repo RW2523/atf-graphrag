@@ -437,24 +437,43 @@ class RetrievalAgent:
 
     def _graph_expand(self, plan, corpora, engine, add) -> List[str]:
         g = engine.graph
+        hops = engine.settings["retrieval"]["graph_hops"]
         terms = content_tokens(plan.question)
         matched = []
         for t in terms:
             node = g.find(t)
             if node and node not in matched:
                 matched.append(node)
-        paths: List[str] = []
-        chunk_ids = set()
+
+        # Collect chunks reachable via TYPED edges separately from co-occurrence:
+        # typed paths are higher signal, so their chunks enter at a higher score.
+        typed_chunks: set = set()
+        all_chunks: set = set()
         for node in matched[:6]:
-            chunk_ids |= g.subgraph_chunks(node, engine.settings["retrieval"]["graph_hops"])
+            typed_chunks |= g.subgraph_chunks_typed(node, hops)
+            all_chunks |= g.subgraph_chunks(node, hops)
+        co_only = all_chunks - typed_chunks
+
+        # Prefer typed relationship paths (labelled with their relation) and
+        # fall back to a plain co-occurrence path when no typed path exists.
+        paths: List[str] = []
         for i in range(len(matched)):
             for j in range(i + 1, min(i + 3, len(matched))):
-                p = g.path(matched[i], matched[j])
-                if p:
-                    paths.append(" -> ".join(p))
+                labelled = g.path_labeled(matched[i], matched[j])
+                if labelled:
+                    paths.append(labelled)
+                else:
+                    p = g.path(matched[i], matched[j])
+                    if p:
+                        paths.append(" -> ".join(p))
+
         for corpus in corpora:
             vs = engine.vstore(corpus)
-            for cid in chunk_ids:
+            for cid in typed_chunks:
+                ch = vs.get(cid)
+                if ch:
+                    add(ch, 0.65, "graph")   # typed-path evidence scores above 0.5
+            for cid in co_only:
                 ch = vs.get(cid)
                 if ch:
                     add(ch, 0.5, "graph")
