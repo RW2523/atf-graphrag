@@ -93,6 +93,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, _engine.stats())
         if self.path == "/graph/top":
             return self._send(200, {"top_entities": _engine.graph.top_entities(15)})
+        if self.path == "/graph/export":
+            import os as _os
+            from ..viz.export_graph import export_graph
+            cpath = _os.path.join(_engine.settings["graph_store"]["path"],
+                                  "communities.json")
+            return self._send(200, export_graph(_engine.graph, cpath))
+        if self.path in ("/graph/view", "/graph"):
+            from ..viz.graph_template import GRAPH_VIEW_HTML
+            return self._send_html(GRAPH_VIEW_HTML)
         return self._send(404, {"error": "not found"})
 
     # ---- POST ----
