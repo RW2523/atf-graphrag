@@ -84,12 +84,13 @@ def test_aws_profile_wires_bedrock_and_textract():
     e = boot("aws")
     assert _cls(e.llm) == "BedrockLLM"
     assert _cls(e.embedder) == "BedrockEmbedder"
+    assert _cls(e.vision) == "BedrockVision"        # implemented in AWS-store step
     assert _cls(e.ocr) == "TextractOCR"
-    # OpenSearch / Neptune / S3 / BedrockVision adapters arrive in the AWS-store
-    # step; until then the factories degrade gracefully to the local default.
+    assert _cls(e.blob) == "S3BlobStore"            # boto3 mocked -> S3 constructs
+    # OpenSearch / Neptune need opensearch-py / neo4j (absent in CI) -> the
+    # factories degrade gracefully to the local stores.
     assert _cls(e.graph) == "LocalGraphStore"
     assert _cls(e.vstore("pdf")) == "LocalVectorStore"
-    assert _cls(e.blob) == "LocalBlobStore"
 
 
 def test_hybrid_profile_boots_and_degrades_neo4j():

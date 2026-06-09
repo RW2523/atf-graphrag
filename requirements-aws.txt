@@ -1,4 +1,8 @@
 # Install for the AWS-native profile (ATF_PROFILE=aws)
 -r requirements.txt
-boto3>=1.34          # Bedrock, Textract, S3
-opensearch-py>=2.4   # vector + hybrid search (OpenSearch k-NN)
+boto3>=1.34          # Bedrock LLM/embeddings/vision, Textract, S3
+opensearch-py>=2.4   # OpenSearch k-NN vector store
+neo4j>=5.0           # graph store (Neo4j and Neptune via openCypher/Bolt)
+
+# Alternative managed vector store
+# qdrant-client>=1.7
