@@ -38,6 +38,8 @@ from atf_graphrag.retrieval.pipeline import Retriever  # noqa: E402
 from eval.retrieval_metrics import (              # noqa: E402
     recall_at_k, ndcg_at_k, mrr, aggregate, precision_at_k)
 from eval.faithfulness import judge_faithfulness  # noqa: E402
+from eval.ragas_metrics import (                   # noqa: E402
+    context_precision, context_recall_from_points)
 
 GOLDEN = ROOT / "eval" / "golden_set.jsonl"
 REPORT = ROOT / "eval" / "report.json"
@@ -73,7 +75,23 @@ def load_golden() -> List[Dict[str, Any]]:
     return rows
 
 
-def run(set_baseline: bool = False, do_faithfulness: bool = True) -> int:
+def _contexts_from_citations(engine, citations) -> list:
+    """Resolve retrieved citation chunk_ids back to their text for RAGAS metrics."""
+    out = []
+    for c in citations or []:
+        cid = c.get("chunk_id")
+        if not cid:
+            continue
+        for corpus in engine.corpora:
+            ch = engine.vstore(corpus).get(cid)
+            if ch:
+                out.append(ch.text)
+                break
+    return out
+
+
+def run(set_baseline: bool = False, do_faithfulness: bool = True,
+        do_ragas: bool = False) -> int:
     golden = load_golden()
     # Deterministic retrieval: pin off LLM query-plan refinement (it varies top_k
     # run-to-run even at temp 0) so recall/NDCG/MRR are reproducible. Generation
@@ -123,6 +141,12 @@ def run(set_baseline: bool = False, do_faithfulness: bool = True) -> int:
             row["faithfulness"] = verdict.get("score")
             row["faithfulness_skipped"] = verdict.get("skipped", True)
 
+        if do_ragas and not expected_refusal:
+            ctxs = _contexts_from_citations(engine, res.get("citations", []))
+            row["context_precision"] = context_precision(engine, g["question"], ctxs)
+            row["context_recall"] = context_recall_from_points(
+                engine, g.get("expected_answer_points", []), ctxs)
+
         per_q.append(row)
 
     elapsed = round(time.time() - t0, 1)
@@ -149,6 +173,15 @@ def run(set_baseline: bool = False, do_faithfulness: bool = True) -> int:
         "faithfulness_judged": len(faith_rows),
         "elapsed_s": elapsed,
     }
+
+    if do_ragas:
+        cp_rows = [r for r in retrieval_rows if r.get("context_precision") is not None]
+        cr_rows = [r for r in retrieval_rows if r.get("context_recall") is not None]
+        summary["context_precision"] = (aggregate(cp_rows, "context_precision")
+                                        if cp_rows else None)
+        summary["context_recall"] = (aggregate(cr_rows, "context_recall")
+                                     if cr_rows else None)
+        summary["ragas_judged"] = max(len(cp_rows), len(cr_rows))
 
     report = {"summary": summary, "per_question": per_q}
     REPORT.write_text(json.dumps(report, indent=2))
@@ -184,6 +217,10 @@ def _print_summary(s: Dict[str, Any]) -> None:
     fa = s["faithfulness"]
     print(f"  faithfulness       : {fa if fa is not None else 'skipped (offline)'} "
           f"(judged {s['faithfulness_judged']})")
+    if "context_precision" in s:
+        cp, cr = s.get("context_precision"), s.get("context_recall")
+        print(f"  context_precision  : {cp if cp is not None else 'skipped'} (RAGAS)")
+        print(f"  context_recall     : {cr if cr is not None else 'skipped'} (RAGAS)")
     print(f"  elapsed            : {s['elapsed_s']}s")
     print("=" * 60)
 
@@ -215,6 +252,9 @@ if __name__ == "__main__":
                     help="write eval/baseline.json from this run")
     ap.add_argument("--no-faithfulness", action="store_true",
                     help="skip the LLM faithfulness judge")
+    ap.add_argument("--ragas", action="store_true",
+                    help="compute RAGAS-style context precision/recall (LLM-judged)")
     args = ap.parse_args()
     sys.exit(run(set_baseline=args.set_baseline,
-                 do_faithfulness=not args.no_faithfulness))
+                 do_faithfulness=not args.no_faithfulness,
+                 do_ragas=args.ragas))
