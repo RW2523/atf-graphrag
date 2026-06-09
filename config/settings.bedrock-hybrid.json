@@ -1,0 +1,12 @@
+{
+  "profile": "bedrock-hybrid",
+  "llm": {"provider": "bedrock", "model": "anthropic.claude-3-5-sonnet-20240620-v1:0", "region": "us-east-1"},
+  "vision": {"provider": "bedrock", "model": "anthropic.claude-3-5-sonnet-20240620-v1:0", "region": "us-east-1"},
+  "embeddings": {"provider": "sentence_transformer", "model": "all-MiniLM-L6-v2", "dim": 384, "batch_size": 64},
+  "reranker": {"provider": "local"},
+  "parser": {"provider": "advanced"},
+  "vector_store": {"provider": "local"},
+  "graph_store": {"provider": "local"},
+  "blob_store": {"provider": "local"},
+  "ingestion": {"ocr": {"provider": "tesseract"}}
+}

@@ -9,33 +9,32 @@ from __future__ import annotations
 from typing import Dict, List
 
 from .config import get_settings, Settings
-from .providers import make_llm, make_embedder, make_vision
-from .stores.vector_store import LocalVectorStore
-from .stores.graph_store import LocalGraphStore
+from .providers import (make_llm, make_embedder, make_vision, make_reranker,
+                        make_parser, make_vector_store, make_graph_store,
+                        make_blob_store, make_ocr)
 
 
 class Engine:
+    """Wires every swappable component from config via provider factories.
+
+    Swapping a profile (local / oss / hybrid / bedrock-hybrid / aws) changes
+    only what the factories construct here; nothing downstream changes.
+    """
+
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
+        # Intelligence layer
         self.llm = make_llm(self.settings)
         self.embedder = make_embedder(self.settings)
         self.vision = make_vision(self.settings)
-        self._vstores: Dict[str, LocalVectorStore] = {}
-        gcfg = self.settings["graph_store"]
-        if gcfg["provider"] == "neo4j":
-            from .providers.neo4j import Neo4jGraphStore  # lazy
-            self.graph = Neo4jGraphStore(gcfg)
-        else:
-            if gcfg["provider"] not in ("local",):
-                print(f"[engine] graph provider '{gcfg['provider']}' not yet "
-                      f"implemented; using local graph store. (Adapter goes in "
-                      f"providers/ with the GraphStore interface.)")
-            self.graph = LocalGraphStore(gcfg["path"])
-        vprov = self.settings["vector_store"]["provider"]
-        if vprov not in ("local",):
-            print(f"[engine] vector provider '{vprov}' not yet implemented; "
-                  f"using local vector store. (Adapter goes in stores/ with the "
-                  f"VectorStore interface.)")
+        self.reranker = make_reranker(self.settings)
+        self.ocr = make_ocr(self.settings.get("ingestion", {}).get("ocr", {}))
+        # Ingestion layer
+        self.parser = make_parser(self.settings)
+        # Storage layer
+        self._vstores: Dict[str, "object"] = {}
+        self.graph = make_graph_store(self.settings)
+        self.blob = make_blob_store(self.settings)
         self.corpora: List[str] = list(self.settings["corpora"])
 
     def set_api_key(self, key: str, model: str | None = None) -> None:
@@ -54,15 +53,14 @@ class Engine:
         if self.settings["embeddings"]["provider"] == "openrouter":
             self.embedder = make_embedder(self.settings)
 
-    def vstore(self, corpus: str) -> LocalVectorStore:
+    def vstore(self, corpus: str):
         if corpus not in self.corpora:
             self.corpora.append(corpus)
         if corpus not in self._vstores:
-            path = self.settings["vector_store"]["path"]
-            self._vstores[corpus] = LocalVectorStore(path, corpus)
+            self._vstores[corpus] = make_vector_store(self.settings, corpus)
         return self._vstores[corpus]
 
-    def all_vstores(self) -> Dict[str, LocalVectorStore]:
+    def all_vstores(self) -> Dict[str, object]:
         for c in self.corpora:
             self.vstore(c)
         return self._vstores
