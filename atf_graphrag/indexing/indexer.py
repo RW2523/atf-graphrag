@@ -23,6 +23,18 @@ def _doc_id(name: str) -> str:
     return hashlib.md5(name.encode()).hexdigest()[:12]
 
 
+def _walk_supported(root: str):
+    """Yield every supported file under *root*, recursing into all subfolders.
+    Skips hidden files/dirs (e.g. .DS_Store, .git)."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for fn in sorted(filenames):
+            if fn.startswith("."):
+                continue
+            if os.path.splitext(fn)[1].lower() in SUPPORTED:
+                yield os.path.join(dirpath, fn)
+
+
 class Indexer:
     def __init__(self, engine: Engine, use_llm_extraction: bool = False):
         self.e = engine
@@ -39,11 +51,14 @@ class Indexer:
     # ---------- public API ----------
     def index_file(self, path: str, corpus: str = "pdf",
                    source_type: Optional[str] = None,
-                   source_url: str = "") -> int:
+                   source_url: str = "", doc_key: str = "") -> int:
         ext = os.path.splitext(path)[1].lower()
         if ext not in SUPPORTED:
             raise ValueError(f"Unsupported file type: {ext}")
-        name = os.path.basename(path)
+        # doc_key (e.g. a path relative to an ingested folder) becomes the
+        # document's identity so files with the same basename in different
+        # subfolders stay distinct and don't overwrite each other.
+        name = doc_key or os.path.basename(path)
         # Parse via the configured parser provider (advanced | docling), selected
         # by config. The parser returns the same (page_no, text) contract and the
         # advanced parser preserves the VLM cache + scanned-page fallback. Falls
@@ -103,16 +118,18 @@ class Indexer:
         return n
 
     def index_directory(self, path: str, corpus: str = "pdf") -> Dict[str, int]:
+        """Recursively index every supported file under *path* (all subfolders).
+        Each file's key is its path relative to *path*, so same-named files in
+        different folders stay distinct."""
         out: Dict[str, int] = {}
-        for fn in sorted(os.listdir(path)):
-            fp = os.path.join(path, fn)
-            if os.path.isfile(fp) and os.path.splitext(fn)[1].lower() in SUPPORTED:
-                try:
-                    out[fn] = self.index_file(fp, corpus=corpus)
-                    print(f"  [indexed] {fn}: {out[fn]} chunks")
-                except Exception as ex:  # noqa: BLE001
-                    out[fn] = -1
-                    print(f"[indexer] {fn}: {ex}")
+        for fp in _walk_supported(path):
+            rel = os.path.relpath(fp, path)
+            try:
+                out[rel] = self.index_file(fp, corpus=corpus, doc_key=rel)
+                print(f"  [indexed] {rel}: {out[rel]} chunks")
+            except Exception as ex:  # noqa: BLE001
+                out[rel] = -1
+                print(f"[indexer] {rel}: {ex}")
         return out
 
     def index_text(self, text: str, corpus: str = "pdf", **meta) -> int:

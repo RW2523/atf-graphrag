@@ -48,6 +48,9 @@ class RouteDecision:
     index_vector: bool = True
     insert_graph: bool = True
     backend: str = "local"        # local | aws (route to AWS-native pipeline)
+    doc_key: str = ""             # document identity (e.g. path relative to a
+                                  # batched folder) so nested same-named files
+                                  # stay distinct; defaults to the basename.
     reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -182,9 +185,9 @@ class IngestionOrchestrator:
                 h.update(chunk)
         return h.hexdigest()
 
-    def _idempotency(self, path: str, corpus: str) -> str:
+    def _idempotency(self, path: str, corpus: str, doc_key: str = "") -> str:
         """Return 'skip' | 'update' | 'create' for a file path."""
-        doc_id = _doc_id(os.path.basename(path))
+        doc_id = _doc_id(doc_key or os.path.basename(path))
         key = f"{corpus}:{doc_id}"
         try:
             chash = self._file_hash(path)
@@ -197,8 +200,8 @@ class IngestionOrchestrator:
             return "update"
         return "create"
 
-    def _record(self, path: str, corpus: str, chunks: int) -> None:
-        doc_id = _doc_id(os.path.basename(path))
+    def _record(self, path: str, corpus: str, chunks: int, doc_key: str = "") -> None:
+        doc_id = _doc_id(doc_key or os.path.basename(path))
         try:
             chash = self._file_hash(path)
         except Exception:  # noqa: BLE001
@@ -249,18 +252,18 @@ class IngestionOrchestrator:
 
     # ---- handlers (reuse existing nodes) ---------------------------------
     def _handle_file(self, d: RouteDecision) -> Dict[str, Any]:
-        action = self._idempotency(d.source, d.corpus)
+        action = self._idempotency(d.source, d.corpus, d.doc_key)
         if action == "skip":
             return {"status": "skipped", "reason": "unchanged", "chunks": 0,
                     "source": d.source}
         if action == "update":
-            doc_id = _doc_id(os.path.basename(d.source))
+            doc_id = _doc_id(d.doc_key or os.path.basename(d.source))
             removed = self.e.vstore(d.corpus).delete_document(doc_id)
             self.e.vstore(d.corpus).commit()
         else:
             removed = 0
-        n = self.indexer.index_file(d.source, corpus=d.corpus)
-        self._record(d.source, d.corpus, n)
+        n = self.indexer.index_file(d.source, corpus=d.corpus, doc_key=d.doc_key)
+        self._record(d.source, d.corpus, n, d.doc_key)
         return {"status": action, "chunks": n, "removed": removed,
                 "source": d.source}
 
@@ -294,17 +297,18 @@ class IngestionOrchestrator:
         return {"status": "created", "chunks": n, "source": d.source}
 
     def _handle_batch(self, d: RouteDecision) -> Dict[str, Any]:
-        from ..ingestion.loaders import SUPPORTED
+        """Recurse through ALL subfolders and ingest every supported file.
+        Each file is keyed by its path relative to the batch root, so nothing is
+        missed and same-named files in different folders stay distinct."""
+        from ..indexing.indexer import _walk_supported
         results: Dict[str, Any] = {}
         total = 0
-        for fn in sorted(os.listdir(d.source)):
-            fp = os.path.join(d.source, fn)
-            if not os.path.isfile(fp):
-                continue
-            if os.path.splitext(fn)[1].lower() not in SUPPORTED:
-                continue
-            r = self._run_sequential(classify(fp, self.e, d.corpus))
-            results[fn] = r
+        for fp in _walk_supported(d.source):
+            rel = os.path.relpath(fp, d.source)
+            dec = classify(fp, self.e, d.corpus)
+            dec.doc_key = rel                     # path-qualified identity
+            r = self._run_sequential(dec)
+            results[rel] = r
             total += r.get("chunks", 0)
         return {"status": "created", "files": len(results), "chunks": total,
                 "detail": results, "source": d.source}
