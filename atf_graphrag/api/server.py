@@ -134,6 +134,56 @@ def _restore_all(name: str) -> bool:
     return ok
 
 
+def _rebind(settings) -> None:
+    """Rebuild ALL singletons onto a given Settings object (used to switch the
+    live engine between local and AWS-native profiles without a restart)."""
+    global _engine, _indexer, _retriever, _orch, _jobs
+    _engine = Engine(settings)
+    _indexer = Indexer(_engine)
+    _retriever = Retriever(_engine)
+    _orch = IngestionOrchestrator(_engine, _indexer)
+    _jobs = JobManager(
+        jobs_dir=os.path.join(_storage_root(), "jobs"),
+        ingest_fn=lambda path, corpus, on_stage: _orch.ingest(
+            path, corpus=corpus, on_stage=on_stage),
+        commit_fn=_engine.commit, lock=_INGEST_LOCK)
+
+
+def _apply_aws(form: dict) -> dict:
+    """Switch the live engine onto AWS-native backends built from the form."""
+    from .aws_setup import build_aws_settings, wiring
+    _rebind(build_aws_settings(form))
+    return {"ok": True, "wiring": wiring(_engine)}
+
+
+def _revert_local() -> dict:
+    """Switch the live engine back to the default (local) profile."""
+    from ..config import Settings
+    from .aws_setup import wiring
+    _rebind(Settings(profile="local"))
+    return {"ok": True, "wiring": wiring(_engine)}
+
+
+def _aws_smoke() -> dict:
+    """Run an end-to-end ingest -> index -> query on the live engine and return
+    the cited answer plus per-stage timings."""
+    from .aws_setup import SMOKE_TEXT, SMOKE_QUESTION, wiring
+    try:
+        n = _indexer.index_text(SMOKE_TEXT, corpus="pdf",
+                                source_name="aws_smoke.txt", document_id="aws_smoke")
+        _engine.commit()
+        res = _retriever.answer(SMOKE_QUESTION, trace=True)
+    except Exception as e:  # noqa: BLE001 — surface as a clean FAIL row in the UI
+        return {"ok": False, "error": f"{type(e).__name__}: {e}",
+                "question": SMOKE_QUESTION, "answer": "", "citations": [],
+                "timings_ms": {}, "wiring": wiring(_engine)}
+    return {"ok": bool(res.get("answer")), "chunks_indexed": n,
+            "question": SMOKE_QUESTION, "answer": res.get("answer", ""),
+            "citations": res.get("citations", []),
+            "timings_ms": (res.get("trace") or {}).get("timings_ms", {}),
+            "wiring": wiring(_engine)}
+
+
 def _boot() -> None:
     global _engine, _indexer, _retriever, _orch, _jobs
     if _engine is None:
@@ -252,6 +302,10 @@ class Handler(BaseHTTPRequestHandler):
             jid = self.path.split("/api/jobs/", 1)[1].strip("/")
             j = _jobs.get(jid) if _jobs else None
             return self._send(200, j) if j else self._send(404, {"error": "job not found"})
+        if self.path == "/api/aws/status":
+            from .aws_setup import wiring, credentials_present
+            return self._send(200, {"wiring": wiring(_engine),
+                                    "credentials": credentials_present()})
         if self.path == "/graph/top":
             return self._send(200, {"top_entities": _engine.graph.top_entities(15)})
         if self.path == "/graph/export":
@@ -327,6 +381,18 @@ class Handler(BaseHTTPRequestHandler):
                 _indexer._extract_mode = mode
                 _indexer.use_llm = (_indexer._llm_ok and mode in ("on", "auto"))
                 return self._send(200, {"ok": True, "llm_extraction": mode})
+            if self.path == "/api/aws/credentials":
+                from .aws_setup import apply_aws_credentials
+                return self._send(200, apply_aws_credentials(data))
+            if self.path == "/api/aws/validate":
+                from .aws_setup import validate_components
+                return self._send(200, validate_components(data))
+            if self.path == "/api/aws/apply":
+                return self._send(200, _apply_aws(data))
+            if self.path == "/api/aws/smoke":
+                return self._send(200, _aws_smoke())
+            if self.path == "/api/aws/revert":
+                return self._send(200, _revert_local())
             if self.path.startswith("/api/jobs/") and self.path.endswith("/cancel"):
                 jid = self.path[len("/api/jobs/"):-len("/cancel")].strip("/")
                 ok = _jobs.cancel(jid) if _jobs else False

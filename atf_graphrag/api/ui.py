@@ -90,6 +90,18 @@ body{margin:0;font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
 .ex{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 14px;cursor:pointer;font-size:13px;max-width:260px;text-align:left;box-shadow:var(--shadow)}
 .ex:hover{border-color:var(--accent);color:var(--accent)}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;box-shadow:var(--shadow);max-width:880px;margin:0 auto 18px}
+.awsgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+.awsgrid label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:#475569}
+.awsgrid input,.awsgrid select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:13px;background:#fff}
+.awswire{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}
+.wchip{font-size:11.5px;background:#f1f5f9;border:1px solid var(--line);border-radius:20px;padding:4px 11px}
+.wchip b{color:#0f172a} .wchip.aws{background:#fff7ed;border-color:#fdba74}
+.awsrow{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;margin-top:8px;font-size:13px}
+.awsrow .pill{font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px}
+.awsrow.ok .pill{background:#dcfce7;color:#166534} .awsrow.bad .pill{background:#fee2e2;color:#991b1b}
+.awsrow .cmp{font-weight:700;min-width:120px} .awsrow .dt{color:var(--muted);flex:1}
+.awsrow .ms{color:#94a3b8;font-size:11px}
+.muted{color:var(--muted);font-size:12px}
 .drop{border:2px dashed #cbd5e1;border-radius:14px;padding:44px;text-align:center;color:var(--muted);transition:.15s;cursor:pointer}
 .drop.over{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
 .drop .big{font-size:40px} .drop b{color:#334155;font-size:16px}
@@ -195,6 +207,7 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
     <button data-view="kb"><span class="ico">&#128218;</span> Knowledge Base</button>
     <button data-view="upload"><span class="ico">&#8593;</span> Upload</button>
     <button data-view="graph"><span class="ico">&#128376;</span> Graph</button>
+    <button data-view="aws"><span class="ico">&#9729;</span> AWS Native</button>
   </nav>
   <div class="spacer"></div>
   <div class="conn">
@@ -325,6 +338,73 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
       </div>
     </div>
   </section>
+
+  <section class="view" id="v-aws">
+    <div class="card">
+      <h2 style="margin:0 0 4px">AWS-native stack</h2>
+      <p style="color:var(--muted);margin:0 0 8px">Configure credentials and managed
+      endpoints, validate live connectivity per component, switch the running
+      engine onto Bedrock + managed stores, then run an end-to-end smoke test.
+      <b>Secrets are held in memory only — never written to disk or git.</b></p>
+      <div id="aws-wiring" class="awswire"></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 10px">1 &middot; Credentials</h3>
+      <div class="awsgrid">
+        <label>Region<input id="aws-region" placeholder="us-east-1" value="us-east-1"/></label>
+        <label>Access key ID<input id="aws-akid" placeholder="AKIA&hellip;"/></label>
+        <label>Secret access key<input id="aws-secret" type="password" placeholder="&bull;&bull;&bull;"/></label>
+        <label>Session token (optional)<input id="aws-token" type="password" placeholder="optional"/></label>
+        <label>Neo4j/Neptune user<input id="aws-n4user" placeholder="neo4j"/></label>
+        <label>Neo4j/Neptune password<input id="aws-n4pass" type="password" placeholder="&bull;&bull;&bull;"/></label>
+      </div>
+      <div class="actions" style="justify-content:flex-start">
+        <button class="btn" onclick="awsSaveCreds()">Save credentials (in-memory)</button>
+        <span id="aws-credstate" class="muted"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 10px">2 &middot; Components</h3>
+      <div class="awsgrid">
+        <label>Bedrock LLM model<input id="aws-llm" value="anthropic.claude-3-5-sonnet-20240620-v1:0"/></label>
+        <label>Bedrock vision model<input id="aws-vision" value="anthropic.claude-3-5-sonnet-20240620-v1:0"/></label>
+        <label>Titan embedding model<input id="aws-emb" value="amazon.titan-embed-text-v2:0"/></label>
+        <label>Embedding dim<input id="aws-embdim" value="1024"/></label>
+        <label>Reranker (Cohere)<input id="aws-rr" value="cohere.rerank-v3-5:0"/></label>
+        <label>Textract OCR<select id="aws-ocr"><option value="1">enabled</option><option value="0">disabled</option></select></label>
+      </div>
+      <div class="awsgrid" style="margin-top:6px">
+        <label>Vector store<select id="aws-vs" onchange="awsVsFields()"><option value="opensearch">OpenSearch</option><option value="qdrant">Qdrant</option></select></label>
+        <label id="aws-vs-ep-l">OpenSearch host<input id="aws-vs-ep" placeholder="https://search-xxx.us-east-1.es.amazonaws.com"/></label>
+        <label id="aws-vs-key-l" style="display:none">Qdrant API key<input id="aws-vs-key" type="password" placeholder="optional"/></label>
+        <label>Index/collection prefix<input id="aws-vs-prefix" value="atf"/></label>
+      </div>
+      <div class="awsgrid" style="margin-top:6px">
+        <label>Graph store<select id="aws-gs" onchange="awsGsFields()"><option value="neptune">Neptune</option><option value="neo4j">Neo4j</option></select></label>
+        <label id="aws-gs-ep-l">Neptune endpoint<input id="aws-gs-ep" placeholder="db-neptune-1.cluster-xxx.us-east-1.neptune.amazonaws.com"/></label>
+        <label id="aws-gs-port-l">Port<input id="aws-gs-port" value="8182"/></label>
+        <label id="aws-gs-uri-l" style="display:none">Neo4j URI<input id="aws-gs-uri" placeholder="bolt://host:7687"/></label>
+      </div>
+      <div class="awsgrid" style="margin-top:6px">
+        <label>S3 bucket<input id="aws-s3" placeholder="my-atf-bucket"/></label>
+        <label>S3 prefix<input id="aws-s3prefix" placeholder="rag/"/></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 10px">3 &middot; Validate &amp; activate</h3>
+      <div class="actions" style="justify-content:flex-start;flex-wrap:wrap">
+        <button class="btn" onclick="awsValidate()">&#128268; Validate connectivity</button>
+        <button class="btn" onclick="awsApply()">&#9889; Apply &amp; switch engine</button>
+        <button class="btn" onclick="awsSmoke()">&#9654; Run end-to-end smoke test</button>
+        <button class="btn ghost" onclick="awsRevert()">&#8617; Revert to local</button>
+      </div>
+      <div id="aws-results"></div>
+      <div id="aws-smoke"></div>
+    </div>
+  </section>
 </div>
 
 <div class="modal" id="keymodal">
@@ -374,9 +454,11 @@ document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{
   const titles={chat:['Chat','Ask questions across your documents'],
     kb:['Knowledge Base','Documents currently indexed in the corpus'],
     upload:['Upload','Add files and folders to the knowledge base'],
-    graph:['Graph','Explore entities, communities and connections']};
+    graph:['Graph','Explore entities, communities and connections'],
+    aws:['AWS Native','Configure &amp; test the AWS-native stack end to end']};
   $('#t-title').textContent=titles[v][0]; $('#t-sub').textContent=titles[v][1];
   if(v==='kb') loadKB();
+  if(v==='aws') awsStatus();
 });
 
 async function refresh(){
@@ -848,6 +930,91 @@ function filterGraph(){
   const ok=d=>(!q||d.name.toLowerCase().includes(q))&&(!ty||d.type===ty);
   node.attr('opacity',d=>ok(d)?1:.08);
   if(label)label.attr('opacity',d=>ok(d)?1:.05);
+}
+
+/* ---------------- AWS Native tab ---------------- */
+function awsVsFields(){const q=$('#aws-vs').value==='qdrant';
+  $('#aws-vs-ep-l').firstChild.textContent=q?'Qdrant URL':'OpenSearch host';
+  $('#aws-vs-ep').placeholder=q?'http://host:6333':'https://search-xxx.es.amazonaws.com';
+  $('#aws-vs-key-l').style.display=q?'flex':'none';}
+function awsGsFields(){const neo=$('#aws-gs').value==='neo4j';
+  $('#aws-gs-ep-l').style.display=neo?'none':'flex';
+  $('#aws-gs-port-l').style.display=neo?'none':'flex';
+  $('#aws-gs-uri-l').style.display=neo?'flex':'none';}
+function awsForm(){
+  return {region:$('#aws-region').value.trim(),
+    llm:{model:$('#aws-llm').value.trim()},
+    vision:{model:$('#aws-vision').value.trim()},
+    embeddings:{model:$('#aws-emb').value.trim(),dim:$('#aws-embdim').value.trim()},
+    reranker:{enabled:$('#aws-rr').value.trim()!=='',model:$('#aws-rr').value.trim()},
+    ocr:{enabled:$('#aws-ocr').value==='1'},
+    vector_store:{provider:$('#aws-vs').value,url:$('#aws-vs-ep').value.trim(),
+      host:$('#aws-vs-ep').value.trim(),api_key:$('#aws-vs-key').value.trim(),
+      prefix:$('#aws-vs-prefix').value.trim(),dim:$('#aws-embdim').value.trim()},
+    graph_store:{provider:$('#aws-gs').value,endpoint:$('#aws-gs-ep').value.trim(),
+      port:$('#aws-gs-port').value.trim(),uri:$('#aws-gs-uri').value.trim()},
+    blob_store:{bucket:$('#aws-s3').value.trim(),prefix:$('#aws-s3prefix').value.trim()}};
+}
+function awsRenderWiring(w){
+  const aws=/Bedrock|Qdrant|OpenSearch|Neptune|Neo4j|Textract|S3/;
+  const keys=['profile','llm','embedder','vision','reranker','ocr','vector_store','graph_store','blob_store'];
+  $('#aws-wiring').innerHTML='<span class="wchip">Active profile: <b>'+(w.profile||'?')+'</b></span>'+
+    keys.slice(1).map(k=>'<span class="wchip'+(aws.test(w[k])?' aws':'')+'">'+k+': <b>'+w[k]+'</b></span>').join('');
+}
+async function awsStatus(){
+  try{const s=await fetch('/api/aws/status').then(r=>r.json());
+    awsRenderWiring(s.wiring||{});
+    const c=s.credentials||{};
+    $('#aws-credstate').textContent=c.aws_access_key_id?('Active region '+(c.aws_region||'?')):'no AWS credentials set';
+  }catch(e){}
+}
+async function awsSaveCreds(){
+  const body={region:$('#aws-region').value.trim(),access_key_id:$('#aws-akid').value.trim(),
+    secret_access_key:$('#aws-secret').value,session_token:$('#aws-token').value,
+    neo4j_user:$('#aws-n4user').value.trim(),neo4j_password:$('#aws-n4pass').value,
+    neptune_endpoint:$('#aws-gs-ep').value.trim()};
+  const r=await fetch('/api/aws/credentials',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)}).then(r=>r.json());
+  toast('Credentials stored in memory');awsStatus();
+}
+async function awsValidate(){
+  $('#aws-results').innerHTML='<p class="muted">Probing components&hellip;</p>';
+  try{
+    const r=await fetch('/api/aws/validate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(awsForm())}).then(r=>r.json());
+    const rows=(r.results||[]).map(x=>'<div class="awsrow '+(x.ok?'ok':'bad')+'">'+
+      '<span class="pill">'+(x.ok?'OK':'FAIL')+'</span>'+
+      '<span class="cmp">'+x.component+'</span>'+
+      '<span class="dt">'+x.detail+'</span>'+
+      '<span class="ms">'+x.provider+' &middot; '+x.ms+'ms</span></div>').join('');
+    $('#aws-results').innerHTML='<p class="muted" style="margin-top:14px">Region '+r.region+
+      ' &middot; '+r.summary.ok+'/'+r.summary.total+' components reachable</p>'+rows;
+  }catch(e){$('#aws-results').innerHTML='<p class="muted">Validation error: '+e+'</p>';}
+}
+async function awsApply(){
+  try{const r=await fetch('/api/aws/apply',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(awsForm())}).then(r=>r.json());
+    awsRenderWiring(r.wiring||{});toast('Engine switched to AWS-native wiring');refresh();
+  }catch(e){toast('Apply failed: '+e);}
+}
+async function awsSmoke(){
+  $('#aws-smoke').innerHTML='<p class="muted">Running ingest &rarr; index &rarr; query&hellip;</p>';
+  try{const r=await fetch('/api/aws/smoke',{method:'POST'}).then(r=>r.json());
+    const t=r.timings_ms||{};
+    const tline=Object.keys(t).map(k=>k+' '+Math.round(t[k])+'ms').join(' &middot; ');
+    $('#aws-smoke').innerHTML='<div class="awsrow '+(r.ok?'ok':'bad')+'" style="align-items:flex-start">'+
+      '<span class="pill">'+(r.ok?'OK':'FAIL')+'</span><div style="flex:1">'+
+      '<div><b>Q:</b> '+r.question+'</div>'+
+      '<div style="margin-top:5px"><b>A:</b> '+(r.answer||r.error||'(no answer)')+'</div>'+
+      '<div class="ms" style="margin-top:6px">'+(r.chunks_indexed||0)+' chunks &middot; '+
+      (r.citations||[]).length+' citations &middot; '+tline+'</div></div></div>';
+    awsRenderWiring(r.wiring||{});
+  }catch(e){$('#aws-smoke').innerHTML='<p class="muted">Smoke test error: '+e+'</p>';}
+}
+async function awsRevert(){
+  try{const r=await fetch('/api/aws/revert',{method:'POST'}).then(r=>r.json());
+    awsRenderWiring(r.wiring||{});toast('Reverted to local engine');refresh();
+  }catch(e){toast('Revert failed: '+e);}
 }
 </script>
 </body>
