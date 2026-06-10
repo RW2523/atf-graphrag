@@ -249,6 +249,8 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
           <input id="kbsearch" placeholder="&#128269; Filter documents&hellip;" oninput="renderKB()"/>
           <button class="btn ghost" onclick="loadKB()">&#8635; Refresh</button>
           <button class="btn" onclick="document.querySelector('[data-view=upload]').click()">+ Add documents</button>
+          <button class="btn ghost" onclick="doBackup(this)" title="Snapshot the vector index + graph">&#128190; Backup</button>
+          <button class="btn ghost" onclick="doRestore(this)" title="Restore a previous snapshot">&#8635; Restore</button>
           <button class="btn danger" onclick="clearAll(this)">&#128465; Clear all data</button>
         </div>
       </div>
@@ -425,6 +427,29 @@ async function clearAll(btn){
     KBDOCS=[]; loadKB(); refresh();
   }catch(e){ toast('Clear failed'); }
   btn.disabled=false; btn.innerHTML=o;
+}
+async function doBackup(btn){
+  const o=btn.innerHTML;btn.disabled=true;btn.innerHTML='Backing up&hellip;';
+  try{const r=await fetch('/api/backup',{method:'POST'}).then(r=>r.json());
+    toast('Backup created: '+r.name+' ('+Math.round((r.bytes||0)/1024)+' KB)');}
+  catch(e){toast('Backup failed');}
+  btn.disabled=false;btn.innerHTML=o;
+}
+async function doRestore(btn){
+  let list;try{list=(await fetch('/api/backups').then(r=>r.json())).backups||[];}
+  catch(e){return toast('Could not list backups');}
+  if(!list.length)return toast('No backups yet — create one first');
+  const names=list.map((b,i)=>(i+1)+'. '+b.name).join('\n');
+  const pick=prompt('Restore which backup? Enter the number:\n'+names,'1');
+  if(!pick)return;
+  const b=list[parseInt(pick,10)-1];if(!b)return toast('Invalid choice');
+  if(!confirm('Restore '+b.name+'? This replaces the current index + graph.'))return;
+  const o=btn.innerHTML;btn.disabled=true;btn.innerHTML='Restoring&hellip;';
+  try{const r=await fetch('/api/restore',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:b.name})}).then(r=>r.json());
+    toast(r.ok?('Restored — '+r.documents+' documents'):'Restore failed');loadKB();refresh();}
+  catch(e){toast('Restore failed');}
+  btn.disabled=false;btn.innerHTML=o;
 }
 function renderKB(){
   const q=($('#kbsearch').value||'').toLowerCase();

@@ -188,6 +188,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"jobs": _jobs.list() if _jobs else []})
         if self.path == "/api/jobs/active":
             return self._send(200, (_jobs.active() if _jobs else None) or {})
+        if self.path == "/api/backups":
+            from .backup import list_backups
+            return self._send(200, {"backups": list_backups(_storage_root())})
         if self.path.startswith("/api/jobs/"):
             jid = self.path.split("/api/jobs/", 1)[1].strip("/")
             j = _jobs.get(jid) if _jobs else None
@@ -250,6 +253,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"communities": len(comms)})
             if self.path == "/api/clear":
                 return self._send(200, _clear_all())
+            if self.path == "/api/backup":
+                import time as _t
+                from .backup import make_backup
+                _engine.commit()              # flush in-memory state first
+                label = _t.strftime("%Y%m%d_%H%M%S")
+                return self._send(200, make_backup(_storage_root(), label))
+            if self.path == "/api/restore":
+                from .backup import restore_backup
+                name = data.get("name", "")
+                ok = restore_backup(_storage_root(), name)
+                if ok:                        # reboot engine onto the restored state
+                    global _engine, _indexer, _retriever, _orch, _jobs
+                    _engine = _indexer = _retriever = _orch = _jobs = None
+                    _boot()
+                return self._send(200 if ok else 404,
+                                  {"ok": ok, "documents": _documents()["total_documents"]})
             if self.path == "/api/config/extraction":
                 mode = (data.get("mode") or "auto").lower()
                 if mode not in ("off", "auto", "on"):
@@ -360,6 +379,9 @@ def serve():
     print(f"[ATF GraphRAG] profile={_engine.settings['profile']} "
           f"llm={_engine.llm.name} embeddings={_engine.embedder.name} "
           f"OPENROUTER_API_KEY={key}")
+    if not expected_token():
+        print("[ATF GraphRAG] WARNING: no API auth token set and CORS is open — "
+              "set server.auth_token or ATF_API_TOKEN before any non-local deploy.")
     print(f"[ATF GraphRAG] listening on http://{host}:{port}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
