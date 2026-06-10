@@ -154,6 +154,51 @@ def _storage_root() -> str:
     return os.path.dirname(_engine.settings["vector_store"]["path"])
 
 
+# --- single-writer storage lock -------------------------------------------
+# Two server processes pointed at the same storage root can clobber each
+# other: a stale process holding divergent in-memory state can commit over a
+# newer on-disk index, silently destroying data. A PID lockfile makes the
+# storage root single-writer; a second `serve()` against it refuses to start.
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)            # signal 0 = liveness probe, no-op
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True                # exists but owned by another user
+    return True
+
+
+def acquire_storage_lock(root: str) -> str:
+    """Create storage/.writer.lock with this PID. Raises RuntimeError if a
+    live process already holds it. Returns the lock path."""
+    os.makedirs(root, exist_ok=True)
+    lock = os.path.join(root, ".writer.lock")
+    if os.path.isfile(lock):
+        try:
+            holder = int(open(lock).read().strip() or "0")
+        except (ValueError, OSError):
+            holder = 0
+        if holder and holder != os.getpid() and _pid_alive(holder):
+            raise RuntimeError(
+                f"storage root {root!r} is locked by live process {holder}. "
+                f"Stop it before starting another writer (or remove {lock} if "
+                f"that PID is dead).")
+    with open(lock, "w") as f:
+        f.write(str(os.getpid()))
+    return lock
+
+
+def release_storage_lock(root: str) -> None:
+    lock = os.path.join(root, ".writer.lock")
+    try:
+        if os.path.isfile(lock) and int(open(lock).read().strip() or "0") == os.getpid():
+            os.remove(lock)
+    except (ValueError, OSError):
+        pass
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # quieter logs
         return
@@ -379,6 +424,16 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve():
     _boot()
+    # Single-writer guard: refuse to start a second server against the same
+    # storage root so a stale process can't clobber on-disk data.
+    root = _storage_root()
+    try:
+        acquire_storage_lock(root)
+    except RuntimeError as ex:
+        print(f"[ATF GraphRAG] REFUSING TO START: {ex}")
+        raise SystemExit(1)
+    import atexit
+    atexit.register(release_storage_lock, root)
     host = _engine.settings["server"]["host"]
     port = _engine.settings["server"]["port"]
     key = "set" if Settings.openrouter_key() else "MISSING (offline fallback)"

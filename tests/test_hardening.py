@@ -103,3 +103,35 @@ def test_trace_includes_per_stage_timings():
                   "generate", "total"):
         assert stage in timings
         assert isinstance(timings[stage], float) and timings[stage] >= 0
+
+
+# ---- single-writer storage lock ------------------------------------------
+def test_storage_lock_blocks_second_writer(tmp_path):
+    root = str(tmp_path / "storage")
+    srv.acquire_storage_lock(root)              # first holder = this PID
+    import os
+    lock = os.path.join(root, ".writer.lock")
+    assert os.path.isfile(lock)
+    # Simulate a *different* live holder (use PID 1 — always alive).
+    open(lock, "w").write("1")
+    with pytest.raises(RuntimeError):
+        srv.acquire_storage_lock(root)
+    # A dead holder must NOT block (use an almost-certainly-dead PID).
+    open(lock, "w").write("999999")
+    srv.acquire_storage_lock(root)              # should succeed, reclaims lock
+    assert int(open(lock).read()) == os.getpid()
+
+
+def test_storage_lock_release_is_owner_scoped(tmp_path):
+    import os
+    root = str(tmp_path / "storage")
+    srv.acquire_storage_lock(root)
+    lock = os.path.join(root, ".writer.lock")
+    # Another PID owns it -> release must NOT delete it.
+    open(lock, "w").write("1")
+    srv.release_storage_lock(root)
+    assert os.path.isfile(lock)
+    # We own it -> release deletes it.
+    open(lock, "w").write(str(os.getpid()))
+    srv.release_storage_lock(root)
+    assert not os.path.isfile(lock)
