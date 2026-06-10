@@ -755,6 +755,12 @@ class GenerationAgent:
                   "Provide a clear, source-cited answer.")
         answer_text = engine.llm.complete(prompt, system=sys)
 
+        # Safety guardrail over the final answer (no-op unless configured).
+        guard = getattr(engine, "guardrail", None)
+        if guard is not None and getattr(guard, "enabled", False):
+            res = guard.filter_output(answer_text)
+            answer_text = res.get("text", answer_text)
+
         confs = [h.eval_score or 0 for h in hits[:5]]
         confidence = round(sum(confs) / len(confs), 3) if confs else 0.0
         return Answer(question=plan.question, answer=answer_text,

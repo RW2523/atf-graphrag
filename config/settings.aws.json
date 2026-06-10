@@ -3,9 +3,20 @@
   "llm": {"provider": "bedrock", "model": "anthropic.claude-3-5-sonnet-20240620-v1:0", "region": "us-east-1"},
   "vision": {"provider": "bedrock", "model": "anthropic.claude-3-5-sonnet-20240620-v1:0"},
   "embeddings": {"provider": "bedrock", "model": "amazon.titan-embed-text-v2:0", "dim": 1024, "region": "us-east-1"},
-  "reranker": {"provider": "bedrock"},
+  "reranker": {"provider": "bedrock", "model": "cohere.rerank-v3-5:0"},
   "vector_store": {"provider": "opensearch"},
   "graph_store": {"provider": "neptune"},
   "blob_store": {"provider": "s3"},
-  "ingestion": {"ocr": {"provider": "textract", "region": "us-east-1"}}
+  "guardrails": {
+    "provider": "bedrock",
+    "enabled": false,
+    "guardrail_id": "",
+    "guardrail_version": "DRAFT",
+    "trace": false
+  },
+  "ingestion": {
+    "ocr": {"provider": "textract", "region": "us-east-1"},
+    "parser": {"provider": "bedrock", "model": "anthropic.claude-3-5-sonnet-20240620-v1:0", "region": "us-east-1"},
+    "extraction": {"provider": "llm"}
+  }
 }

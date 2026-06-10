@@ -16,6 +16,7 @@ from .ocr import OCREngine
 from .vision import VisionProvider, _PROMPT, _RICH_MAX_TOKENS
 from .blob import BlobStore
 from .reranker import Reranker
+from .guardrail import Guardrail, _result, BLOCKED_MESSAGE
 
 
 def _client(service: str, cfg: Dict):
@@ -30,6 +31,15 @@ class BedrockLLM(LLMProvider):
         self.cfg = cfg
         self.model = cfg.get("model", "anthropic.claude-3-5-sonnet-20240620-v1:0")
         self._rt = _client("bedrock-runtime", cfg)
+        # Optional inline guardrail: when guardrails.enabled + id present, the
+        # Converse call applies the managed Bedrock Guardrail to prompt + output.
+        g = cfg.get("guardrails", {}) or {}
+        self._guardrail_cfg = None
+        if g.get("enabled") and g.get("guardrail_id"):
+            self._guardrail_cfg = {
+                "guardrailIdentifier": g["guardrail_id"],
+                "guardrailVersion": str(g.get("guardrail_version", "DRAFT")),
+                "trace": "enabled" if g.get("trace", False) else "disabled"}
 
     def chat(self, messages: List[Dict[str, str]], **kw) -> str:
         # Uses the Bedrock Converse API (works across model families).
@@ -37,11 +47,14 @@ class BedrockLLM(LLMProvider):
         conv = [{"role": ("user" if m["role"] == "user" else "assistant"),
                  "content": [{"text": m["content"]}]}
                 for m in messages if m["role"] != "system"]
-        resp = self._rt.converse(
+        params = dict(
             modelId=self.model, messages=conv,
             system=sys_txt or [{"text": "You are a helpful analyst."}],
             inferenceConfig={"maxTokens": kw.get("max_tokens", 1024),
                              "temperature": kw.get("temperature", 0.1)})
+        if self._guardrail_cfg:
+            params["guardrailConfig"] = self._guardrail_cfg
+        resp = self._rt.converse(**params)
         return resp["output"]["message"]["content"][0]["text"]
 
 
@@ -178,3 +191,95 @@ class TextractOCR(OCREngine):
             resp = self._tx.detect_document_text(Document={"Bytes": f.read()})
         lines = [b["Text"] for b in resp.get("Blocks", []) if b["BlockType"] == "LINE"]
         return "\n".join(lines)
+
+
+class BedrockGuardrail(Guardrail):
+    """Amazon Bedrock Guardrails via the ApplyGuardrail API. Enforces managed
+    policies (denied topics, content filters, word filters, PII redaction,
+    contextual-grounding) on arbitrary text — both prompts/context (source=INPUT)
+    and model answers (source=OUTPUT). Degrades to pass-through on any error so a
+    guardrail outage never drops a request."""
+    name = "bedrock"
+
+    def __init__(self, cfg: Dict):
+        self.cfg = cfg
+        self.enabled = bool(cfg.get("enabled", False))
+        self.gid = cfg.get("guardrail_id", "")
+        self.version = str(cfg.get("guardrail_version", "DRAFT"))
+        self._rt = None
+        if self.enabled and self.gid:
+            try:
+                self._rt = _client("bedrock-runtime", cfg)
+            except Exception:  # noqa: BLE001
+                self._rt = None
+
+    def _apply(self, text: str, source: str) -> Dict:
+        if not (self.enabled and self.gid and self._rt) or not text:
+            return _result(text)
+        try:
+            resp = self._rt.apply_guardrail(
+                guardrailIdentifier=self.gid, guardrailVersion=self.version,
+                source=source, content=[{"text": {"text": text}}])
+        except Exception as exc:  # noqa: BLE001
+            return _result(text, reasons=[f"guardrail error: {exc}"])
+        action = resp.get("action", "NONE")
+        # Bedrock returns possibly-masked/redacted text in outputs[].
+        outs = resp.get("outputs", []) or []
+        new_text = outs[0].get("text", text) if outs else text
+        if action == "GUARDRAIL_INTERVENED":
+            reasons = []
+            for assess in resp.get("assessments", []) or []:
+                reasons.extend(assess.keys())
+            # Empty output => the policy fully blocked; surface a safe message.
+            if not new_text:
+                return _result(BLOCKED_MESSAGE, blocked=True, reasons=reasons,
+                               action=action)
+            return _result(new_text, blocked=False, reasons=reasons, action=action)
+        return _result(new_text)
+
+    def filter_input(self, text: str, source: str = "user") -> Dict:
+        return self._apply(text, "INPUT")
+
+    def filter_output(self, text: str) -> Dict:
+        return self._apply(text, "OUTPUT")
+
+
+class ComprehendEntities:
+    """AWS-native entity + PII detection via Amazon Comprehend. An alternative to
+    LLM extraction for the AWS profile: deterministic, cheap, and PII-aware.
+    Returns {'entities': [{text,type,score}], 'pii': [{type,score}]}. Maps
+    Comprehend types onto the platform ontology where they overlap."""
+    name = "comprehend"
+
+    _MAP = {"ORGANIZATION": "organization", "PERSON": "person",
+            "LOCATION": "location", "DATE": "date", "EVENT": "incident",
+            "COMMERCIAL_ITEM": "firearm", "TITLE": "case", "OTHER": "entity"}
+
+    def __init__(self, cfg: Dict):
+        self.cfg = cfg
+        self.lang = cfg.get("language", "en")
+        self.detect_pii = bool(cfg.get("detect_pii", True))
+        self._cw = _client("comprehend", cfg)
+
+    def extract(self, text: str) -> Dict:
+        text = (text or "")[:4900]  # Comprehend single-call byte ceiling
+        if not text.strip():
+            return {"entities": [], "pii": []}
+        ents, pii = [], []
+        try:
+            r = self._cw.detect_entities(Text=text, LanguageCode=self.lang)
+            for e in r.get("Entities", []):
+                ents.append({"text": e.get("Text", ""),
+                             "type": self._MAP.get(e.get("Type", "OTHER"), "entity"),
+                             "score": float(e.get("Score", 0.0))})
+        except Exception as exc:  # noqa: BLE001
+            print(f"[comprehend] detect_entities failed: {exc}")
+        if self.detect_pii:
+            try:
+                r = self._cw.detect_pii_entities(Text=text, LanguageCode=self.lang)
+                for e in r.get("Entities", []):
+                    pii.append({"type": e.get("Type", ""),
+                                "score": float(e.get("Score", 0.0))})
+            except Exception as exc:  # noqa: BLE001
+                print(f"[comprehend] detect_pii_entities failed: {exc}")
+        return {"entities": ents, "pii": pii}

@@ -36,7 +36,10 @@ def make_llm(settings: Settings) -> LLMProvider:
     if cfg["provider"] == "bedrock":
         try:
             from .bedrock import BedrockLLM  # lazy; needs boto3
-            return BedrockLLM(cfg)
+            # Pass guardrail config through so Converse applies it inline.
+            bcfg = dict(cfg)
+            bcfg.setdefault("guardrails", settings.get("guardrails", {}) or {})
+            return BedrockLLM(bcfg)
         except Exception as e:  # noqa: BLE001
             _warn_fallback("llm", "bedrock", e)
     return OfflineLLM(cfg)
@@ -108,7 +111,53 @@ def make_parser(settings: Settings) -> Parser:
             return DoclingParser(cfg)
         except Exception as e:  # noqa: BLE001
             _warn_fallback("parser", "docling", e)
+    if prov == "textract":            # AWS-native "normal" structured parsing
+        try:
+            from .aws_parsers import TextractParser
+            return TextractParser(cfg)
+        except Exception as e:  # noqa: BLE001
+            _warn_fallback("parser", "textract", e)
+    if prov == "bedrock":             # AWS-native foundation-model parsing
+        try:
+            from .aws_parsers import BedrockDocumentParser
+            return BedrockDocumentParser(cfg)
+        except Exception as e:  # noqa: BLE001
+            _warn_fallback("parser", "bedrock", e)
     return AdvancedParser(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Safety / AWS-native intelligence layer
+# ---------------------------------------------------------------------------
+def make_guardrail(settings: Settings):
+    """Content-safety guardrail over LLM I/O. Default 'none' (pass-through);
+    'local' = regex PII + denied-terms; 'bedrock' = Amazon Bedrock Guardrails."""
+    cfg = settings.get("guardrails", {}) or {}
+    prov = cfg.get("provider", "none")
+    if prov == "bedrock":
+        try:
+            from .bedrock import BedrockGuardrail
+            return BedrockGuardrail(cfg)
+        except Exception as e:  # noqa: BLE001
+            _warn_fallback("guardrail", "bedrock", e)
+    if prov == "local":
+        from .guardrail import LocalGuardrail
+        return LocalGuardrail(cfg)
+    from .guardrail import Guardrail
+    return Guardrail()                # no-op pass-through
+
+
+def make_entity_extractor(settings: Settings):
+    """AWS-native entity/PII extractor. Returns None unless explicitly enabled
+    (extraction.provider='comprehend'); callers fall back to LLM extraction."""
+    cfg = settings.get("ingestion", {}).get("extraction", {}) or {}
+    if cfg.get("provider") == "comprehend":
+        try:
+            from .bedrock import ComprehendEntities
+            return ComprehendEntities(cfg)
+        except Exception as e:  # noqa: BLE001
+            _warn_fallback("entity_extractor", "comprehend", e)
+    return None
 
 
 # ---------------------------------------------------------------------------

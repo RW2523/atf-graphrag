@@ -84,11 +84,25 @@ DEFAULTS: Dict[str, Any] = {
         "chunk_size": 900,        # characters (approx tokens*4)
         "chunk_overlap": 150,
         "ocr": {"provider": "auto"},        # auto | tesseract | textract | off
-        "parser": {"provider": "advanced"}, # advanced | docling
+        "parser": {"provider": "advanced"}, # advanced | docling | textract | bedrock
+                                            #  textract = AWS structured/OCR parsing
+                                            #  bedrock  = AWS foundation-model parsing
         "orchestrator": "sequential",       # sequential | langgraph
         "llm_extraction": "auto",           # off | auto | on  (per-chunk LLM
                                             # entity/relation extraction)
         "llm_extraction_auto_max_pages": 40,  # 'auto' extracts docs up to this size
+        "extraction": {"provider": "llm"},  # llm | comprehend (AWS-native NER+PII)
+    },
+
+    # ---- Guardrails (content safety over LLM I/O) -------------------------
+    "guardrails": {
+        "provider": "none",        # none | local | bedrock
+        "enabled": False,          # master switch
+        "guardrail_id": "",        # Bedrock guardrail identifier
+        "guardrail_version": "DRAFT",
+        "redact_pii": True,        # local provider: regex PII redaction
+        "denied_terms": [],        # local provider: blocklist
+        "trace": False,            # bedrock: return policy assessments
     },
 
     # ---- Web crawling (sitemap.xml ingestion) -----------------------------

@@ -11,7 +11,8 @@ from typing import Dict, List
 from .config import get_settings, Settings
 from .providers import (make_llm, make_embedder, make_vision, make_reranker,
                         make_parser, make_vector_store, make_graph_store,
-                        make_blob_store, make_ocr)
+                        make_blob_store, make_ocr, make_guardrail,
+                        make_entity_extractor)
 
 
 class Engine:
@@ -33,8 +34,12 @@ class Engine:
         self.cheap_model = _lc.get("cheap_model") or _lc.get("model")
         self.strong_model = _lc.get("strong_model") or _lc.get("model")
         self.ocr = make_ocr(self.settings.get("ingestion", {}).get("ocr", {}))
+        # Safety layer — guardrail over LLM I/O (no-op unless configured).
+        self.guardrail = make_guardrail(self.settings)
         # Ingestion layer
         self.parser = make_parser(self.settings)
+        # Optional AWS-native entity/PII extractor (None unless comprehend).
+        self.entity_extractor = make_entity_extractor(self.settings)
         # Storage layer
         self._vstores: Dict[str, "object"] = {}
         self.graph = make_graph_store(self.settings)
