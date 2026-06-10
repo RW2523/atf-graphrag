@@ -560,47 +560,71 @@ async function loadGraph(){
   $('#ginfo').innerHTML='<div style="color:var(--muted);text-align:center;margin-top:40px"><div style="font-size:40px">&#128376;</div>'+G.nodes.length+' entities, '+G.edges.length+' connections.<br>Click a node to inspect.</div>';
 }
 function colorOf(n){return n.community>=0?PALETTE[n.community%PALETTE.length]:(TYPECOLOR[n.type]||'#cbd5e1');}
+let gZoom=null, gRoot=null;
 function drawGraph(){
   const c=$('#gcanvas'),W=c.clientWidth,H=c.clientHeight;
   svg=d3.select(c).append('svg').attr('viewBox',[0,0,W,H]);
-  const g=svg.append('g');
-  svg.call(d3.zoom().scaleExtent([.2,4]).on('zoom',ev=>g.attr('transform',ev.transform)));
+  const g=svg.append('g'); gRoot=g;
+  gZoom=d3.zoom().scaleExtent([.1,5]).on('zoom',ev=>g.attr('transform',ev.transform));
+  svg.call(gZoom);
   const nodes=G.nodes.map(d=>({...d})),id=new Set(nodes.map(n=>n.id));
   const links=G.edges.filter(e=>id.has(e.source)&&id.has(e.target)).map(d=>({...d}));
   const rOf=d=>5+Math.sqrt(d.degree)*1.8;          // node radius
-  // Spread the graph out: stronger repulsion, longer links, and a collision
-  // radius that reserves room for the label so nodes/text don't overlap.
+
+  // Build the simulation but DO NOT run it live (that causes the endless drift).
+  // We tick it headless to a settled state, render once, then leave it stopped.
   sim=d3.forceSimulation(nodes)
-    .force('link',d3.forceLink(links).id(d=>d.id).distance(d=>d.typed?70:110).strength(.25))
-    .force('charge',d3.forceManyBody().strength(-260).distanceMax(520))
-    .force('center',d3.forceCenter(W/2,H/2))
-    .force('x',d3.forceX(W/2).strength(.04))
-    .force('y',d3.forceY(H/2).strength(.04))
-    .force('collide',d3.forceCollide(d=>rOf(d)+16).iterations(2));
+    .force('link',d3.forceLink(links).id(d=>d.id).distance(d=>d.typed?70:110).strength(.18))
+    .force('charge',d3.forceManyBody().strength(-240).distanceMax(480))
+    .force('x',d3.forceX(W/2).strength(.06))
+    .force('y',d3.forceY(H/2).strength(.06))
+    .force('collide',d3.forceCollide(d=>rOf(d)+16).iterations(2))
+    .velocityDecay(.45)
+    .stop();
+  // Headless warm-up: scale ticks to graph size so it always reaches equilibrium.
+  const ticks=Math.min(400,Math.max(120,Math.round(nodes.length/4)));
+  for(let i=0;i<ticks;i++) sim.tick();
+
   link=g.append('g').selectAll('line').data(links).join('line')
     .attr('stroke-width',d=>d.typed?1.8:.7).attr('stroke',d=>d.typed?'#a5b4fc':'#cbd5e1').attr('stroke-opacity',.55);
   node=g.append('g').selectAll('circle').data(nodes).join('circle')
     .attr('r',rOf).attr('fill',colorOf)
     .attr('stroke','#fff').attr('stroke-width',1.4).style('cursor','pointer')
     .on('click',(e,d)=>showNode(d))
-    .call(d3.drag().on('start',(e,d)=>{if(!e.active)sim.alphaTarget(.3).restart();d.fx=d.x;d.fy=d.y;})
-      .on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y;}).on('end',(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null;}));
+    .call(d3.drag()
+      .on('start',(e,d)=>{if(!e.active)sim.alphaTarget(.2).restart();d.fx=d.x;d.fy=d.y;})
+      .on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y;})
+      .on('end',(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=d.x;d.fy=d.y;}));  // pin where dropped
   node.append('title').text(d=>d.name+' ('+d.type+') · '+d.degree+' links');
-  // Labels: centered UNDER the node, with a white halo so text stays legible
-  // over edges (paint-order:stroke draws the halo behind the fill).
-  // Adaptive labelling: on big graphs only label major hubs so text stays
-  // sparse and readable; dense detail appears as you zoom in.
   const labMin=nodes.length>900?16:(nodes.length>400?9:4);
   label=g.append('g').selectAll('text').data(nodes.filter(n=>n.degree>=labMin)).join('text')
     .text(d=>d.name.length>26?d.name.slice(0,24)+'…':d.name)
     .attr('font-size',10).attr('font-weight',600).attr('text-anchor','middle')
     .attr('fill','#1e293b').attr('stroke','#ffffff').attr('stroke-width',3.2)
     .style('paint-order','stroke').style('pointer-events','none');
-  sim.on('tick',()=>{
+
+  function render(){
     link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
     node.attr('cx',d=>d.x).attr('cy',d=>d.y);
     label.attr('x',d=>d.x).attr('y',d=>d.y+rOf(d)+12);   // aligned beneath node
-  });
+  }
+  render();                       // paint the settled layout once (static)
+  // Only redraw while the user is actively dragging; otherwise stay still.
+  sim.on('tick',render);
+  fitToView(nodes,W,H);           // zoom-to-fit so the whole graph is framed
+}
+
+function fitToView(nodes,W,H){
+  if(!nodes.length||!gZoom)return;
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  nodes.forEach(n=>{x0=Math.min(x0,n.x);y0=Math.min(y0,n.y);x1=Math.max(x1,n.x);y1=Math.max(y1,n.y);});
+  const dw=x1-x0||1,dh=y1-y0||1,pad=50;
+  // Clamp zoom so the graph is always legible: never a tiny dot (min .25),
+  // never absurdly large (max 1.6). Below fit-scale it overflows but pans.
+  const k=Math.max(.25,Math.min(1.6,0.92*Math.min((W-pad)/dw,(H-pad)/dh)));
+  const tx=W/2-k*(x0+x1)/2, ty=H/2-k*(y0+y1)/2;
+  svg.transition().duration(500).call(gZoom.transform,
+    d3.zoomIdentity.translate(tx,ty).scale(k));
 }
 function showNode(d){
   const nbrs=G.edges.filter(e=>{const a=(e.source.id||e.source),b=(e.target.id||e.target);return a===d.id||b===d.id;});
