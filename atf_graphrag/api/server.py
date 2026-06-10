@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from ..engine import Engine
@@ -21,7 +22,13 @@ from ..indexing import Indexer
 from ..retrieval import Retriever
 from ..config import Settings
 from ..ingestion.orchestrator import IngestionOrchestrator
+from .jobs import JobManager
 from .ui import INDEX_HTML
+
+# Serialises all store writes (async worker + sync ingest) so the non-thread-safe
+# local stores can't be corrupted by concurrent requests.
+_INGEST_LOCK = threading.Lock()
+_jobs: "JobManager | None" = None
 
 _engine: Engine | None = None
 _indexer: Indexer | None = None
@@ -108,20 +115,25 @@ def _clear_all() -> dict:
             os.makedirs(path, exist_ok=True)
             cleared.append(name)
     # Reset singletons so the next request boots a fresh, empty engine.
-    _engine = _indexer = _retriever = _orch = None
+    global _jobs
+    _engine = _indexer = _retriever = _orch = _jobs = None
     _boot()
     return {"ok": True, "cleared": cleared,
             "documents": _documents()["total_documents"]}
 
 
 def _boot() -> None:
-    global _engine, _indexer, _retriever, _orch
+    global _engine, _indexer, _retriever, _orch, _jobs
     if _engine is None:
         _engine = Engine()
         use_llm = _engine.llm.name != "offline"
         _indexer = Indexer(_engine, use_llm_extraction=use_llm)
         _retriever = Retriever(_engine)
         _orch = IngestionOrchestrator(_engine, _indexer)
+        _jobs = JobManager(
+            jobs_dir=os.path.join(_storage_root(), "jobs"),
+            ingest_fn=lambda path, corpus: _orch.ingest(path, corpus=corpus),
+            commit_fn=_engine.commit, lock=_INGEST_LOCK)
 
 
 def _storage_root() -> str:
@@ -168,6 +180,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, _engine.stats())
         if self.path == "/api/documents":
             return self._send(200, _documents())
+        if self.path == "/api/jobs":
+            return self._send(200, {"jobs": _jobs.list() if _jobs else []})
+        if self.path.startswith("/api/jobs/"):
+            jid = self.path.split("/api/jobs/", 1)[1].strip("/")
+            j = _jobs.get(jid) if _jobs else None
+            return self._send(200, j) if j else self._send(404, {"error": "job not found"})
         if self.path == "/graph/top":
             return self._send(200, {"top_entities": _engine.graph.top_entities(15)})
         if self.path == "/graph/export":
@@ -232,39 +250,66 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:  # noqa: BLE001
             return self._send(500, {"error": str(e)})
 
-    def _upload(self, data: dict):
-        """Accept base64-encoded uploaded files (single, multiple, or a whole
-        folder), save them under storage/uploads, and ingest each through the
-        agentic orchestrator (routing + idempotency + entity resolution)."""
+    def _stage_files(self, files: list, subdir: str):
+        """Decode base64 uploads to disk FIRST (durable) before any ingestion.
+        Returns (staged[(name,path)], errors[])."""
         import base64
-        files = data.get("files", [])
-        corpus = data.get("corpus", "pdf")
-        if not files:
-            return self._send(400, {"error": "no files provided"})
-        updir = os.path.join(_storage_root(), "uploads")
+        updir = os.path.join(_storage_root(), "uploads", subdir)
         os.makedirs(updir, exist_ok=True)
-        results = []
+        staged, errors = [], []
         for f in files:
             name = os.path.basename(f.get("name", "upload"))
             b64 = (f.get("content_b64") or "").split(",")[-1]
             try:
                 raw = base64.b64decode(b64)
             except Exception as e:  # noqa: BLE001
-                results.append({"name": name, "status": "error",
-                                "error": f"decode: {e}", "chunks": 0})
+                errors.append({"name": name, "error": f"decode: {e}"})
                 continue
-            path = os.path.join(updir, name)
             try:
+                path = os.path.join(updir, name)
                 with open(path, "wb") as fh:
                     fh.write(raw)
-                r = _orch.ingest(path, corpus=corpus)
+                staged.append((name, path))
+            except Exception as e:  # noqa: BLE001
+                errors.append({"name": name, "error": f"stage: {e}"})
+        return staged, errors
+
+    def _upload(self, data: dict):
+        """Batch upload. mode='sync' ingests inline and returns results;
+        mode='async' stages + enqueues into a durable job and returns a job_id
+        to poll at GET /api/jobs/<id>. Files are always staged to disk first so
+        a load of files can be sent in batches without ever losing data."""
+        files = data.get("files", [])
+        corpus = data.get("corpus", "pdf")
+        mode = data.get("mode", "sync")
+
+        if mode == "async":
+            jid = data.get("job_id") or _jobs.create(corpus)
+            staged, errors = self._stage_files(files, jid)
+            if staged:
+                _jobs.add(jid, staged)
+            if data.get("final"):
+                _jobs.finalize(jid)
+            return self._send(200, {"job_id": jid, "staged": len(staged),
+                                    "errors": errors})
+
+        # sync
+        if not files:
+            return self._send(400, {"error": "no files provided"})
+        staged, errors = self._stage_files(files, "sync")
+        results = [{"name": e["name"], "status": "error", "error": e["error"],
+                    "chunks": 0} for e in errors]
+        for name, path in staged:
+            try:
+                with _INGEST_LOCK:
+                    r = _orch.ingest(path, corpus=corpus)
+                    _engine.commit()
                 results.append({"name": name, "status": r.get("status", "?"),
                                 "chunks": r.get("chunks", 0),
                                 "type": r.get("decision", {}).get("input_type", "?")})
             except Exception as e:  # noqa: BLE001
                 results.append({"name": name, "status": "error",
                                 "error": str(e), "chunks": 0})
-        _engine.commit()
         total = sum(r.get("chunks", 0) for r in results)
         return self._send(200, {"results": results, "total_chunks": total,
                                 "stats": _engine.stats()})

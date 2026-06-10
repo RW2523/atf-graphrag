@@ -258,6 +258,10 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
           <option value="connected">corpus: connected</option>
           <option value="visual">corpus: visual</option>
         </select>
+        <select id="upmode" title="Sync waits for each file; Async queues a background job for large batches">
+          <option value="async">mode: async (background, recommended for many files)</option>
+          <option value="sync">mode: sync (wait for results)</option>
+        </select>
         <button class="btn" id="upbtn" onclick="doUpload()" disabled>Ingest 0 files</button>
         <span style="margin-left:auto"><button class="btn ghost" onclick="buildCommunities(this)">&#8635; Rebuild communities</button></span>
       </div>
@@ -489,29 +493,72 @@ function stage(files){
   if(files.length)toast(files.length+' file(s) ready');
 }
 function readFile(f){return new Promise(res=>{const r=new FileReader();r.onload=()=>res({name:f.name,content_b64:r.result});r.readAsDataURL(f);});}
+const BATCH=6;   // files per HTTP request — keeps each body small & reliable
 async function doUpload(){
   if(!pending.length)return;
-  const b=$('#upbtn');b.disabled=true;b.innerHTML='<span class="spin"></span> Ingesting&hellip;';
-  $('#prog').classList.add('show');$('#bar').style.width='6%';
-  const corpus=$('#corpus').value;
+  const mode=$('#upmode').value, corpus=$('#corpus').value;
+  const b=$('#upbtn');b.disabled=true;b.innerHTML='<span class="spin"></span> '+(mode==='async'?'Uploading&hellip;':'Ingesting&hellip;');
+  $('#prog').classList.add('show');$('#bar').style.width='4%';
   const tbody=$('#uptbody');tbody.innerHTML='';$('#uptbl').style.display='table';
+  const all=pending.slice(); pending=[];
+  if(mode==='async') return doUploadAsync(all,corpus,b);
+  // ---- SYNC: ingest each batch inline, show results as they land ----
   let done=0,total=0;
-  for(let i=0;i<pending.length;i+=4){
-    const slice=pending.slice(i,i+4);
+  for(let i=0;i<all.length;i+=BATCH){
+    const slice=all.slice(i,i+BATCH);
     const files=await Promise.all(slice.map(readFile));
     try{
       const r=await fetch('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({files,corpus})}).then(r=>r.json());
-      (r.results||[]).forEach(x=>{total+=x.chunks||0;
-        tbody.insertAdjacentHTML('beforeend','<tr><td>'+esc(x.name)+'</td><td><span class="chip">'+esc(x.type||'?')+'</span></td>'
-          +'<td><span class="badge '+(x.status||'error')+'">'+esc(x.status||'error')+'</span></td>'
-          +'<td style="text-align:right">'+(x.chunks||0)+'</td></tr>');});
-    }catch(e){toast('Upload error');}
-    done+=slice.length;$('#bar').style.width=Math.round(done/pending.length*100)+'%';
+        body:JSON.stringify({files,corpus,mode:'sync'})}).then(r=>r.json());
+      (r.results||[]).forEach(x=>{total+=x.chunks||0; addUpRow(tbody,x);});
+    }catch(e){toast('Upload error on a batch');}
+    done+=slice.length;$('#bar').style.width=Math.round(done/all.length*100)+'%';
   }
-  b.innerHTML='Ingest 0 files';b.disabled=true;pending=[];
+  b.innerHTML='Ingest 0 files';b.disabled=true;
   toast('Indexed '+total+' chunks from '+done+' files');refresh();
   setTimeout(()=>$('#prog').classList.remove('show'),800);
+}
+async function doUploadAsync(all,corpus,b){
+  // Stage every file to a durable job in small batches, then poll progress.
+  let jid=null, staged=0;
+  for(let i=0;i<all.length;i+=BATCH){
+    const slice=all.slice(i,i+BATCH);
+    const files=await Promise.all(slice.map(readFile));
+    const final=(i+BATCH>=all.length);
+    try{
+      const r=await fetch('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({files,corpus,mode:'async',job_id:jid,final})}).then(r=>r.json());
+      jid=r.job_id; staged+=r.staged||0;
+      $('#bar').style.width=Math.round((i+slice.length)/all.length*30)+'%';   // upload = first 30%
+    }catch(e){toast('Upload error on a batch');}
+  }
+  b.innerHTML='Ingest 0 files';b.disabled=true;
+  if(!jid){setTimeout(()=>$('#prog').classList.remove('show'),800);return;}
+  toast('Queued '+staged+' files — ingesting in background');
+  pollJob(jid);
+}
+function addUpRow(tbody,x){
+  tbody.insertAdjacentHTML('beforeend','<tr><td>'+esc(x.name)+'</td><td><span class="chip">'+esc(x.type||'?')+'</span></td>'
+    +'<td><span class="badge '+(x.status==='error'?'error':(x.status||'ok'))+'">'+esc(x.status||'ok')+'</span></td>'
+    +'<td style="text-align:right">'+(x.chunks||0)+'</td></tr>');
+}
+async function pollJob(jid){
+  const tbody=$('#uptbody');let shown=0;
+  const tick=async()=>{
+    let j;try{j=await fetch('/api/jobs/'+jid).then(r=>r.json());}catch(e){return setTimeout(tick,2000);}
+    const proc=(j.done||0)+(j.failed||0), tot=j.total||0;
+    const pct=tot?30+Math.round(proc/tot*70):30;   // ingest = remaining 70%
+    $('#bar').style.width=pct+'%';
+    (j.results||[]).slice(shown).forEach(x=>addUpRow(tbody,x)); shown=(j.results||[]).length;
+    $('#upbtn').innerHTML='Job '+proc+'/'+tot+' &middot; '+(j.chunks||0)+' chunks';
+    if(j.status==='completed'){
+      toast('Done: '+proc+'/'+tot+' files, '+(j.chunks||0)+' chunks'+(j.failed?(', '+j.failed+' failed'):''));
+      $('#upbtn').innerHTML='Ingest 0 files';refresh();
+      setTimeout(()=>$('#prog').classList.remove('show'),1000);return;
+    }
+    setTimeout(tick,1500);
+  };
+  tick();
 }
 async function buildCommunities(btn){
   btn.disabled=true;const o=btn.innerHTML;btn.innerHTML='<span class="spin"></span> Building&hellip;';
