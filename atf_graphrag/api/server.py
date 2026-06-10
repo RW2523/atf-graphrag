@@ -87,6 +87,33 @@ def _documents() -> dict:
             "total_chunks": total_chunks, "by_corpus": by_corpus}
 
 
+def _clear_all() -> dict:
+    """Wipe ALL persisted data — vectors, graph, communities, blobs, caches,
+    and the ingest manifest — then rebuild a fresh empty engine. Destructive."""
+    import shutil
+    global _engine, _indexer, _retriever, _orch
+    vectors = _engine.settings["vector_store"]["path"]
+    base = os.path.dirname(vectors)
+    targets = {
+        "vectors": vectors,
+        "graph": _engine.settings["graph_store"]["path"],
+        "blobs": _engine.settings.get("blob_store", {}).get(
+            "path", os.path.join(base, "blobs")),
+        "vlm_cache": os.path.join(base, "vlm_cache"),
+    }
+    cleared = []
+    for name, path in targets.items():
+        if path and os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+            os.makedirs(path, exist_ok=True)
+            cleared.append(name)
+    # Reset singletons so the next request boots a fresh, empty engine.
+    _engine = _indexer = _retriever = _orch = None
+    _boot()
+    return {"ok": True, "cleared": cleared,
+            "documents": _documents()["total_documents"]}
+
+
 def _boot() -> None:
     global _engine, _indexer, _retriever, _orch
     if _engine is None:
@@ -197,6 +224,8 @@ class Handler(BaseHTTPRequestHandler):
                 comms = _orch.build_communities(force=True)
                 _retriever.reload_communities()
                 return self._send(200, {"communities": len(comms)})
+            if self.path == "/api/clear":
+                return self._send(200, _clear_all())
             return self._send(404, {"error": "not found"})
         except KeyError as e:
             return self._send(400, {"error": f"missing field {e}"})

@@ -83,6 +83,8 @@ body{margin:0;font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
 .btn{background:var(--accent);color:#fff;border:0;border-radius:11px;padding:0 20px;font-weight:600;cursor:pointer;font-size:14px;height:44px}
 .btn:hover{background:var(--accent2)} .btn:disabled{opacity:.5;cursor:default}
 .btn.ghost{background:#fff;color:var(--accent);border:1px solid var(--line)}
+.btn.danger{background:#fff;color:#dc2626;border:1px solid #fecaca}
+.btn.danger:hover{background:#fef2f2;border-color:#fca5a5}
 .hint{color:var(--muted);text-align:center;margin-top:60px}
 .hint h2{color:#334155;font-weight:650} .examples{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:18px}
 .ex{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 14px;cursor:pointer;font-size:13px;max-width:260px;text-align:left;box-shadow:var(--shadow)}
@@ -109,9 +111,11 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
 .gbar input{border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;width:170px}
 .gbar .btn{height:36px;padding:0 14px;font-size:13px}
 .gbar select{height:36px}
-.legend{position:absolute;bottom:14px;left:14px;background:rgba(255,255,255,.92);padding:10px 12px;border-radius:11px;box-shadow:var(--shadow);font-size:12px}
+.legend{position:absolute;bottom:14px;left:14px;background:rgba(255,255,255,.95);padding:11px 13px;border-radius:11px;box-shadow:var(--shadow);font-size:12px;max-height:46%;overflow:auto;max-width:230px;backdrop-filter:blur(4px)}
 .legend .li{display:flex;align-items:center;gap:7px;margin:3px 0}
-.legend .sw{width:11px;height:11px;border-radius:50%}
+.legend .sw{width:11px;height:11px;border-radius:50%;flex-shrink:0}
+.legend .lgh{display:block;font-size:10px;letter-spacing:.05em;color:#94a3b8;font-weight:700;margin:2px 0 4px}
+.legend .lgt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ginfo{width:320px;border-left:1px solid var(--line);background:var(--panel);padding:18px;overflow:auto;flex-shrink:0}
 .ginfo h3{margin:0 0 4px} .ginfo .ty{color:var(--accent);font-size:12px;font-weight:600;text-transform:uppercase}
 .ginfo .k{color:var(--muted);font-size:12px;margin-top:14px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}
@@ -220,6 +224,7 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
           <input id="kbsearch" placeholder="&#128269; Filter documents&hellip;" oninput="renderKB()"/>
           <button class="btn ghost" onclick="loadKB()">&#8635; Refresh</button>
           <button class="btn" onclick="document.querySelector('[data-view=upload]').click()">+ Add documents</button>
+          <button class="btn danger" onclick="clearAll(this)">&#128465; Clear all data</button>
         </div>
       </div>
       <div class="kbtable-wrap">
@@ -357,6 +362,17 @@ async function loadKB(){
     $('#kb-tables').textContent=tbl.toLocaleString();
     renderKB();
   }catch(e){ $('#kbempty').style.display='block'; }
+}
+async function clearAll(btn){
+  if(!confirm('Permanently delete ALL data — every document, the vector index, '+
+    'the knowledge graph, communities and caches? This cannot be undone.')) return;
+  const o=btn.innerHTML; btn.disabled=true; btn.innerHTML='Clearing&hellip;';
+  try{
+    const r=await fetch('/api/clear',{method:'POST'}).then(r=>r.json());
+    toast('All data cleared ('+(r.cleared||[]).join(', ')+')');
+    KBDOCS=[]; loadKB(); refresh();
+  }catch(e){ toast('Clear failed'); }
+  btn.disabled=false; btn.innerHTML=o;
 }
 function renderKB(){
   const q=($('#kbsearch').value||'').toLowerCase();
@@ -507,7 +523,18 @@ async function buildCommunities(btn){
 
 let G=null,sim=null,svg=null,node=null,link=null,label=null;
 const PALETTE=['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ef4444','#14b8a6','#a855f7','#0ea5e9','#f97316','#84cc16'];
-const TYPECOLOR={manufacturer:'#6366f1',location:'#10b981',firearm_type:'#f59e0b',incident_type:'#ef4444',seller:'#ec4899',buyer:'#8b5cf6',case:'#0ea5e9',organization:'#14b8a6',entity:'#94a3b8'};
+// Richer entity-type ontology palette (graph UI). Unknown types fall back to grey.
+const TYPECOLOR={
+  manufacturer:'#6366f1', organization:'#14b8a6', agency:'#0891b2',
+  person:'#f43f5e', seller:'#ec4899', buyer:'#8b5cf6',
+  location:'#10b981', firearm_type:'#f59e0b', ammunition:'#d97706',
+  incident_type:'#ef4444', case:'#0ea5e9', statute:'#64748b',
+  event:'#a855f7', date:'#22c55e', vehicle:'#7c3a26', money:'#16a34a',
+  entity:'#94a3b8'};
+const TYPELABEL={manufacturer:'Manufacturer',organization:'Organization',agency:'Agency',
+  person:'Person',seller:'Seller',buyer:'Buyer',location:'Location',firearm_type:'Firearm type',
+  ammunition:'Ammunition',incident_type:'Incident type',case:'Case',statute:'Statute',
+  event:'Event',date:'Date',vehicle:'Vehicle',money:'Money',entity:'Entity'};
 async function loadGraph(){
   const c=$('#gcanvas');[...c.querySelectorAll('svg')].forEach(s=>s.remove());
   $('#ginfo').innerHTML='<div style="color:var(--muted);text-align:center;margin-top:40px"><span class="spin" style="border-color:#c7d2fe;border-top-color:#4f46e5"></span><br>Loading&hellip;</div>';
@@ -516,10 +543,20 @@ async function loadGraph(){
   const types=[...new Set(G.nodes.map(n=>n.type))];
   $('#gtype').innerHTML='<option value="">all types</option>'+types.map(t=>'<option>'+t+'</option>').join('');
   drawGraph();
-  const comms=[...new Set(G.nodes.map(n=>n.community))].filter(c=>c>=0).sort((a,b)=>a-b).slice(0,8);
-  $('#legend').innerHTML='<b style="font-size:11px;color:#64748b">COMMUNITIES</b>'+
-    comms.map(c=>'<div class="li"><span class="sw" style="background:'+PALETTE[c%PALETTE.length]+'"></span>Community '+c+'</div>').join('')
-    +'<div class="li"><span class="sw" style="background:#cbd5e1"></span>ungrouped</div>';
+  const meta=G.community_meta||{};
+  const comms=[...new Set(G.nodes.map(n=>n.community))].filter(c=>c>=0).sort((a,b)=>a-b).slice(0,10);
+  const cname=c=>((meta[c]&&meta[c].name)?meta[c].name:('Community '+c));
+  // Types actually present in the graph, for the type legend.
+  const present=[...new Set(G.nodes.map(n=>n.type))].sort();
+  let lg='<b class="lgh">COMMUNITIES</b>'+
+    comms.map(c=>'<div class="li" title="'+esc((meta[c]||{}).summary||'')+'">'+
+      '<span class="sw" style="background:'+PALETTE[c%PALETTE.length]+'"></span>'+
+      '<span class="lgt">'+esc(cname(c))+'</span></div>').join('')+
+    '<div class="li"><span class="sw" style="background:#cbd5e1"></span><span class="lgt">ungrouped</span></div>';
+  lg+='<b class="lgh" style="margin-top:10px">ENTITY TYPES</b>'+
+    present.map(t=>'<div class="li"><span class="sw" style="background:'+(TYPECOLOR[t]||'#94a3b8')+'"></span>'+
+      '<span class="lgt">'+esc(TYPELABEL[t]||t)+'</span></div>').join('');
+  $('#legend').innerHTML=lg;
   $('#ginfo').innerHTML='<div style="color:var(--muted);text-align:center;margin-top:40px"><div style="font-size:40px">&#128376;</div>'+G.nodes.length+' entities, '+G.edges.length+' connections.<br>Click a node to inspect.</div>';
 }
 function colorOf(n){return n.community>=0?PALETTE[n.community%PALETTE.length]:(TYPECOLOR[n.type]||'#cbd5e1');}
@@ -530,26 +567,39 @@ function drawGraph(){
   svg.call(d3.zoom().scaleExtent([.2,4]).on('zoom',ev=>g.attr('transform',ev.transform)));
   const nodes=G.nodes.map(d=>({...d})),id=new Set(nodes.map(n=>n.id));
   const links=G.edges.filter(e=>id.has(e.source)&&id.has(e.target)).map(d=>({...d}));
+  const rOf=d=>5+Math.sqrt(d.degree)*1.8;          // node radius
+  // Spread the graph out: stronger repulsion, longer links, and a collision
+  // radius that reserves room for the label so nodes/text don't overlap.
   sim=d3.forceSimulation(nodes)
-    .force('link',d3.forceLink(links).id(d=>d.id).distance(60).strength(.4))
-    .force('charge',d3.forceManyBody().strength(-90))
+    .force('link',d3.forceLink(links).id(d=>d.id).distance(d=>d.typed?70:110).strength(.25))
+    .force('charge',d3.forceManyBody().strength(-260).distanceMax(520))
     .force('center',d3.forceCenter(W/2,H/2))
-    .force('collide',d3.forceCollide(d=>4+Math.sqrt(d.degree)*1.6+3));
+    .force('x',d3.forceX(W/2).strength(.04))
+    .force('y',d3.forceY(H/2).strength(.04))
+    .force('collide',d3.forceCollide(d=>rOf(d)+16).iterations(2));
   link=g.append('g').selectAll('line').data(links).join('line')
-    .attr('stroke-width',d=>d.typed?1.8:.7).attr('stroke',d=>d.typed?'#a5b4fc':'#cbd5e1').attr('stroke-opacity',.6);
+    .attr('stroke-width',d=>d.typed?1.8:.7).attr('stroke',d=>d.typed?'#a5b4fc':'#cbd5e1').attr('stroke-opacity',.55);
   node=g.append('g').selectAll('circle').data(nodes).join('circle')
-    .attr('r',d=>4+Math.sqrt(d.degree)*1.6).attr('fill',colorOf)
-    .attr('stroke','#fff').attr('stroke-width',1.2).style('cursor','pointer')
+    .attr('r',rOf).attr('fill',colorOf)
+    .attr('stroke','#fff').attr('stroke-width',1.4).style('cursor','pointer')
     .on('click',(e,d)=>showNode(d))
     .call(d3.drag().on('start',(e,d)=>{if(!e.active)sim.alphaTarget(.3).restart();d.fx=d.x;d.fy=d.y;})
       .on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y;}).on('end',(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null;}));
   node.append('title').text(d=>d.name+' ('+d.type+') · '+d.degree+' links');
-  label=g.append('g').selectAll('text').data(nodes.filter(n=>n.degree>=6)).join('text')
-    .text(d=>d.name).attr('font-size',9).attr('fill','#475569').attr('dx',7).attr('dy',3).style('pointer-events','none');
+  // Labels: centered UNDER the node, with a white halo so text stays legible
+  // over edges (paint-order:stroke draws the halo behind the fill).
+  // Adaptive labelling: on big graphs only label major hubs so text stays
+  // sparse and readable; dense detail appears as you zoom in.
+  const labMin=nodes.length>900?16:(nodes.length>400?9:4);
+  label=g.append('g').selectAll('text').data(nodes.filter(n=>n.degree>=labMin)).join('text')
+    .text(d=>d.name.length>26?d.name.slice(0,24)+'…':d.name)
+    .attr('font-size',10).attr('font-weight',600).attr('text-anchor','middle')
+    .attr('fill','#1e293b').attr('stroke','#ffffff').attr('stroke-width',3.2)
+    .style('paint-order','stroke').style('pointer-events','none');
   sim.on('tick',()=>{
     link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
     node.attr('cx',d=>d.x).attr('cy',d=>d.y);
-    label.attr('x',d=>d.x).attr('y',d=>d.y);
+    label.attr('x',d=>d.x).attr('y',d=>d.y+rOf(d)+12);   // aligned beneath node
   });
 }
 function showNode(d){
@@ -557,9 +607,12 @@ function showNode(d){
   const rel=nbrs.slice(0,18).map(e=>{const a=(e.source.id||e.source),b=(e.target.id||e.target);
     const other=(a===d.id)?b:a;const on=(G.nodes.find(n=>n.id===other)||{}).name||other;
     return '<div style="font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--line)">'+(e.typed?'<b style="color:var(--accent)">'+esc(e.relation)+'</b> ':'· ')+esc(on)+'</div>';}).join('');
+  const cmeta=(G.community_meta||{})[d.community]||null;
+  const cnm=cmeta?cmeta.name:('community '+d.community);
   let h='<div class="ty">'+esc(d.type)+'</div><h3>'+esc(d.name)+'</h3>';
-  h+='<div style="color:var(--muted);font-size:12px">'+d.degree+' connections'+(d.community>=0?(' · community '+d.community):'')+'</div>';
-  if(G.communities&&G.communities[d.community]){h+='<div class="k">Community briefing</div><div style="font-size:12.5px;color:#475569">'+esc(G.communities[d.community])+'</div>';}
+  h+='<div style="color:var(--muted);font-size:12px">'+d.degree+' connections'+(d.community>=0?(' · '+esc(cnm)):'')+'</div>';
+  const cbrief=cmeta?cmeta.summary:(G.communities&&G.communities[d.community]);
+  if(cbrief){h+='<div class="k">'+esc(cnm)+'</div><div style="font-size:12.5px;color:#475569">'+esc(cbrief)+'</div>';}
   h+='<div class="k">Connections</div>'+(rel||'<span style="color:var(--muted)">none</span>');
   h+='<div class="k">Source documents</div><div id="nodesrc"><span style="color:var(--muted);font-size:12px">loading&hellip;</span></div>';
   $('#ginfo').innerHTML=h;
