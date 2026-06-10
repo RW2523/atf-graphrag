@@ -127,6 +127,39 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
 .spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;
   display:inline-block;animation:sp .7s linear infinite;vertical-align:-3px}
 @keyframes sp{to{transform:rotate(360deg)}}
+/* ---- Knowledge Base ---- */
+.kbwrap{max-width:1100px;margin:0 auto}
+.kbhead{display:flex;justify-content:space-between;align-items:center;gap:16px;
+  flex-wrap:wrap;margin-bottom:18px}
+.kbsum{display:flex;gap:10px;flex-wrap:wrap}
+.kbstat{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:12px 18px;box-shadow:var(--shadow);min-width:104px}
+.kbstat b{display:block;font-size:24px;font-weight:800;color:var(--ink);line-height:1.1}
+.kbstat span{font-size:12px;color:var(--muted)}
+.kbtools{display:flex;gap:8px;align-items:center}
+.kbtools input{width:240px;padding:10px 12px;border:1px solid var(--line);
+  border-radius:10px;font-size:14px;outline:none}
+.kbtools input:focus{border-color:#6366f1;box-shadow:0 0 0 3px #6366f122}
+.kbtable-wrap{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow);overflow:hidden}
+.kbtable{width:100%;border-collapse:collapse;font-size:14px}
+.kbtable thead th{text-align:left;padding:13px 16px;background:#f8fafc;
+  color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;
+  letter-spacing:.03em;border-bottom:1px solid var(--line);position:sticky;top:0}
+.kbtable th.num,.kbtable td.num{text-align:right}
+.kbtable tbody td{padding:12px 16px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.kbtable tbody tr:last-child td{border-bottom:none}
+.kbtable tbody tr:hover{background:#f8fafc}
+.kbname{font-weight:600;color:var(--ink);max-width:340px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.fdot{display:inline-block;width:8px;height:8px;border-radius:2px;background:#6366f1;
+  margin-right:9px;vertical-align:middle}
+.corp{background:#eef2ff;color:#4338ca;font-size:11px;font-weight:600;
+  padding:3px 9px;border-radius:20px;text-transform:uppercase;letter-spacing:.03em}
+.ctchip{display:inline-flex;align-items:center;gap:5px;background:#f1f5f9;
+  border-radius:20px;padding:3px 9px;font-size:11px;color:#475569;margin:2px 4px 2px 0;white-space:nowrap}
+.ctchip i{width:8px;height:8px;border-radius:50%;display:inline-block}
+.kbempty{padding:40px;text-align:center;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -134,6 +167,7 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
   <div class="brand"><div class="logo">&#9670;</div><div>ATF GraphRAG<small>Knowledge Console</small></div></div>
   <nav class="nav">
     <button data-view="chat" class="active"><span class="ico">&#128172;</span> Chat</button>
+    <button data-view="kb"><span class="ico">&#128218;</span> Knowledge Base</button>
     <button data-view="upload"><span class="ico">&#8593;</span> Upload</button>
     <button data-view="graph"><span class="ico">&#128376;</span> Graph</button>
   </nav>
@@ -169,6 +203,34 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
       <div class="composer">
         <input id="q" placeholder="Ask a question&hellip;  (e.g. How many firearms were manufactured in 2023?)" autocomplete="off"/>
         <button class="btn" id="send" onclick="ask()">Send</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="v-kb">
+    <div class="kbwrap">
+      <div class="kbhead">
+        <div class="kbsum">
+          <div class="kbstat"><b id="kb-docs">0</b><span>documents</span></div>
+          <div class="kbstat"><b id="kb-chunks">0</b><span>chunks</span></div>
+          <div class="kbstat"><b id="kb-pages">0</b><span>pages</span></div>
+          <div class="kbstat"><b id="kb-tables">0</b><span>table chunks</span></div>
+        </div>
+        <div class="kbtools">
+          <input id="kbsearch" placeholder="&#128269; Filter documents&hellip;" oninput="renderKB()"/>
+          <button class="btn ghost" onclick="loadKB()">&#8635; Refresh</button>
+          <button class="btn" onclick="document.querySelector('[data-view=upload]').click()">+ Add documents</button>
+        </div>
+      </div>
+      <div class="kbtable-wrap">
+        <table class="kbtable">
+          <thead><tr>
+            <th>Document</th><th>Corpus</th><th class="num">Pages</th>
+            <th class="num">Chunks</th><th>Content</th><th>Extraction</th>
+          </tr></thead>
+          <tbody id="kbbody"></tbody>
+        </table>
+        <div class="kbempty" id="kbempty">No documents indexed yet. Use <b>Upload</b> to add files.</div>
       </div>
     </div>
   </section>
@@ -252,9 +314,11 @@ document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
   $('#v-'+v).classList.add('active');
   const titles={chat:['Chat','Ask questions across your documents'],
+    kb:['Knowledge Base','Documents currently indexed in the corpus'],
     upload:['Upload','Add files and folders to the knowledge base'],
     graph:['Graph','Explore entities, communities and connections']};
   $('#t-title').textContent=titles[v][0]; $('#t-sub').textContent=titles[v][1];
+  if(v==='kb') loadKB();
 });
 
 async function refresh(){
@@ -270,6 +334,51 @@ async function refresh(){
   try{const g=await fetch('/graph/export').then(r=>r.json());$('#s-comm').textContent=(g.stats||{}).communities||0;}catch(e){}
 }
 refresh();
+
+// ---- Knowledge Base ----
+let KBDOCS=[];
+const CT_COLORS={text:'#64748b',table:'#0ea5e9',figure:'#8b5cf6',chart:'#f59e0b',list:'#10b981',
+  vision:'#ec4899',ocr:'#ef4444'};
+function chip(label,n,total){
+  const pct=total?Math.round(n/total*100):0;
+  const col=CT_COLORS[label]||'#94a3b8';
+  return '<span class="ctchip" title="'+label+': '+n+'"><i style="background:'+col+'"></i>'+
+         label+' '+pct+'%</span>';
+}
+async function loadKB(){
+  try{
+    const d=await fetch('/api/documents').then(r=>r.json());
+    KBDOCS=d.documents||[];
+    $('#kb-docs').textContent=(d.total_documents||0).toLocaleString();
+    $('#kb-chunks').textContent=(d.total_chunks||0).toLocaleString();
+    let pages=0,tbl=0;
+    KBDOCS.forEach(x=>{pages+=x.page_count||0; tbl+=(x.content_types||{}).table||0;});
+    $('#kb-pages').textContent=pages.toLocaleString();
+    $('#kb-tables').textContent=tbl.toLocaleString();
+    renderKB();
+  }catch(e){ $('#kbempty').style.display='block'; }
+}
+function renderKB(){
+  const q=($('#kbsearch').value||'').toLowerCase();
+  const rows=KBDOCS.filter(d=>d.name.toLowerCase().includes(q));
+  const tb=$('#kbbody'); tb.innerHTML='';
+  $('#kbempty').style.display = rows.length? 'none':'block';
+  rows.forEach(d=>{
+    const tot=d.chunks||1;
+    const cts=Object.entries(d.content_types||{}).sort((a,b)=>b[1]-a[1])
+      .map(([k,v])=>chip(k,v,tot)).join('');
+    const meth=Object.entries(d.methods||{}).sort((a,b)=>b[1]-a[1])
+      .map(([k,v])=>chip(k,v,tot)).join('');
+    const tr=document.createElement('tr');
+    tr.innerHTML='<td class="kbname" title="'+esc(d.name)+'">'+
+        '<span class="fdot"></span>'+esc(d.name)+'</td>'+
+      '<td><span class="corp">'+esc(d.corpus)+'</span></td>'+
+      '<td class="num">'+(d.page_count||'—')+'</td>'+
+      '<td class="num"><b>'+d.chunks.toLocaleString()+'</b></td>'+
+      '<td>'+cts+'</td><td>'+meth+'</td>';
+    tb.appendChild(tr);
+  });
+}
 
 function openKey(){$('#keymodal').classList.add('show');}
 function closeKey(){$('#keymodal').classList.remove('show');}

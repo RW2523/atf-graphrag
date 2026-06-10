@@ -46,6 +46,47 @@ def token_ok(auth_header: str, expected: str) -> bool:
     return auth_header.strip() == f"Bearer {expected}"
 
 
+def _documents() -> dict:
+    """List every document currently in the Knowledge Base, aggregated from the
+    vector-store payloads: per source file -> chunk count, content-type mix,
+    corpus, page span, extraction methods, and ingest time."""
+    docs: dict = {}
+    for corpus in _engine.corpora:
+        vs = _engine.vstore(corpus)
+        for p in getattr(vs, "_payloads", {}).values():
+            name = p.get("source_name") or p.get("document_title") or "(unknown)"
+            key = (corpus, name)
+            d = docs.get(key)
+            if d is None:
+                d = docs[key] = {
+                    "name": name, "corpus": corpus,
+                    "document_id": p.get("document_id", ""),
+                    "chunks": 0, "pages": set(), "content_types": {},
+                    "methods": {}, "date": p.get("document_date", ""),
+                    "ingested_at": p.get("ingested_at", 0),
+                }
+            d["chunks"] += 1
+            if p.get("page_number"):
+                d["pages"].add(p["page_number"])
+            ct = p.get("content_type", "text")
+            d["content_types"][ct] = d["content_types"].get(ct, 0) + 1
+            m = p.get("extraction_method", "text")
+            d["methods"][m] = d["methods"].get(m, 0) + 1
+            d["ingested_at"] = max(d["ingested_at"], p.get("ingested_at", 0) or 0)
+    out = []
+    for d in docs.values():
+        d["page_count"] = len(d["pages"])
+        d.pop("pages", None)
+        out.append(d)
+    out.sort(key=lambda x: (-x["ingested_at"], x["name"]))
+    total_chunks = sum(d["chunks"] for d in out)
+    by_corpus: dict = {}
+    for d in out:
+        by_corpus[d["corpus"]] = by_corpus.get(d["corpus"], 0) + 1
+    return {"documents": out, "total_documents": len(out),
+            "total_chunks": total_chunks, "by_corpus": by_corpus}
+
+
 def _boot() -> None:
     global _engine, _indexer, _retriever, _orch
     if _engine is None:
@@ -98,6 +139,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"status": "ok"})
         if self.path == "/stats":
             return self._send(200, _engine.stats())
+        if self.path == "/api/documents":
+            return self._send(200, _documents())
         if self.path == "/graph/top":
             return self._send(200, {"top_entities": _engine.graph.top_entities(15)})
         if self.path == "/graph/export":
