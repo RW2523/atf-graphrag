@@ -28,6 +28,10 @@ class Engine:
         self.embedder = make_embedder(self.settings)
         self.vision = make_vision(self.settings)
         self.reranker = make_reranker(self.settings)
+        # Model tiering (best-effort; OpenRouter honours per-call model override).
+        _lc = self.settings["llm"]
+        self.cheap_model = _lc.get("cheap_model") or _lc.get("model")
+        self.strong_model = _lc.get("strong_model") or _lc.get("model")
         self.ocr = make_ocr(self.settings.get("ingestion", {}).get("ocr", {}))
         # Ingestion layer
         self.parser = make_parser(self.settings)
