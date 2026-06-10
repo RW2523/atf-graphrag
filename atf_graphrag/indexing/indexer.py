@@ -36,10 +36,24 @@ def _walk_supported(root: str):
 
 
 class Indexer:
-    def __init__(self, engine: Engine, use_llm_extraction: bool = False):
+    def __init__(self, engine: Engine, use_llm_extraction=None):
         self.e = engine
-        self.use_llm = use_llm_extraction
         ic = engine.settings["ingestion"]
+        # LLM entity/relation extraction mode: off | auto | on.
+        #   off  -> never (fast; co-occurrence graph only)
+        #   on   -> every chunk (richest graph; slow/costly at scale)
+        #   auto -> only on small docs (<= auto_max_pages) so bulk uploads of big
+        #           reports stay fast while small/connected sets get rich extraction
+        # An explicit use_llm_extraction bool still overrides (back-compat for tests).
+        self._llm_ok = engine.llm.name != "offline"
+        if use_llm_extraction is True:
+            self._extract_mode = "on"
+        elif use_llm_extraction is False:
+            self._extract_mode = "off"
+        else:
+            self._extract_mode = ic.get("llm_extraction", "auto")
+        self._auto_max_pages = int(ic.get("llm_extraction_auto_max_pages", 40))
+        self.use_llm = self._llm_ok and self._extract_mode in ("on", "auto")
         self.size = ic["chunk_size"]
         self.overlap = ic["chunk_overlap"]
         self._seen_hashes: set = set()
@@ -95,6 +109,8 @@ class Indexer:
         n = 0
         first_page_text = ""
         total_pages = len(pages)
+        # Decide LLM extraction for THIS file (auto = small docs only).
+        self.use_llm = self._extract_for(total_pages)
         _stage("indexing", page=0, pages=total_pages, chunks=0)
         for idx, (page_no, text) in enumerate(pages, 1):
             # Report progress every page (cheap) so the UI can show page X/Y.
@@ -243,6 +259,14 @@ class Indexer:
             vs.upsert(rec, vec)
             self._build_graph(rec)
         return len(chunks)
+
+    def _extract_for(self, pages: int) -> bool:
+        """Whether to run LLM extraction for a doc of `pages` pages."""
+        if not self._llm_ok or self._extract_mode == "off":
+            return False
+        if self._extract_mode == "on":
+            return True
+        return pages <= self._auto_max_pages       # auto
 
     def _build_graph(self, rec: ChunkRecord) -> None:
         g = self.e.graph
