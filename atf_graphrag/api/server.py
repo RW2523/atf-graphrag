@@ -122,6 +122,18 @@ def _clear_all() -> dict:
             "documents": _documents()["total_documents"]}
 
 
+def _restore_all(name: str) -> bool:
+    """Restore a backup snapshot, then reboot the engine onto the restored state.
+    Returns False if the named backup does not exist."""
+    from .backup import restore_backup
+    global _engine, _indexer, _retriever, _orch, _jobs
+    ok = restore_backup(_storage_root(), name)
+    if ok:
+        _engine = _indexer = _retriever = _orch = _jobs = None
+        _boot()
+    return ok
+
+
 def _boot() -> None:
     global _engine, _indexer, _retriever, _orch, _jobs
     if _engine is None:
@@ -260,13 +272,7 @@ class Handler(BaseHTTPRequestHandler):
                 label = _t.strftime("%Y%m%d_%H%M%S")
                 return self._send(200, make_backup(_storage_root(), label))
             if self.path == "/api/restore":
-                from .backup import restore_backup
-                name = data.get("name", "")
-                ok = restore_backup(_storage_root(), name)
-                if ok:                        # reboot engine onto the restored state
-                    global _engine, _indexer, _retriever, _orch, _jobs
-                    _engine = _indexer = _retriever = _orch = _jobs = None
-                    _boot()
+                ok = _restore_all(data.get("name", ""))
                 return self._send(200 if ok else 404,
                                   {"ok": ok, "documents": _documents()["total_documents"]})
             if self.path == "/api/config/extraction":
