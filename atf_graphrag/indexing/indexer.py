@@ -244,10 +244,17 @@ class Indexer:
                               **{k: v for k, v in meta.items()
                                  if k in ChunkRecord.__dataclass_fields__})
             # Set visual_content_type for table/chart/figure to enable
-            # content-aware retrieval scoring later.
+            # content-aware retrieval scoring later. VLM-derived blocks (chart/
+            # figure descriptions, scanned-page text) carry a [VLM ...] prefix —
+            # tag them vision-extracted and record the model + a short summary so
+            # the source is traceable and the chunk is filterable as visual.
             if ctype in ("table", "chart", "figure"):
                 rec.visual_content_type = ctype
-                rec.extraction_method = ctype
+                vlm_derived = "[VLM" in piece   # chunker keeps the marker inline
+                rec.extraction_method = "vision" if vlm_derived else "table_extraction"
+                if vlm_derived:
+                    rec.vision_model = getattr(self.e.vision, "name", "")
+                rec.extraction_summary = piece.strip()[:300]
             rec = enrich_metadata(rec)
             if self.use_llm:
                 self._llm_augment(rec)

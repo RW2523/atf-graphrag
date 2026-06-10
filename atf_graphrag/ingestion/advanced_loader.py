@@ -88,6 +88,10 @@ _VLM_REFUSAL = (
     "unable to extract", "can't help with", "cannot help with", "i can't assist",
     "i can't extract", "i cannot extract", "provide the details", "no text",
     "i'm not able to", "i am not able to", "can't process", "cannot process",
+    # Offline / no-key placeholders — these are NOT descriptions and must never
+    # be indexed or cached (otherwise an offline run poisons the corpus and the
+    # cache keeps serving the junk after a key is configured).
+    "[offline vision]", "set openrouter_api_key", "vision unavailable",
 )
 
 
@@ -313,29 +317,46 @@ class AdvancedPDFLoader:
         parts.extend(table_blocks)
 
         # ── Stage 2: embedded image → VLM ─────────────────────────────────────
+        # Captures charts/figures embedded as RASTER images (≥ min_image_px).
+        img_descs: List[str] = []
         if self.vlm_enabled:
             img_descs = self._extract_images_vlm(mu_doc, mu_page, pdf_path, page_no)
             parts.extend(img_descs)
 
         # ── Stage 3: full-page render → VLM ───────────────────────────────────
-        # Only trigger for truly scanned pages (< 120 non-whitespace chars).
-        # We do NOT trigger for pages that merely have decorative images
-        # (headers, watermarks, bullet icons) alongside good text — those are
-        # already well-extracted by pdfplumber.
+        # Fires for:
+        #   (a) scanned pages (< 120 non-whitespace chars): the VLM text IS the page.
+        #   (b) chart pages: the page references a chart/figure AND carries real
+        #       vector-drawing content (ATF charts are usually drawn as vectors,
+        #       not embedded raster images, so Stage 2 misses them) AND Stage 2
+        #       produced no description — so the chart is described via a full-page
+        #       render with the chart prompt instead of being lost.
+        # Decorative-image pages with good text are NOT re-rendered (Stage 1 text
+        # already covers them).
         body_chars = len(re.sub(r"\s", "", body_text))
         is_sparse = body_chars < 120
-        run_page_vlm = is_sparse
+        chart_signal = _has_chart_indicators(body_text)
+        chart_page = (chart_signal and not img_descs
+                      and self._has_chart_drawings(mu_page))
 
-        if self.vlm_enabled and run_page_vlm:
-            page_type = "scanned" if is_sparse else ("chart" if chart_signal else "auto")
+        if self.vlm_enabled and (is_sparse or chart_page):
+            page_type = "scanned" if is_sparse else "chart"
             page_vlm = self._render_page_vlm(mu_page, pdf_path, page_no, page_type)
             if page_vlm:
                 if is_sparse:
-                    # Scanned: VLM text IS the page content
-                    return page_vlm
-                parts.append(page_vlm)
+                    return page_vlm          # scanned: VLM text IS the page content
+                parts.append(page_vlm)       # chart: append description to the text
 
         return "\n\n".join(p for p in parts if p.strip())
+
+    @staticmethod
+    def _has_chart_drawings(mu_page, min_paths: int = 16) -> bool:
+        """True when a page carries enough vector-drawing operations to plausibly
+        be a chart/graph (axes, bars, lines), not just a rule or underline."""
+        try:
+            return len(mu_page.get_drawings()) >= min_paths
+        except Exception:  # noqa: BLE001
+            return False
 
     # ── Stage 1 helpers ───────────────────────────────────────────────────────
 
@@ -387,11 +408,12 @@ class AdvancedPDFLoader:
                 continue
 
             cache_key = f"img_p{page_no}_x{xref}"
-            if cache_key in self._cache:
-                desc = self._cache[cache_key]
-                if desc:
-                    descriptions.append(desc)
+            cached = self._cache.get(cache_key)
+            if cached and not _is_vlm_refusal(cached):
+                descriptions.append(cached)
                 continue
+            # missing OR poisoned (offline/refusal cached by an earlier run) ->
+            # recompute so a keyed run self-heals a previously offline cache.
 
             desc = ""
             try:
@@ -413,8 +435,10 @@ class AdvancedPDFLoader:
                 except Exception:
                     pass
 
-            self._cache[cache_key] = desc
+            # Only cache SUCCESSFUL descriptions. Caching "" (offline / network
+            # failure) would block a later keyed run from retrying.
             if desc:
+                self._cache[cache_key] = desc
                 descriptions.append(desc)
 
         return descriptions
@@ -427,8 +451,10 @@ class AdvancedPDFLoader:
         import fitz  # type: ignore
 
         cache_key = f"page_{page_no}_{page_type}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
+        cached = self._cache.get(cache_key)
+        if cached and not _is_vlm_refusal(cached):
+            return cached
+        # missing OR poisoned -> recompute (self-heals an offline-cached entry).
 
         text = ""
         tmp_path = ""
@@ -448,7 +474,8 @@ class AdvancedPDFLoader:
                 except Exception:
                     pass
 
-        self._cache[cache_key] = text
+        if text:                    # never cache an empty / failed render
+            self._cache[cache_key] = text
         return text
 
     # ── VLM call with caching ─────────────────────────────────────────────────
