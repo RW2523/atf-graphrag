@@ -31,6 +31,11 @@ DEFAULTS: Dict[str, Any] = {
         "temperature": 0.1,
         "max_tokens": 1024,
         "offline_fallback": True,           # if no key/network, degrade gracefully
+        # Model tiering: cheap model for high-volume steps (per-chunk extraction,
+        # community summaries, map-reduce MAP); strong model for final synthesis.
+        # Both default to `model`, so behaviour is unchanged until configured.
+        "cheap_model": "",
+        "strong_model": "",
     },
 
     # ---- Vision / multimodal (images, charts, scanned pages) --------------

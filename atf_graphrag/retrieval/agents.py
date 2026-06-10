@@ -631,21 +631,28 @@ class RerankingAgent:
 
 
 class GlobalAnswerAgent:
-    """Global/sensemaking answers via map-reduce over community summaries
-    (addendum Step 6c). MAP: select communities relevant to the question and
-    take their briefings. REDUCE: synthesize one source-traced answer. Every
-    claim resolves back to the communities' member chunk_ids (provenance)."""
+    """Global/sensemaking answers via a TRUE map-reduce over community summaries
+    (GraphRAG-style). MAP: ask the CHEAP model to answer the question from EACH
+    relevant community independently, skipping irrelevant ones. REDUCE: the
+    STRONG model aggregates the partial answers into one source-traced answer.
+    Every claim resolves back to community member chunk_ids (provenance)."""
+
+    _MAP_SYS = ("You are an ATF analyst. Given ONE community briefing, decide if it "
+                "helps answer the question. If it does, reply with a 1-2 sentence "
+                "partial answer grounded ONLY in the briefing. If it is irrelevant, "
+                "reply with exactly NONE. Do not invent facts.")
+    _REDUCE_SYS = ("You are an ATF analyst. Synthesize the partial answers below "
+                   "into one clear, corpus-wide answer. Cite the communities you "
+                   "used as [Cn]. Identify patterns/recurrences across them. Use "
+                   "ONLY the partials; if they are insufficient, say so.")
 
     def answer(self, plan: QueryPlan, engine: Engine, store) -> Optional[Answer]:
-        comms = store.relevant(plan.question, top_k=6)
+        comms = store.relevant(plan.question, top_k=8)
         if not comms:
             return None
-        briefings = []
-        citations = []
-        for i, c in enumerate(comms, 1):
-            briefings.append(f"[C{i}] {c.get('summary', '')}")
+
+        def _cite(i, c):
             chunk_ids = c.get("chunk_ids", [])[:5]
-            # Resolve a representative source name for provenance.
             srcs = []
             for cid in chunk_ids:
                 for corpus in engine.corpora:
@@ -653,28 +660,57 @@ class GlobalAnswerAgent:
                     if ch:
                         srcs.append(ch.source_name or ch.document_title)
                         break
-            citations.append({
-                "ref": i, "community": True,
-                "members": c.get("members", [])[:8],
-                "sources": sorted(set(s for s in srcs if s)),
-                "chunk_ids": chunk_ids,
-            })
-        context = "\n".join(briefings)
-        if engine.llm.name != "offline":
-            sys = ("You are an ATF analyst answering a corpus-wide question. Use ONLY "
-                   "the community briefings below. Identify patterns/recurrences and "
-                   "cite the communities you used as [Cn]. If they are insufficient, "
-                   "say so. Do not invent connections.")
-            prompt = (f"QUESTION: {plan.question}\n\nCOMMUNITY BRIEFINGS:\n{context}\n\n"
-                      "Synthesize a clear, source-traced answer.")
-            answer_text = engine.llm.complete(prompt, system=sys)
+            return {"ref": i, "community": True, "name": c.get("name", f"Community {i}"),
+                    "members": c.get("members", [])[:8],
+                    "sources": sorted(set(s for s in srcs if s)),
+                    "chunk_ids": chunk_ids}
+
+        online = engine.llm.name != "offline"
+        cheap = getattr(engine, "cheap_model", None)
+        strong = getattr(engine, "strong_model", None)
+
+        # ---- MAP: per-community partial answers (cheap model) ----
+        partials, citations = [], []
+        for i, c in enumerate(comms, 1):
+            brief = c.get("summary", "")
+            if not brief:
+                continue
+            if online:
+                mp = (f"QUESTION: {plan.question}\n\nCOMMUNITY [C{i}] "
+                      f"{c.get('name','')}:\n{brief}\n\nPartial answer or NONE:")
+                try:
+                    out = engine.llm.complete(mp, system=self._MAP_SYS,
+                                              model=cheap, temperature=0.0,
+                                              max_tokens=160).strip()
+                except Exception:  # noqa: BLE001
+                    out = ""
+                if not out or out.strip().upper().startswith("NONE"):
+                    continue                         # community judged irrelevant
+                partials.append(f"[C{i}] {out}")
+            else:
+                partials.append(f"[C{i}] {brief}")    # offline: use the briefing
+            citations.append(_cite(i, c))
+
+        if not partials:
+            return None                               # nothing relevant -> fallback
+
+        # ---- REDUCE: aggregate partials (strong model) ----
+        if online:
+            rp = (f"QUESTION: {plan.question}\n\nPARTIAL ANSWERS:\n"
+                  + "\n".join(partials) + "\n\nFinal source-traced answer:")
+            try:
+                answer_text = engine.llm.complete(rp, system=self._REDUCE_SYS,
+                                                  model=strong)
+            except Exception:  # noqa: BLE001
+                answer_text = "\n".join(partials)
         else:
-            answer_text = ("[corpus-wide synthesis from graph communities]\n" + context)
-        conf = round(min(1.0, 0.4 + 0.1 * len(comms)), 3)
+            answer_text = ("[corpus-wide synthesis from graph communities]\n"
+                           + "\n".join(partials))
+        conf = round(min(1.0, 0.4 + 0.1 * len(citations)), 3)
         return Answer(question=plan.question, answer=answer_text,
                       citations=citations, confidence=conf,
                       plan=plan.__dict__, graph_paths=[],
-                      evidence_count=len(comms))
+                      evidence_count=len(citations))
 
 
 class GenerationAgent:
