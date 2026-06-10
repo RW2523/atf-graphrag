@@ -132,7 +132,8 @@ def _boot() -> None:
         _orch = IngestionOrchestrator(_engine, _indexer)
         _jobs = JobManager(
             jobs_dir=os.path.join(_storage_root(), "jobs"),
-            ingest_fn=lambda path, corpus: _orch.ingest(path, corpus=corpus),
+            ingest_fn=lambda path, corpus, on_stage: _orch.ingest(
+                path, corpus=corpus, on_stage=on_stage),
             commit_fn=_engine.commit, lock=_INGEST_LOCK)
 
 
@@ -182,6 +183,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, _documents())
         if self.path == "/api/jobs":
             return self._send(200, {"jobs": _jobs.list() if _jobs else []})
+        if self.path == "/api/jobs/active":
+            return self._send(200, (_jobs.active() if _jobs else None) or {})
         if self.path.startswith("/api/jobs/"):
             jid = self.path.split("/api/jobs/", 1)[1].strip("/")
             j = _jobs.get(jid) if _jobs else None

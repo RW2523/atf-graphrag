@@ -51,7 +51,8 @@ class Indexer:
     # ---------- public API ----------
     def index_file(self, path: str, corpus: str = "pdf",
                    source_type: Optional[str] = None,
-                   source_url: str = "", doc_key: str = "") -> int:
+                   source_url: str = "", doc_key: str = "",
+                   on_stage=None) -> int:
         ext = os.path.splitext(path)[1].lower()
         if ext not in SUPPORTED:
             raise ValueError(f"Unsupported file type: {ext}")
@@ -59,10 +60,21 @@ class Indexer:
         # document's identity so files with the same basename in different
         # subfolders stay distinct and don't overwrite each other.
         name = doc_key or os.path.basename(path)
+
+        # on_stage(stage, **info): optional live-progress hook (used by the
+        # async job manager to show what's processing + forecast time).
+        def _stage(stage, **info):
+            if on_stage:
+                try:
+                    on_stage(stage, **info)
+                except Exception:  # noqa: BLE001  never let telemetry break ingest
+                    pass
+
         # Parse via the configured parser provider (advanced | docling), selected
         # by config. The parser returns the same (page_no, text) contract and the
         # advanced parser preserves the VLM cache + scanned-page fallback. Falls
         # back to load_file directly if no parser is wired (older Engine).
+        _stage("parsing")
         vision = getattr(self.e, "vision", None)
         parser = getattr(self.e, "parser", None)
         if parser is not None:
@@ -78,7 +90,11 @@ class Indexer:
         year_from_filename = _ym.group(1) if _ym else ""
         n = 0
         first_page_text = ""
-        for page_no, text in pages:
+        total_pages = len(pages)
+        _stage("indexing", page=0, pages=total_pages, chunks=0)
+        for idx, (page_no, text) in enumerate(pages, 1):
+            # Report progress every page (cheap) so the UI can show page X/Y.
+            _stage("indexing", page=idx, pages=total_pages, chunks=n)
             if not text or needs_ocr(text):
                 text = self._ocr_or_vision(path, page_no, text)
                 if not text:

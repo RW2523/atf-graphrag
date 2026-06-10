@@ -126,6 +126,27 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
 .modal label{font-size:12px;font-weight:600;color:#475569} .modal input{width:100%;margin:5px 0 14px;
   border:1px solid var(--line);border-radius:9px;padding:10px;font-size:14px}
 .modal .actions{display:flex;gap:10px;justify-content:flex-end}
+/* ---- Processing pill + details modal ---- */
+.procpill{display:flex;align-items:center;gap:8px;background:#eef2ff;color:#4338ca;
+  border:1px solid #c7d2fe;border-radius:22px;padding:7px 14px;font-size:13px;
+  font-weight:600;cursor:pointer;margin-left:auto;margin-right:16px}
+.procpill:hover{background:#e0e7ff}
+.procpill .procmore{color:#6366f1;font-weight:700}
+.procbox{width:560px;max-width:92vw}
+.prochead{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+.proccur{background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.proccur .fn{font-weight:700;color:var(--ink);word-break:break-all}
+.proccur .stg{display:inline-flex;align-items:center;gap:7px;margin-top:6px;font-size:13px;color:#4338ca}
+.proccur .stagebadge{background:#eef2ff;border-radius:8px;padding:2px 9px;font-weight:600;text-transform:capitalize}
+.procmetrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:8px}
+.procmetrics .m{background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 10px;text-align:center}
+.procmetrics .m b{display:block;font-size:18px;font-weight:800;color:var(--ink)}
+.procmetrics .m span{font-size:11px;color:var(--muted)}
+.proclog{max-height:200px;overflow:auto;margin-top:6px;border:1px solid var(--line);border-radius:10px}
+.proclog .row{display:flex;justify-content:space-between;gap:8px;padding:7px 12px;border-bottom:1px solid #f1f5f9;font-size:12.5px}
+.proclog .row:last-child{border-bottom:none}
+.proclog .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.proclog .sc{color:var(--muted);flex-shrink:0}
 .toast{position:fixed;bottom:22px;right:22px;background:#0f172a;color:#fff;padding:12px 16px;border-radius:11px;
   box-shadow:0 10px 30px rgba(0,0,0,.3);display:none;z-index:60;font-size:13px}
 .spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;
@@ -187,6 +208,10 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
 <div class="main">
   <div class="topbar">
     <div><h1 id="t-title">Chat</h1><div class="sub" id="t-sub">Ask questions across your documents</div></div>
+    <button id="procbtn" class="procpill" onclick="openProc()" style="display:none">
+      <span class="spin"></span><span id="procbtntxt">Processing&hellip;</span>
+      <span class="procmore">Details &rsaquo;</span>
+    </button>
     <div class="stats">
       <div class="stat"><b id="s-chunks">0</b><span>chunks</span></div>
       <div class="stat"><b id="s-nodes">0</b><span>graph nodes</span></div>
@@ -309,6 +334,20 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
     </div>
   </div>
 </div>
+<div class="modal" id="procmodal">
+  <div class="box procbox">
+    <div class="prochead">
+      <div><h2 style="margin:0">Processing details</h2>
+        <p style="margin:2px 0 0" id="proc-job">&hellip;</p></div>
+      <button class="btn ghost" onclick="closeProc()">Close</button>
+    </div>
+    <div class="proccur" id="proc-current"></div>
+    <div class="progress show" style="margin:14px 0 6px"><div class="bar" id="proc-bar"></div></div>
+    <div class="procmetrics" id="proc-metrics"></div>
+    <div class="k" style="margin-top:14px;font-size:11px;color:#94a3b8;font-weight:700;letter-spacing:.04em">RECENT FILES</div>
+    <div class="proclog" id="proc-log"></div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -402,6 +441,62 @@ function renderKB(){
 
 function openKey(){$('#keymodal').classList.add('show');}
 function closeKey(){$('#keymodal').classList.remove('show');}
+
+// ---- Processing visibility (global) ----
+let ACTIVE=null, procOpen=false;
+function fmtETA(s){if(s==null)return '—';s=Math.round(s);if(s<60)return s+'s';
+  const m=Math.floor(s/60);return m+'m '+(s%60)+'s';}
+async function pollActive(){
+  try{
+    const j=await fetch('/api/jobs/active').then(r=>r.json());
+    ACTIVE=(j&&j.id)?j:null;
+    const btn=$('#procbtn');
+    if(ACTIVE){
+      const st=ACTIVE.stats||{}, proc=(ACTIVE.done||0)+(ACTIVE.failed||0);
+      $('#procbtntxt').textContent='Processing '+proc+'/'+(ACTIVE.total||0)
+        +(st.eta_s!=null?(' · ~'+fmtETA(st.eta_s)+' left'):'');
+      btn.style.display='flex';
+    }else{ btn.style.display='none'; if(procOpen)renderProc(); }
+  }catch(e){}
+  if(procOpen)renderProc();
+  setTimeout(pollActive, ACTIVE?1200:3000);
+}
+function openProc(){procOpen=true;$('#procmodal').classList.add('show');renderProc();}
+function closeProc(){procOpen=false;$('#procmodal').classList.remove('show');}
+async function renderProc(){
+  let j=ACTIVE;
+  if(!j){ // fetch the most recent job even if finished, so the modal shows results
+    try{const l=await fetch('/api/jobs').then(r=>r.json());j=(l.jobs||[])[0];}catch(e){}
+  } else { try{j=await fetch('/api/jobs/'+j.id).then(r=>r.json());}catch(e){} }
+  if(!j){$('#proc-current').innerHTML='<span class="muted">No active job.</span>';return;}
+  const st=j.stats||{}, cur=j.current, proc=(j.done||0)+(j.failed||0);
+  $('#proc-job').textContent='Job '+j.id+' · '+j.status+' · corpus '+(j.corpus||'pdf');
+  // current file + stage
+  if(cur){
+    const stg=cur.stage||'working';
+    const pg=(cur.pages? (' page '+cur.page+'/'+cur.pages):'');
+    $('#proc-current').innerHTML='<div class="fn">'+esc(cur.name||'')+'</div>'
+      +'<div class="stg"><span class="spin"></span><span class="stagebadge">'+esc(stg)+'</span>'
+      +esc(pg)+' &middot; '+(cur.chunks||0)+' chunks so far</div>';
+  } else {
+    $('#proc-current').innerHTML='<div class="fn">'+(j.status==='completed'?'All files processed.':'Waiting&hellip;')+'</div>';
+  }
+  $('#proc-bar').style.width=(st.pct||0)+'%';
+  $('#proc-metrics').innerHTML=
+     metric(proc+'/'+(j.total||0),'files done')
+    +metric((j.chunks||0).toLocaleString(),'chunks')
+    +metric(fmtETA(st.eta_s),'est. remaining')
+    +metric((st.files_per_min||0)+'/min'+(j.failed?(' · '+j.failed+' failed'):''),'throughput');
+  // recent files (newest first) with durations
+  const rows=(j.results||[]).slice(-40).reverse();
+  $('#proc-log').innerHTML=rows.length?rows.map(r=>
+    '<div class="row"><span class="nm">'+esc(r.name)+'</span>'
+    +'<span class="sc"><span class="badge '+(r.status==='error'?'error':(r.status||'ok'))+'">'
+    +esc(r.status||'ok')+'</span> '+(r.chunks||0)+'ch · '+(r.secs!=null?r.secs+'s':'')+'</span></div>'
+  ).join(''):'<div class="row"><span class="muted">No files completed yet.</span></div>';
+}
+function metric(v,l){return '<div class="m"><b>'+esc(String(v))+'</b><span>'+esc(l)+'</span></div>';}
+pollActive();
 async function saveKey(){
   const key=$('#keyin').value.trim(), model=$('#modelin').value.trim();
   const r=await fetch('/api/key',{method:'POST',headers:{'Content-Type':'application/json'},

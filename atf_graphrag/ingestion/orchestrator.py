@@ -228,32 +228,37 @@ class IngestionOrchestrator:
 
     # ---- public API -------------------------------------------------------
     def ingest(self, source: str, corpus: Optional[str] = None,
-               probe: bool = True) -> Dict[str, Any]:
-        """Classify and route a single source (or directory)."""
+               probe: bool = True, on_stage=None) -> Dict[str, Any]:
+        """Classify and route a single source (or directory).
+        on_stage(stage, **info) is an optional live-progress hook."""
         decision = classify(source, self.e, corpus, probe=probe)
         if self.backend_name == "langgraph":
             graph = _try_build_langgraph(self)
             if graph is not None:
                 return graph(decision)
-        return self._run_sequential(decision)
+        return self._run_sequential(decision, on_stage=on_stage)
 
     # ---- sequential runner (default) -------------------------------------
-    def _run_sequential(self, d: RouteDecision) -> Dict[str, Any]:
-        handler = {
-            "sitemap": self._handle_sitemap,
-            "website": self._handle_website,
-            "image": self._handle_image,
-            "batch": self._handle_batch,
-            "connected": self._handle_batch,
-        }.get(d.input_type, self._handle_file)   # pdf_*/text/html/unknown
-        result = handler(d)
+    def _run_sequential(self, d: RouteDecision, on_stage=None) -> Dict[str, Any]:
+        if d.input_type in ("sitemap", "website"):
+            handler = (self._handle_sitemap if d.input_type == "sitemap"
+                       else self._handle_website)
+            result = handler(d)
+        elif d.input_type in ("batch", "connected"):
+            result = self._handle_batch(d, on_stage=on_stage)
+        elif d.input_type == "image":
+            result = self._handle_image(d, on_stage=on_stage)
+        else:                                    # pdf_*/text/html/unknown
+            result = self._handle_file(d, on_stage=on_stage)
         result.setdefault("decision", d.to_dict())
         return result
 
     # ---- handlers (reuse existing nodes) ---------------------------------
-    def _handle_file(self, d: RouteDecision) -> Dict[str, Any]:
+    def _handle_file(self, d: RouteDecision, on_stage=None) -> Dict[str, Any]:
         action = self._idempotency(d.source, d.corpus, d.doc_key)
         if action == "skip":
+            if on_stage:
+                on_stage("skipped")
             return {"status": "skipped", "reason": "unchanged", "chunks": 0,
                     "source": d.source}
         if action == "update":
@@ -262,12 +267,15 @@ class IngestionOrchestrator:
             self.e.vstore(d.corpus).commit()
         else:
             removed = 0
-        n = self.indexer.index_file(d.source, corpus=d.corpus, doc_key=d.doc_key)
+        n = self.indexer.index_file(d.source, corpus=d.corpus, doc_key=d.doc_key,
+                                    on_stage=on_stage)
         self._record(d.source, d.corpus, n, d.doc_key)
         return {"status": action, "chunks": n, "removed": removed,
                 "source": d.source}
 
-    def _handle_image(self, d: RouteDecision) -> Dict[str, Any]:
+    def _handle_image(self, d: RouteDecision, on_stage=None) -> Dict[str, Any]:
+        if on_stage:
+            on_stage("vision")
         n = self.indexer.index_visual(d.source, corpus=d.corpus)
         return {"status": "created", "chunks": n, "source": d.source}
 
@@ -296,7 +304,7 @@ class IngestionOrchestrator:
             document_title=page.get("title", ""), document_date=page.get("date", ""))
         return {"status": "created", "chunks": n, "source": d.source}
 
-    def _handle_batch(self, d: RouteDecision) -> Dict[str, Any]:
+    def _handle_batch(self, d: RouteDecision, on_stage=None) -> Dict[str, Any]:
         """Recurse through ALL subfolders and ingest every supported file.
         Each file is keyed by its path relative to the batch root, so nothing is
         missed and same-named files in different folders stay distinct."""
@@ -307,7 +315,10 @@ class IngestionOrchestrator:
             rel = os.path.relpath(fp, d.source)
             dec = classify(fp, self.e, d.corpus)
             dec.doc_key = rel                     # path-qualified identity
-            r = self._run_sequential(dec)
+            # Wrap on_stage so each sub-file's progress carries its name.
+            sub = (lambda stage, **info: on_stage(stage, file=rel, **info)) \
+                if on_stage else None
+            r = self._run_sequential(dec, on_stage=sub)
             results[rel] = r
             total += r.get("chunks", 0)
         return {"status": "created", "files": len(results), "chunks": total,
