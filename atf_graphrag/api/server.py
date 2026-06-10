@@ -247,6 +247,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"communities": len(comms)})
             if self.path == "/api/clear":
                 return self._send(200, _clear_all())
+            if self.path.startswith("/api/jobs/") and self.path.endswith("/cancel"):
+                jid = self.path[len("/api/jobs/"):-len("/cancel")].strip("/")
+                ok = _jobs.cancel(jid) if _jobs else False
+                return self._send(200 if ok else 404,
+                                  {"ok": ok, "job_id": jid,
+                                   "status": "cancelling" if ok else "not found"})
             return self._send(404, {"error": "not found"})
         except KeyError as e:
             return self._send(400, {"error": f"missing field {e}"})

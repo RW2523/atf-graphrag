@@ -67,7 +67,11 @@ class Indexer:
             if on_stage:
                 try:
                     on_stage(stage, **info)
-                except Exception:  # noqa: BLE001  never let telemetry break ingest
+                except Exception as e:  # noqa: BLE001  telemetry must not break ingest
+                    # ...except a cancellation request, which MUST propagate to
+                    # abort the in-flight file at this page boundary.
+                    if type(e).__name__ == "JobCancelled":
+                        raise
                     pass
 
         # Parse via the configured parser provider (advanced | docling), selected

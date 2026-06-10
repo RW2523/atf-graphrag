@@ -92,6 +92,51 @@ def test_active_returns_running_job(tmp_path):
     assert jm.active() is None          # nothing running after completion
 
 
+def test_cancel_skips_queued_files(tmp_path):
+    """Cancelling a job skips its remaining queued files and ends as 'cancelled'."""
+    gate = threading.Event()
+    n_ingested = []
+
+    def ingest(path, corpus, on_stage):
+        on_stage("indexing", page=1, pages=1, chunks=1)
+        gate.wait(2)                 # hold the first file so we can cancel
+        n_ingested.append(path)
+        return {"status": "created", "chunks": 1}
+
+    jm = _mgr(tmp_path, ingest)
+    jid = jm.create("pdf")
+    jm.add(jid, [(f"f{i}.pdf", str(tmp_path / f"f{i}.pdf")) for i in range(8)])
+    jm.finalize(jid)
+    time.sleep(0.1)
+    assert jm.cancel(jid) is True
+    gate.set()
+    j = _wait(jm, jid)
+    assert j["status"] == "cancelled"
+    assert j["cancelled_count"] >= 6          # most files skipped
+    assert any(r["status"] == "cancelled" for r in j["results"])
+
+
+def test_cancel_aborts_in_flight_file(tmp_path):
+    """A long file aborts at its next page boundary when cancelled."""
+    cancelled_during = {"v": False}
+
+    def ingest(path, corpus, on_stage, jm_ref=None):
+        for p in range(1, 200):
+            on_stage("indexing", page=p, pages=200, chunks=p)  # raises JobCancelled
+            time.sleep(0.02)
+        return {"status": "created", "chunks": 200}
+
+    jm = _mgr(tmp_path, ingest)
+    jid = jm.create("pdf")
+    jm.add(jid, [("big.pdf", str(tmp_path / "big.pdf"))])
+    jm.finalize(jid)
+    time.sleep(0.15)                          # let it get a few pages in
+    jm.cancel(jid)
+    j = _wait(jm, jid, timeout=5)
+    assert j["status"] == "cancelled"
+    assert j["results"][0]["status"] == "cancelled"   # aborted, not completed
+
+
 def test_failed_file_recorded_not_dropped(tmp_path):
     def ingest(path, corpus, on_stage):
         raise RuntimeError("boom")

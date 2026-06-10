@@ -29,6 +29,12 @@ import uuid
 from typing import Callable, Dict, List, Optional, Tuple
 
 
+class JobCancelled(Exception):
+    """Raised cooperatively (via the stage callback) to abort the in-flight
+    file when a job is cancelled. Its class name is matched by the indexer's
+    stage hook so it propagates instead of being swallowed as telemetry noise."""
+
+
 class JobManager:
     def __init__(self, jobs_dir: str, ingest_fn: Callable[[str, str], dict],
                  commit_fn: Callable[[], None], lock: threading.Lock):
@@ -50,13 +56,26 @@ class JobManager:
             self.jobs[jid] = {
                 "id": jid, "corpus": corpus, "status": "staging",
                 "total": 0, "done": 0, "failed": 0, "skipped": 0, "chunks": 0,
-                "finalized": False, "created": time.time(),
-                "started": None, "finished": None,
+                "finalized": False, "cancelled": False, "cancelled_count": 0,
+                "created": time.time(), "started": None, "finished": None,
                 "current": None,        # live: {name, stage, page, pages, chunks, started}
                 "results": [],          # each: {name, status, chunks, secs}
             }
         self._persist(jid)
         return jid
+
+    def cancel(self, jid: str) -> bool:
+        """Request cooperative cancellation. Queued files are skipped and the
+        in-flight file aborts at its next page boundary."""
+        with self._mu:
+            j = self.jobs.get(jid)
+            if not j or j["status"] == "completed":
+                return False
+            j["cancelled"] = True
+            if j["status"] not in ("completed", "cancelled"):
+                j["status"] = "cancelling"
+        self._persist(jid)
+        return True
 
     def add(self, jid: str, staged: List[Tuple[str, str]]) -> None:
         """Enqueue a batch of already-staged (name, path) files."""
@@ -123,7 +142,7 @@ class JobManager:
         """The most recent job that is still running (for the global UI badge)."""
         with self._mu:
             running = [j for j in self.jobs.values()
-                       if j["status"] not in ("completed",)]
+                       if j["status"] not in ("completed", "cancelled")]
             if not running:
                 return None
             j = max(running, key=lambda x: x["created"])
@@ -149,6 +168,8 @@ class JobManager:
             j = self.jobs.get(jid)
             if not j:
                 return
+            if j.get("cancelled"):
+                raise JobCancelled()          # abort the in-flight file
             cur = j.get("current") or {"name": name}
             cur.update({"name": info.get("file", name), "stage": stage,
                         "page": info.get("page", cur.get("page", 0)),
@@ -158,6 +179,17 @@ class JobManager:
             j["current"] = cur
 
     def _ingest_one(self, jid: str, name: str, path: str) -> None:
+        # If the job was cancelled, skip remaining queued files quickly.
+        with self._mu:
+            j = self.jobs.get(jid)
+            if j and j.get("cancelled"):
+                j["cancelled_count"] = j.get("cancelled_count", 0) + 1
+                j["results"].append({"name": name, "status": "cancelled",
+                                     "chunks": 0, "secs": 0})
+                j["done"] += 1            # counts toward completion math
+                self._maybe_complete(j)
+                self._persist(jid)
+                return
         corpus = self.jobs.get(jid, {}).get("corpus", "pdf")
         size = 0
         try:
@@ -196,6 +228,18 @@ class JobManager:
                     self._maybe_complete(j)
                 self._persist(jid)
                 return
+            except JobCancelled:           # aborted mid-file — do not retry
+                with self._mu:
+                    j = self.jobs[jid]
+                    j["cancelled_count"] = j.get("cancelled_count", 0) + 1
+                    j["done"] += 1
+                    j["results"].append({"name": name, "status": "cancelled",
+                                         "chunks": 0,
+                                         "secs": round(time.time() - t0, 2)})
+                    j["current"] = None
+                    self._maybe_complete(j)
+                self._persist(jid)
+                return
             except Exception as e:  # noqa: BLE001
                 err = str(e)
                 time.sleep(0.4)
@@ -210,8 +254,11 @@ class JobManager:
         self._persist(jid)
 
     def _maybe_complete(self, j: dict) -> None:
-        if j["finalized"] and (j["done"] + j["failed"]) >= j["total"]:
-            j["status"] = "completed"
+        drained = (j["done"] + j["failed"]) >= j["total"]
+        # A cancelled job completes as soon as its known queue is drained (even
+        # if not finalized); a normal job needs the finalize signal.
+        if drained and (j["finalized"] or j.get("cancelled")):
+            j["status"] = "cancelled" if j.get("cancelled") else "completed"
             if not j["finished"]:
                 j["finished"] = time.time()
 

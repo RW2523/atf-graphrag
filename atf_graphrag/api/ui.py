@@ -339,7 +339,10 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
     <div class="prochead">
       <div><h2 style="margin:0">Processing details</h2>
         <p style="margin:2px 0 0" id="proc-job">&hellip;</p></div>
-      <button class="btn ghost" onclick="closeProc()">Close</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn danger" id="proc-stop" onclick="cancelJob(this)">&#9632; Stop processing</button>
+        <button class="btn ghost" onclick="closeProc()">Close</button>
+      </div>
     </div>
     <div class="proccur" id="proc-current"></div>
     <div class="progress show" style="margin:14px 0 6px"><div class="bar" id="proc-bar"></div></div>
@@ -463,6 +466,15 @@ async function pollActive(){
 }
 function openProc(){procOpen=true;$('#procmodal').classList.add('show');renderProc();}
 function closeProc(){procOpen=false;$('#procmodal').classList.remove('show');}
+let PROCJID=null;
+async function cancelJob(btn){
+  if(!PROCJID)return;
+  if(!confirm('Stop processing this job? Queued files are skipped and the current file aborts at its next page.'))return;
+  btn.disabled=true;btn.innerHTML='Stopping&hellip;';
+  try{await fetch('/api/jobs/'+PROCJID+'/cancel',{method:'POST'});toast('Cancelling&hellip;');}
+  catch(e){toast('Cancel failed');}
+  renderProc();
+}
 async function renderProc(){
   let j=ACTIVE;
   if(!j){ // fetch the most recent job even if finished, so the modal shows results
@@ -470,7 +482,14 @@ async function renderProc(){
   } else { try{j=await fetch('/api/jobs/'+j.id).then(r=>r.json());}catch(e){} }
   if(!j){$('#proc-current').innerHTML='<span class="muted">No active job.</span>';return;}
   const st=j.stats||{}, cur=j.current, proc=(j.done||0)+(j.failed||0);
-  $('#proc-job').textContent='Job '+j.id+' · '+j.status+' · corpus '+(j.corpus||'pdf');
+  PROCJID=j.id;
+  const running=!['completed','cancelled'].includes(j.status);
+  const sb=$('#proc-stop');
+  if(sb){sb.style.display=running?'inline-flex':'none';
+    if(j.status==='cancelling'){sb.disabled=true;sb.innerHTML='Stopping&hellip;';}
+    else if(running){sb.disabled=false;sb.innerHTML='&#9632; Stop processing';}}
+  $('#proc-job').textContent='Job '+j.id+' · '+j.status+' · corpus '+(j.corpus||'pdf')
+    +((j.cancelled_count)?(' · '+j.cancelled_count+' skipped'):'');
   // current file + stage
   if(cur){
     const stg=cur.stage||'working';
