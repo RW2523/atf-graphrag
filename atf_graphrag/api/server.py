@@ -126,8 +126,9 @@ def _boot() -> None:
     global _engine, _indexer, _retriever, _orch, _jobs
     if _engine is None:
         _engine = Engine()
-        use_llm = _engine.llm.name != "offline"
-        _indexer = Indexer(_engine, use_llm_extraction=use_llm)
+        # Extraction mode comes from config (ingestion.llm_extraction = auto by
+        # default) — not forced on, so bulk uploads of big docs stay fast.
+        _indexer = Indexer(_engine)
         _retriever = Retriever(_engine)
         _orch = IngestionOrchestrator(_engine, _indexer)
         _jobs = JobManager(
@@ -173,8 +174,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/", "/index.html", "/ui"):
             return self._send_html(INDEX_HTML)
         if self.path == "/api/status":
-            return self._send(200, {"key_set": bool(Settings.openrouter_key()),
-                                    **_engine.stats()})
+            return self._send(200, {
+                "key_set": bool(Settings.openrouter_key()),
+                "llm_extraction": getattr(_indexer, "_extract_mode", "auto"),
+                **_engine.stats()})
         if self.path == "/health":
             return self._send(200, {"status": "ok"})
         if self.path == "/stats":
@@ -247,6 +250,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"communities": len(comms)})
             if self.path == "/api/clear":
                 return self._send(200, _clear_all())
+            if self.path == "/api/config/extraction":
+                mode = (data.get("mode") or "auto").lower()
+                if mode not in ("off", "auto", "on"):
+                    return self._send(400, {"error": "mode must be off|auto|on"})
+                _indexer._extract_mode = mode
+                _indexer.use_llm = (_indexer._llm_ok and mode in ("on", "auto"))
+                return self._send(200, {"ok": True, "llm_extraction": mode})
             if self.path.startswith("/api/jobs/") and self.path.endswith("/cancel"):
                 jid = self.path[len("/api/jobs/"):-len("/cancel")].strip("/")
                 ok = _jobs.cancel(jid) if _jobs else False

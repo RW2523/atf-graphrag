@@ -81,6 +81,9 @@ DEFAULTS: Dict[str, Any] = {
         "ocr": {"provider": "auto"},        # auto | tesseract | textract | off
         "parser": {"provider": "advanced"}, # advanced | docling
         "orchestrator": "sequential",       # sequential | langgraph
+        "llm_extraction": "auto",           # off | auto | on  (per-chunk LLM
+                                            # entity/relation extraction)
+        "llm_extraction_auto_max_pages": 40,  # 'auto' extracts docs up to this size
     },
 
     # ---- Web crawling (sitemap.xml ingestion) -----------------------------

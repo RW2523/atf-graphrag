@@ -287,6 +287,11 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
           <option value="async">mode: async (background, recommended for many files)</option>
           <option value="sync">mode: sync (wait for results)</option>
         </select>
+        <select id="upextract" title="LLM entity/relationship extraction. auto = only small docs (fast for bulk); on = every doc (richest graph, slow); off = none" onchange="setExtraction()">
+          <option value="auto">extraction: auto (small docs only)</option>
+          <option value="on">extraction: on (richest graph, slow)</option>
+          <option value="off">extraction: off (fastest)</option>
+        </select>
         <button class="btn" id="upbtn" onclick="doUpload()" disabled>Ingest 0 files</button>
         <span style="margin-left:auto"><button class="btn ghost" onclick="buildCommunities(this)">&#8635; Rebuild communities</button></span>
       </div>
@@ -378,6 +383,7 @@ async function refresh(){
     $('#c-prov').textContent=(s.llm||'').split(':')[0]||'offline';
     $('#c-model').textContent=(s.llm||'').split(':').slice(1).join(':')||'—';
     $('#c-key').innerHTML='<span class="dot '+(s.key_set?'on':'off')+'"></span>'+(s.key_set?'connected':'none');
+    if(s.llm_extraction){const ex=$('#upextract');if(ex)ex.value=s.llm_extraction;}
     const corp=s.corpora||{}; const chunks=Object.values(corp).reduce((a,b)=>a+b,0);
     $('#s-chunks').textContent=chunks.toLocaleString();
     $('#s-nodes').textContent=((s.graph||{}).nodes||0).toLocaleString();
@@ -673,6 +679,12 @@ async function pollJob(jid){
     setTimeout(tick,1500);
   };
   tick();
+}
+async function setExtraction(){
+  const mode=$('#upextract').value;
+  try{await fetch('/api/config/extraction',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({mode})});toast('Entity extraction: '+mode);}
+  catch(e){toast('Could not set extraction mode');}
 }
 async function buildCommunities(btn){
   btn.disabled=true;const o=btn.innerHTML;btn.innerHTML='<span class="spin"></span> Building&hellip;';
