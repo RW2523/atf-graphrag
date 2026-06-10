@@ -39,13 +39,16 @@ class LocalGraphStore:
         for n in data["nodes"]:
             self.nodes[n["id"]] = {
                 "type": n.get("type", "entity"), "count": n.get("count", 1),
-                "chunks": set(n.get("chunks", [])), "corpus": set(n.get("corpus", []))}
+                "chunks": set(n.get("chunks", [])), "corpus": set(n.get("corpus", [])),
+                "label": n.get("label", n["id"]),
+                "description": n.get("description", "")}
         for e in data["edges"]:
             key = (e["src"], e["dst"])
             rel = e.get("rel", "related_to")
             typed = e.get("typed", rel not in self._GENERIC_RELS)
             self.edges[key] = {"rel": rel, "weight": e.get("weight", 1),
-                               "chunks": set(e.get("chunks", [])), "typed": typed}
+                               "chunks": set(e.get("chunks", [])), "typed": typed,
+                               "description": e.get("description", "")}
             self.adj[e["src"]].add(e["dst"])
             self.adj[e["dst"]].add(e["src"])
             if typed:
@@ -55,10 +58,13 @@ class LocalGraphStore:
     def commit(self) -> None:
         data = {
             "nodes": [{"id": k, "type": v["type"], "count": v["count"],
+                       "label": v.get("label", k),
+                       "description": v.get("description", ""),
                        "chunks": list(v["chunks"]), "corpus": list(v["corpus"])}
                       for k, v in self.nodes.items()],
             "edges": [{"src": s, "dst": d, "rel": v["rel"], "weight": v["weight"],
                        "typed": v.get("typed", False),
+                       "description": v.get("description", ""),
                        "chunks": list(v["chunks"])}
                       for (s, d), v in self.edges.items()],
         }
@@ -92,7 +98,8 @@ class LocalGraphStore:
         return True
 
     def add_entity(self, name: str, etype: str = "entity",
-                   chunk_id: str = "", corpus: str = "") -> str:
+                   chunk_id: str = "", corpus: str = "",
+                   description: str = "") -> str:
         if not self._is_valid_name(name):
             return ""
         key = self._norm(name)
@@ -100,7 +107,7 @@ class LocalGraphStore:
             return key
         node = self.nodes.setdefault(
             key, {"type": etype, "count": 0, "chunks": set(), "corpus": set(),
-                  "label": name})
+                  "label": name, "description": ""})
         node["count"] += 1
         if etype != "entity":
             node["type"] = etype
@@ -109,11 +116,14 @@ class LocalGraphStore:
         if corpus:
             node["corpus"].add(corpus)
         node.setdefault("label", name)
+        # Keep the longest description seen (richest grounding for summaries).
+        if description and len(description) > len(node.get("description", "")):
+            node["description"] = description
         return key
 
     def add_relation(self, src: str, dst: str, rel: str = "related_to",
                      chunk_id: str = "", corpus: str = "",
-                     weight: int = 1) -> None:
+                     weight: int = 1, description: str = "") -> None:
         s, d = self._norm(src), self._norm(dst)
         if not s or not d or s == d:
             return
@@ -123,13 +133,16 @@ class LocalGraphStore:
         is_typed = rel not in self._GENERIC_RELS
         e = self.edges.get(key)
         if e is None:
-            e = {"rel": rel, "weight": 0, "chunks": set(), "typed": is_typed}
+            e = {"rel": rel, "weight": 0, "chunks": set(), "typed": is_typed,
+                 "description": ""}
             self.edges[key] = e
         elif is_typed and not e.get("typed"):
             # A typed relation upgrades a previously generic (co_occurs) edge:
             # high-signal relations take precedence over mere co-occurrence.
             e["rel"] = rel
             e["typed"] = True
+        if description and len(description) > len(e.get("description", "")):
+            e["description"] = description
         e["weight"] += weight                 # recurrence strengthens the link
         if chunk_id:
             e["chunks"].add(chunk_id)

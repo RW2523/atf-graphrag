@@ -264,21 +264,33 @@ class Indexer:
             typed.append((R.canonical(rec.location, "location"), "location"))
         if rec.case_reference:
             typed.append((R.canonical(rec.case_reference, "case"), "case"))
+        # Per-entity descriptions from ontology extraction (canonical name -> desc).
+        descs = {}
+        for m in getattr(rec, "_entity_meta", []) or []:
+            ck = R.canonical(m.get("name", ""), m.get("type", "entity"))
+            if ck and m.get("description"):
+                descs[ck] = m["description"]
         for name, et in typed:
             if name:
-                g.add_entity(name, et, rec.chunk_id, rec.corpus)
+                g.add_entity(name, et, rec.chunk_id, rec.corpus,
+                             description=descs.get(name, ""))
         generic = [(R.canonical(e, "entity"), "entity") for e in rec.entities[:12]]
+        for name, et in generic:
+            if name and descs.get(name):
+                g.add_entity(name, et, rec.chunk_id, rec.corpus,
+                             description=descs[name])
         nodes = [(n, t) for n, t in (typed + generic) if n]
 
-        # 1) Typed relations from LLM extraction take precedence (high signal).
-        #    Repoint endpoints to canonical ids; remember which pairs are typed.
+        # 1) Typed relations from LLM extraction take precedence (high signal),
+        #    carrying their descriptions onto the graph edge.
         typed_pairs: set = set()
         for r in rec.relationships:
             src = R.canonical(r.get("source", ""), "entity")
             dst = R.canonical(r.get("target", ""), "entity")
             rel = r.get("relation", "related_to")
             if src and dst and src != dst:
-                g.add_relation(src, dst, rel, rec.chunk_id, rec.corpus, weight=2)
+                g.add_relation(src, dst, rel, rec.chunk_id, rec.corpus, weight=2,
+                               description=r.get("description", ""))
                 typed_pairs.add(frozenset((src, dst)))
 
         # 2) Co-occurrence ONLY between pairs without a typed relation, at a

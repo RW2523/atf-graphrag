@@ -12,56 +12,48 @@ from typing import List
 
 from ..engine import Engine
 from ..models import ChunkRecord
-
-_SYS = (
-    "Extract a knowledge graph from an ATF-related text chunk. Respond with ONLY "
-    "JSON: {\"entities\": [{\"name\": str, \"type\": one of "
-    "[person,organization,manufacturer,seller,buyer,location,firearm_type,"
-    "incident_type,case,event,date]}], "
-    "\"relations\": [{\"source\": str, \"target\": str, \"relation\": str}]}. "
-    "Keep names short and canonical."
-)
+from ..extraction.ontology import ontology_prompt, parse_extraction
 
 
 def llm_extract_entities(engine: Engine, rec: ChunkRecord) -> None:
+    """Ontology-constrained, validated extraction (7 entity + 8 relation types)
+    WITH descriptions. Populates the typed ChunkRecord fields, attaches per-entity
+    descriptions on rec._entity_meta (transient — not persisted), and stores typed
+    relations (with descriptions) on rec.relationships."""
     try:
-        out = engine.llm.complete(rec.text[:1800], system=_SYS,
-                                  temperature=0.0, max_tokens=500)
+        out = engine.llm.complete(rec.text[:1800], system=ontology_prompt(),
+                                  temperature=0.0, max_tokens=700)
         m = re.search(r"\{.*\}", out, re.S)
         if not m:
             return
-        data = json.loads(m.group(0))
+        parsed = parse_extraction(json.loads(m.group(0)))
     except Exception:  # noqa: BLE001
         return
 
-    rels: List[dict] = data.get("relations", []) or []
     extra_ents: List[str] = []
-    for ent in data.get("entities", []) or []:
-        name = (ent.get("name") or "").strip()
-        etype = (ent.get("type") or "entity").strip()
-        if not name:
-            continue
+    meta: List[dict] = []
+    for ent in parsed["entities"]:
+        name, etype, desc = ent["name"], ent["type"], ent.get("description", "")
         extra_ents.append(name)
+        meta.append({"name": name, "type": etype, "description": desc})
         if etype == "manufacturer":
             rec.manufacturers = sorted(set(rec.manufacturers + [name]))
-        elif etype == "seller":
-            rec.sellers = sorted(set(rec.sellers + [name]))
-        elif etype == "buyer":
-            rec.buyers = sorted(set(rec.buyers + [name]))
+        elif etype == "organization":
+            rec.organizations = sorted(set(rec.organizations + [name]))
         elif etype == "location" and not rec.location:
             rec.location = name
-        elif etype == "firearm_type" and not rec.firearm_type:
+        elif etype == "firearm" and not rec.firearm_type:
             rec.firearm_type = name
-        elif etype == "incident_type" and not rec.incident_type:
+        elif etype == "incident" and not rec.incident_type:
             rec.incident_type = name
         elif etype == "case" and not rec.case_reference:
             rec.case_reference = name
-        elif etype == "organization":
-            rec.organizations = sorted(set(rec.organizations + [name]))
 
     rec.entities = sorted(set(rec.entities + extra_ents))[:30]
-    # store relations on the chunk; indexer._build_graph will also co-occur them
-    rec.relationships = [{"source": r.get("source", ""),
-                          "target": r.get("target", ""),
-                          "relation": r.get("relation", "related_to")}
-                         for r in rels if r.get("source") and r.get("target")][:30]
+    # Transient (underscore) attribute — used by _build_graph for node/edge
+    # descriptions; NOT a dataclass field, so it is not persisted in the payload.
+    rec._entity_meta = meta[:30]
+    rec.relationships = [{"source": r["source"], "target": r["target"],
+                          "relation": r["relation"],
+                          "description": r.get("description", "")}
+                         for r in parsed["relations"]][:30]

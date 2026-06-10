@@ -92,7 +92,8 @@ class CommunityBuilder:
             node = self.g.nodes.get(key, {})
             ents.append({"key": key, "label": node.get("label", key),
                          "type": node.get("type", "entity"),
-                         "count": node.get("count", 1)})
+                         "count": node.get("count", 1),
+                         "description": node.get("description", "")})
             chunk_ids |= set(node.get("chunks", ()))
         rels = []
         for (s, d), e in self.g.edges.items():
@@ -101,7 +102,8 @@ class CommunityBuilder:
                              "target": self.g.nodes.get(d, {}).get("label", d),
                              "relation": e.get("rel", "related_to"),
                              "weight": e.get("weight", 1),
-                             "typed": e.get("typed", False)})
+                             "typed": e.get("typed", False),
+                             "description": e.get("description", "")})
         # most-central entities first (by degree count) for a readable summary
         ents.sort(key=lambda x: -x["count"])
         rels.sort(key=lambda x: (-int(x["typed"]), -x["weight"]))
@@ -115,9 +117,15 @@ class CommunityBuilder:
         import re as _re
         ents = info["entities"][:12]
         rels = info["relations"][:15]
-        ent_str = ", ".join(f"{e['label']} ({e['type']})" for e in ents)
-        rel_str = "; ".join(f"{r['source']} --{r['relation']}--> {r['target']}"
-                            for r in rels) or "(co-occurrence only)"
+        # Include entity descriptions when present — richer briefings (the point
+        # of ontology extraction). Falls back to "label (type)" when absent.
+        ent_str = ", ".join(
+            (f"{e['label']} ({e['type']}: {e['description']})" if e.get("description")
+             else f"{e['label']} ({e['type']})") for e in ents)
+        rel_str = "; ".join(
+            (f"{r['source']} --{r['relation']}--> {r['target']}"
+             + (f" [{r['description']}]" if r.get("description") else ""))
+            for r in rels) or "(co-occurrence only)"
         if self.llm is not None and getattr(self.llm, "name", "offline") != "offline":
             sys = ("You are an ATF analyst. Given a cluster of related entities and "
                    "their relationships, respond with ONLY JSON: "
