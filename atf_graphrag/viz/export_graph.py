@@ -19,11 +19,17 @@ def export_graph(graph_store, communities_path: Optional[str] = None,
     # Map node_key -> community_id (if communities were built).
     node_comm: Dict[str, int] = {}
     community_summaries: Dict[str, str] = {}
+    community_meta: Dict[str, Any] = {}     # cid -> {name, summary, size}
     if communities_path and os.path.exists(communities_path):
         try:
             comms = json.loads(open(communities_path).read())
             for cid, c in comms.items():
                 community_summaries[cid] = c.get("summary", "")
+                community_meta[cid] = {
+                    "name": c.get("name") or f"Community {cid}",
+                    "summary": c.get("summary", ""),
+                    "size": c.get("member_count", len(c.get("member_keys", []))),
+                }
                 for key in c.get("member_keys", []):
                     node_comm[key] = int(cid)
         except Exception:  # noqa: BLE001
@@ -63,6 +69,7 @@ def export_graph(graph_store, communities_path: Optional[str] = None,
         "nodes": nodes,
         "edges": edges,
         "communities": community_summaries,
+        "community_meta": community_meta,
         "stats": {"nodes": len(nodes), "edges": len(edges),
                   "communities": len(community_summaries),
                   "truncated": len(nodes_raw) > max_nodes},

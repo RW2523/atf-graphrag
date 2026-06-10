@@ -109,7 +109,10 @@ class CommunityBuilder:
                 "chunk_ids": sorted(chunk_ids)}
 
     # ---- summarization ------------------------------------------------------
-    def _summarize(self, info: Dict[str, Any]) -> str:
+    def _summarize(self, info: Dict[str, Any]) -> Dict[str, str]:
+        """Return {name, summary}: a short LLM-generated title plus a briefing."""
+        import json as _json
+        import re as _re
         ents = info["entities"][:12]
         rels = info["relations"][:15]
         ent_str = ", ".join(f"{e['label']} ({e['type']})" for e in ents)
@@ -117,20 +120,43 @@ class CommunityBuilder:
                             for r in rels) or "(co-occurrence only)"
         if self.llm is not None and getattr(self.llm, "name", "offline") != "offline":
             sys = ("You are an ATF analyst. Given a cluster of related entities and "
-                   "their relationships, write a 3-5 sentence briefing: name the main "
-                   "entities, how they connect, and any pattern, recurrence, or tension. "
-                   "Be specific and factual; do not invent links not present.")
-            prompt = f"ENTITIES: {ent_str}\n\nRELATIONSHIPS: {rel_str}\n\nBriefing:"
+                   "their relationships, respond with ONLY JSON: "
+                   '{"name": a 2-5 word title naming the cluster theme, '
+                   '"summary": a 3-5 sentence briefing on the main entities, how '
+                   "they connect, and any pattern/recurrence}. Be specific and "
+                   "factual; do not invent links not present.")
+            prompt = f"ENTITIES: {ent_str}\n\nRELATIONSHIPS: {rel_str}\n\nJSON:"
             try:
                 self.llm_calls += 1
-                return self.llm.complete(prompt, system=sys, temperature=0.1,
-                                         max_tokens=220).strip()
+                out = self.llm.complete(prompt, system=sys, temperature=0.1,
+                                        max_tokens=260)
+                m = _re.search(r"\{.*\}", out, _re.S)
+                if m:
+                    d = _json.loads(m.group(0))
+                    name = (d.get("name") or "").strip()
+                    summ = (d.get("summary") or "").strip()
+                    if name and summ:
+                        return {"name": name[:60], "summary": summ}
+                # Model didn't return clean JSON — treat whole text as summary.
+                if out.strip():
+                    return {"name": self._fallback_name(ents),
+                            "summary": out.strip()}
             except Exception:  # noqa: BLE001
                 pass
-        # Offline deterministic briefing.
+        # Offline deterministic name + briefing.
         top = ", ".join(e["label"] for e in ents[:6])
-        return (f"Cluster of {len(info['entities'])} related entities centered on "
-                f"{top}. Key relationships: {rel_str[:300]}.")
+        return {"name": self._fallback_name(ents),
+                "summary": (f"Cluster of {len(info['entities'])} related entities "
+                            f"centered on {top}. Key relationships: {rel_str[:300]}.")}
+
+    @staticmethod
+    def _fallback_name(ents) -> str:
+        """Deterministic title from the cluster's top entities (offline path)."""
+        labels = [e["label"] for e in ents[:2] if e.get("label")]
+        if not labels:
+            return "Unnamed cluster"
+        title = " & ".join(labels)
+        return (title[:57] + "…") if len(title) > 60 else title
 
     # ---- build --------------------------------------------------------------
     def build(self) -> Dict[str, Any]:
@@ -139,12 +165,17 @@ class CommunityBuilder:
         for cid, members in communities.items():
             info = self._collect_info(members)
             ck = _members_key(members)
-            summary = self._cache.get(ck)
-            if summary is None:
-                summary = self._summarize(info)
-                self._cache[ck] = summary       # cache by member-set hash
+            brief = self._cache.get(ck)
+            # Cache stores {name, summary}; migrate old string-only cache entries.
+            if isinstance(brief, str):
+                brief = {"name": self._fallback_name(info["entities"]),
+                         "summary": brief}
+            if brief is None:
+                brief = self._summarize(info)
+                self._cache[ck] = brief         # cache by member-set hash
             result[str(cid)] = {
-                "summary": summary,
+                "name": brief.get("name", ""),
+                "summary": brief.get("summary", ""),
                 "members": [e["label"] for e in info["entities"]],
                 "member_keys": members,
                 "member_count": len(members),
