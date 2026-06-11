@@ -452,7 +452,23 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
     </div>
 
     <div class="card">
-      <h3 style="margin:0 0 10px">3 &middot; Validate &amp; activate</h3>
+      <h3 style="margin:0 0 4px">3 &middot; Provision / tear down the AWS-native stack</h3>
+      <p style="color:var(--muted);margin:0 0 10px;font-size:13px">Create the managed resources (S3, DynamoDB, SSM, Bedrock Guardrail, OpenSearch Serverless, Neptune Analytics) from here — or <b>delete everything</b> in one click to stop paying when you're done. Resources are tagged <code>Project=atf-graphrag</code>. Run <b>Plan</b> first.</p>
+      <div class="awsgrid" style="margin-bottom:8px">
+        <label>Stack project tag<input id="aws-proj" value="atf-graphrag"/></label>
+        <label>Region<input id="aws-proj-region" value="us-east-1"/></label>
+      </div>
+      <div class="actions" style="justify-content:flex-start;flex-wrap:wrap">
+        <button class="btn ghost" onclick="awsPlan('provision')">&#128196; Plan provision</button>
+        <button class="btn" onclick="awsProvision()">&#9729; Provision all</button>
+        <button class="btn ghost" onclick="awsInventory()">&#128269; Inventory &amp; cost</button>
+        <button class="btn danger" onclick="awsTeardown()">&#128465; Delete ALL AWS resources</button>
+      </div>
+      <div id="aws-prov" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 10px">4 &middot; Validate &amp; activate</h3>
       <div class="actions" style="justify-content:flex-start;flex-wrap:wrap">
         <button class="btn" onclick="awsValidate()">&#128268; Validate connectivity</button>
         <button class="btn" onclick="awsApply()">&#9889; Apply &amp; switch engine</button>
@@ -1331,6 +1347,48 @@ async function awsRevert(){
   try{const r=await fetch('/api/aws/revert',{method:'POST'}).then(r=>r.json());
     awsRenderWiring(r.wiring||{});toast('Reverted to local engine');refresh();
   }catch(e){toast('Revert failed: '+e);}
+}
+// ---- AWS provision / teardown control plane ----
+function _provBody(action){return JSON.stringify({
+  action, project:($('#aws-proj').value||'atf-graphrag').trim(),
+  region:($('#aws-proj-region').value||'us-east-1').trim()});}
+function _provOut(html){$('#aws-prov').innerHTML=html;}
+async function awsPlan(action){
+  _provOut('<span class="muted">Planning&hellip;</span>');
+  try{const r=await fetch('/api/aws/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:_provBody(action)}).then(r=>r.json());
+    const rows=(r.steps||[]).map(s=>'<tr><td>'+esc(s.label)+'</td><td>'+s.action+'</td><td class="num">$'+s.cost_month+'/mo</td></tr>').join('');
+    _provOut('<div class="muted" style="margin-bottom:6px">account '+(r.account_id||'?')+' · region '+esc(r.region)+' · boto3 '+(r.boto3?'available':'MISSING')+'</div>'+
+      '<table class="kbtable"><thead><tr><th>Resource</th><th>Action</th><th class="num">Est. cost</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+      '<div style="margin-top:6px"><b>Est. running cost: $'+(r.est_cost_month||0)+'/month</b> if left on — that\'s why you teardown when done.</div>');
+  }catch(e){_provOut('<span class="bad">Plan failed: '+esc(''+e)+'</span>');}
+}
+async function awsInventory(){
+  _provOut('<span class="muted">Scanning account&hellip;</span>');
+  try{const r=await fetch('/api/aws/inventory',{method:'POST',headers:{'Content-Type':'application/json'},body:_provBody('inventory')}).then(r=>r.json());
+    const rows=(r.components||[]).map(c=>'<tr><td>'+esc(c.component)+'</td><td>'+(c.exists===true?'<span style=color:#16a34a>live</span>':c.exists===false?'<span class=muted>absent</span>':'<span class=bad>?</span>')+'</td><td class="num">$'+(c.cost_month||0)+'/mo</td></tr>').join('');
+    _provOut('<table class="kbtable"><thead><tr><th>Component</th><th>State</th><th class="num">Cost</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+      '<div style="margin-top:6px"><b>'+(r.n_live||0)+' live · running cost ~$'+(r.running_cost_month||0)+'/month</b></div>');
+  }catch(e){_provOut('<span class="bad">Inventory failed: '+esc(''+e)+'</span>');}
+}
+async function awsProvision(){
+  if(!confirm('Provision the AWS-native stack (S3, DynamoDB, SSM, Guardrail, OpenSearch Serverless, Neptune Analytics)? '+
+    'Neptune + OpenSearch cost ~$700/month while running — remember to tear down when done.'))return;
+  _provOut('<span class="muted">Provisioning (Neptune/OpenSearch are async, ~minutes)&hellip;</span>');
+  try{const r=await fetch('/api/aws/provision',{method:'POST',headers:{'Content-Type':'application/json'},body:_provBody('provision')}).then(r=>r.json());
+    _provOut(awsResultTable(r.results)+'<div style="margin-top:6px">'+(r.ok?'<b style=color:#16a34a>Provision requested.</b>':'<b class=bad>Some steps failed — see above.</b>')+'</div>');toast('Provision '+(r.ok?'OK':'had errors'));
+  }catch(e){_provOut('<span class="bad">Provision failed: '+esc(''+e)+'</span>');}
+}
+async function awsTeardown(){
+  if(!confirm('DELETE every AWS resource tagged Project=atf-graphrag — S3 buckets (and contents), DynamoDB, SSM, Guardrail, OpenSearch Serverless collection, and the Neptune Analytics graph? This stops all charges and CANNOT be undone.'))return;
+  if(!confirm('Final confirmation: permanently delete the AWS-native stack now?'))return;
+  _provOut('<span class="muted">Tearing down (reverse order)&hellip;</span>');
+  try{const r=await fetch('/api/aws/teardown',{method:'POST',headers:{'Content-Type':'application/json'},body:_provBody('teardown')}).then(r=>r.json());
+    _provOut(awsResultTable(r.results)+'<div style="margin-top:6px">'+(r.ok?'<b style=color:#16a34a>Teardown complete — charges stopped.</b>':'<b class=bad>Some deletions failed — check the AWS console.</b>')+'</div>');toast('Teardown '+(r.ok?'complete':'had errors'));
+  }catch(e){_provOut('<span class="bad">Teardown failed: '+esc(''+e)+'</span>');}
+}
+function awsResultTable(results){
+  const rows=(results||[]).map(x=>'<tr><td>'+esc(x.component)+'</td><td>'+(x.ok?'<span style=color:#16a34a>ok</span>':'<span class=bad>error</span>')+'</td><td>'+esc(x.detail||x.error||'')+'</td></tr>').join('');
+  return '<table class="kbtable"><thead><tr><th>Component</th><th>Result</th><th>Detail</th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 </script>
 </body>

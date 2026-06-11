@@ -645,6 +645,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, _aws_smoke())
             if self.path == "/api/aws/revert":
                 return self._send(200, _revert_local())
+            if self.path in ("/api/aws/plan", "/api/aws/provision",
+                             "/api/aws/teardown", "/api/aws/inventory"):
+                from ..aws.provision import ControlPlane
+                cp = ControlPlane(region=data.get("region", "us-east-1"),
+                                  project=data.get("project", "atf-graphrag"))
+                only = data.get("only")            # optional list of components
+                if self.path == "/api/aws/inventory":
+                    return self._send(200, cp.inventory())
+                if self.path == "/api/aws/plan":
+                    return self._send(200, cp.plan(data.get("action", "provision"), only))
+                if self.path == "/api/aws/provision":
+                    return self._send(200, cp.provision(only))
+                if self.path == "/api/aws/teardown":
+                    return self._send(200, cp.teardown(only))
             if self.path.startswith("/api/jobs/") and self.path.endswith("/cancel"):
                 jid = self.path[len("/api/jobs/"):-len("/cancel")].strip("/")
                 ok = _jobs.cancel(jid) if _jobs else False
