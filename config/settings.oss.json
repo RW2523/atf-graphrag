@@ -4,9 +4,9 @@
   "vision": {"provider": "offline"},
   "embeddings": {"provider": "local", "dim": 512},
   "reranker": {"provider": "local"},
-  "parser": {"provider": "advanced"},
   "vector_store": {"provider": "local"},
   "graph_store": {"provider": "local"},
   "blob_store": {"provider": "local"},
-  "ingestion": {"ocr": {"provider": "off"}}
+  "ingestion": {"ocr": {"provider": "off"},
+                "parser": {"provider": "advanced"}}
 }

@@ -9,10 +9,13 @@ from atf_graphrag.providers.docling_parser import (
     DoclingParser, _table_to_markdown)
 
 
-def test_default_parser_is_advanced():
+def test_default_parser_is_docling():
+    # Docling (structured tables) is the default parser; it falls back to
+    # AdvancedParser only when docling is not installed.
     p = make_parser(Settings(profile="local"))
-    assert isinstance(p, AdvancedParser)
-    assert p.name == "advanced"
+    assert isinstance(p, (DoclingParser, AdvancedParser))
+    if getattr(p, "available", False):
+        assert isinstance(p, DoclingParser) and p.name == "docling"
 
 
 def test_parser_factory_selects_docling():

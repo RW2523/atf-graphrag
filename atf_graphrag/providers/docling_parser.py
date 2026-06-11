@@ -26,20 +26,34 @@ class DoclingParser(Parser):
         self.cfg = cfg or {}
         self._fallback = AdvancedParser(cfg)
         self._converter = None
+        self._tried = False
+        # Importability check only — the (heavy) DocumentConverter, which loads
+        # the layout/table ML models, is created LAZILY on the first PDF parse so
+        # that making docling the default parser does not slow every Engine().
         try:
-            from docling.document_converter import DocumentConverter  # type: ignore
-            self._converter = DocumentConverter()
-        except Exception:  # noqa: BLE001  docling not installed
-            self._converter = None
+            import importlib.util
+            self._importable = importlib.util.find_spec("docling") is not None
+        except Exception:  # noqa: BLE001
+            self._importable = False
+
+    def _get_converter(self):
+        if self._converter is None and not self._tried and self._importable:
+            self._tried = True
+            try:
+                from docling.document_converter import DocumentConverter
+                self._converter = DocumentConverter()
+            except Exception:  # noqa: BLE001
+                self._converter = None
+        return self._converter
 
     @property
     def available(self) -> bool:
-        return self._converter is not None
+        return self._importable
 
     def load(self, path: str, vision_provider=None) -> List[Tuple[int, str]]:
         ext = os.path.splitext(path)[1].lower()
         # Only PDFs go through docling; everything else uses the base loader.
-        if self._converter is None or ext != ".pdf":
+        if ext != ".pdf" or self._get_converter() is None:
             return self._fallback.load(path, vision_provider=vision_provider)
         try:
             pages = self._parse_pdf(path)

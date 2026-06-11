@@ -84,7 +84,12 @@ DEFAULTS: Dict[str, Any] = {
         "chunk_size": 900,        # characters (approx tokens*4)
         "chunk_overlap": 150,
         "ocr": {"provider": "auto"},        # auto | tesseract | textract | off
-        "parser": {"provider": "advanced"}, # advanced | docling | textract | bedrock
+        "parser": {"provider": "docling"},  # docling | advanced | textract | bedrock
+                                            #  docling  = DocLayNet+TableFormer
+                                            #             structured tables (default;
+                                            #             ~4.2s/page, falls back to
+                                            #             'advanced' if not installed)
+                                            #  advanced = fast PyMuPDF+pdfplumber
                                             #  textract = AWS structured/OCR parsing
                                             #  bedrock  = AWS foundation-model parsing
         "orchestrator": "sequential",       # sequential | langgraph
