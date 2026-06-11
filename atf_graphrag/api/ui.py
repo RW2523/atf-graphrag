@@ -1066,7 +1066,7 @@ async function buildCommunities(btn){
   btn.disabled=false;btn.innerHTML=o;
 }
 
-let G=null,sim=null,svg=null,node=null,link=null,label=null;
+let G=null,sim=null,svg=null,node=null,link=null,label=null,graphSelected=null;
 const PALETTE=['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ef4444','#14b8a6','#a855f7','#0ea5e9','#f97316','#84cc16'];
 // Richer entity-type ontology palette (graph UI). Unknown types fall back to grey.
 const TYPECOLOR={
@@ -1112,6 +1112,7 @@ function drawGraph(){
   const g=svg.append('g'); gRoot=g;
   gZoom=d3.zoom().scaleExtent([.1,5]).on('zoom',ev=>g.attr('transform',ev.transform));
   svg.call(gZoom);
+  svg.on('click',()=>clearHighlight());   // click empty space to reset highlight
   const nodes=G.nodes.map(d=>({...d})),id=new Set(nodes.map(n=>n.id));
   const links=G.edges.filter(e=>id.has(e.source)&&id.has(e.target)).map(d=>({...d}));
   const rOf=d=>5+Math.sqrt(d.degree)*1.8;          // node radius
@@ -1135,7 +1136,7 @@ function drawGraph(){
   node=g.append('g').selectAll('circle').data(nodes).join('circle')
     .attr('r',rOf).attr('fill',colorOf)
     .attr('stroke','#fff').attr('stroke-width',1.4).style('cursor','pointer')
-    .on('click',(e,d)=>showNode(d))
+    .on('click',(e,d)=>{e.stopPropagation();showNode(d);highlightNode(d);})
     .call(d3.drag()
       .on('start',(e,d)=>{if(!e.active)sim.alphaTarget(.2).restart();d.fx=d.x;d.fy=d.y;})
       .on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y;})
@@ -1170,6 +1171,31 @@ function fitToView(nodes,W,H){
   const tx=W/2-k*(x0+x1)/2, ty=H/2-k*(y0+y1)/2;
   svg.transition().duration(500).call(gZoom.transform,
     d3.zoomIdentity.translate(tx,ty).scale(k));
+}
+function highlightNode(d){
+  // Highlight ONLY the clicked node + its directly-connected neighbours and the
+  // edges between them; dim everything else.
+  if(!node)return;
+  const conn=new Set([d.id]);
+  G.edges.forEach(e=>{const a=(e.source.id||e.source),b=(e.target.id||e.target);
+    if(a===d.id)conn.add(b); if(b===d.id)conn.add(a);});
+  node.attr('opacity',n=>conn.has(n.id)?1:.07)
+      .attr('stroke',n=>n.id===d.id?'#4f46e5':'#fff')
+      .attr('stroke-width',n=>n.id===d.id?3.5:(conn.has(n.id)?2:1.4));
+  if(link)link.attr('stroke-opacity',e=>{const a=(e.source.id||e.source),b=(e.target.id||e.target);
+    return (a===d.id||b===d.id)?.95:.03;})
+    .attr('stroke',e=>{const a=(e.source.id||e.source),b=(e.target.id||e.target);
+    return (a===d.id||b===d.id)?(e.typed?'#6366f1':'#94a3b8'):(e.typed?'#a5b4fc':'#cbd5e1');});
+  if(label)label.attr('opacity',n=>conn.has(n.id)?1:.04);
+  graphSelected=d.id;
+}
+function clearHighlight(){
+  if(!node)return;
+  node.attr('opacity',1).attr('stroke','#fff').attr('stroke-width',1.4);
+  if(link)link.attr('stroke-opacity',.55)
+    .attr('stroke',d=>d.typed?'#a5b4fc':'#cbd5e1');
+  if(label)label.attr('opacity',1);
+  graphSelected=null;
 }
 function showNode(d){
   const nbrs=G.edges.filter(e=>{const a=(e.source.id||e.source),b=(e.target.id||e.target);return a===d.id||b===d.id;});
