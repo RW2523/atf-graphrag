@@ -41,13 +41,43 @@ _NUMBERED = re.compile(r"^\s*\d+[\.\)]\s+\S")
 # ---------------------------------------------------------------------------
 
 def _is_table_row(line: str) -> bool:
+    """A genuine tabular row — NOT just a number-dense prose sentence.
+
+    ATF prose is full of numbers (dates, counts, years), so 'has 3+ numbers' is
+    far too loose (it mis-classified ~96% of number-heavy paragraphs as tables).
+    A real row is either a markdown row, or columnar: short, multi-column with
+    2+-space gaps, and not a flowing sentence."""
     s = line.strip()
     if not s:
         return False
-    # Markdown-style table row: | cell | cell |
-    if _MARKDOWN_TABLE_ROW.match(s):
+    if _MARKDOWN_TABLE_ROW.match(s):                 # | cell | cell |
         return True
-    return len(_NUMERIC_FIELD.findall(s)) >= 3
+    # A flowing prose sentence is not a table row.
+    words = s.split()
+    if s.endswith((".", ":", ";")) and len(words) > 8:
+        return False
+    if len(_NUMERIC_FIELD.findall(s)) < 2:
+        return False
+    # Columnar: cells separated by 2+ spaces (or tabs) -> aligned columns.
+    cols = [c for c in re.split(r"\s{2,}|\t", s) if c.strip()]
+    if len(cols) >= 3:
+        return True
+    # Short label + multiple numbers (e.g. "Storage Areas 372 327") with a low
+    # word count is table-ish; long number-laced sentences are not.
+    return len(words) <= 6 and len(_NUMERIC_FIELD.findall(s)) >= 2
+
+
+_MD_SEP = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$")
+
+
+def _is_table_line(s: str) -> bool:
+    """A single line that belongs to a table: markdown row, markdown separator,
+    or a columnar/number-aligned row."""
+    if not s:
+        return False
+    if _MARKDOWN_TABLE_ROW.match(s) or _MD_SEP.match(s):
+        return True
+    return _is_table_row(s)
 
 
 def _detect_type(lines: List[str]) -> str:
@@ -124,6 +154,27 @@ def _split_content_blocks(text: str) -> List[Tuple[str, str]]:
         # look-ahead: collect a window to decide block type
         window = [lines[j] for j in range(i, min(i + 6, len(lines)))]
         wtype = _detect_type(window)
+
+        # For a TABLE: greedily absorb the WHOLE contiguous table (header,
+        # separator, and every data row) into one segment. Without this the
+        # per-line look-ahead window shrinks below 2 rows at the end of the
+        # table and splits the last row(s) off — breaking multi-row tables.
+        if wtype == "table":
+            flush()
+            cur_type = "table"
+            while i < len(lines):
+                s = lines[i].strip()
+                if _HEADING.match(s):
+                    break
+                if _is_table_line(s) or _TABLE_CAP.match(s) or _VLM_BLOCK.match(s) \
+                        or (not s and buf and _is_table_line(lines[i - 1].strip())):
+                    buf.append(lines[i])
+                    i += 1
+                    continue
+                break
+            flush()
+            cur_type = "text"
+            continue
 
         # For figure/chart: absorb any immediately following prose paragraph
         # (the description text) into the same segment rather than splitting it off.

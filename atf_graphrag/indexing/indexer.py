@@ -255,6 +255,13 @@ class Indexer:
                 if vlm_derived:
                     rec.vision_model = getattr(self.e.vision, "name", "")
                 rec.extraction_summary = piece.strip()[:300]
+            # Structured table data + title for exact cell lookup / numeric grounding.
+            if ctype == "table":
+                from .tables import parse_markdown_table, table_title_from
+                td = parse_markdown_table(piece)
+                if td:
+                    rec.table_data = td
+                rec.table_title = table_title_from(heading, piece)
             rec = enrich_metadata(rec)
             if self.use_llm:
                 self._llm_augment(rec)

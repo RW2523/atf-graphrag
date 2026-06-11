@@ -599,29 +599,45 @@ class RerankingAgent:
                engine: Engine) -> List[RetrievalHit]:
         rcfg = engine.settings["reranker"]
         qtok = set(content_tokens(plan.question))
+        # A numeric/table question MUST be answered from structured evidence —
+        # give table/chart chunks a decisive boost (force top evidence selection).
+        numeric = bool(_NUMERIC_Q.search(plan.question)) or plan.intent == "table"
         for h in hits:
             ctok = set(content_tokens(h.chunk.text))
             coverage = len(qtok & ctok) / (len(qtok) or 1)
-            ctype_bonus = 0.08 if (
-                plan.intent in ("table", "visual") and
-                h.chunk.content_type in ("table", "chart", "figure")
-            ) else 0.0
+            struct = h.chunk.content_type in ("table", "chart", "figure")
+            ctype_bonus = 0.0
+            if struct and (numeric or plan.intent in ("table", "visual")):
+                # tables with parsed cells are the strongest evidence of all
+                ctype_bonus = 0.30 if (h.chunk.content_type == "table"
+                                       and h.chunk.table_data) else 0.18
             h.rerank_score = round(0.7 * (h.eval_score or 0) + 0.3 * coverage + ctype_bonus, 4)
         if rcfg["provider"] == "llm" and engine.llm.name != "offline":
             self._llm_rerank(plan, hits, engine)
 
         # Provider reranker (e.g. cross-encoder BGEReranker). Returns a reordered
-        # list to override the linear blend, or None to keep it (local/llm).
+        # list whose order is authoritative; None keeps the linear blend.
         self.last_reranker = "linear"
+        ordered = None
         reranker = getattr(engine, "reranker", None)
         if reranker is not None:
             reordered = reranker.rerank(plan.question, hits)
             if reordered is not None:
                 self.last_reranker = getattr(reranker, "name", "provider")
-                return reordered[:plan.top_k]
-
-        hits.sort(key=lambda h: (-(h.rerank_score or 0), h.chunk.chunk_id))
-        return hits[:plan.top_k]
+                ordered = reordered
+        if ordered is None:
+            ordered = sorted(hits, key=lambda h: (-(h.rerank_score or 0),
+                                                  h.chunk.chunk_id))
+        out = ordered[:plan.top_k]
+        # Guarantee at least one structured-table chunk reaches generation for a
+        # numeric question, even if it ranked just outside top_k.
+        if numeric and not any(h.chunk.content_type == "table" and h.chunk.table_data
+                               for h in out):
+            best_tbl = next((h for h in ordered if h.chunk.content_type == "table"
+                             and h.chunk.table_data), None)
+            if best_tbl is not None:
+                out = [best_tbl] + [h for h in out if h is not best_tbl][:plan.top_k - 1]
+        return out
 
     def _llm_rerank(self, plan, hits, engine) -> None:
         try:
@@ -723,16 +739,22 @@ class GlobalAnswerAgent:
                       evidence_count=len(citations))
 
 
+_NUMERIC_Q = re.compile(
+    r"\b(how many|how much|number of|total|count|rate|percent|percentage|"
+    r"average|figure|amount|share|proportion|sum|exactly)\b", re.I)
+
+
 class GenerationAgent:
     def generate(self, plan: QueryPlan, hits: List[RetrievalHit],
                  graph_paths: List[str], engine: Engine) -> Answer:
+        from ..indexing.tables import table_to_text
         citations = []
         ctx_lines = []
+        has_structured = False          # a real table/chart with data was given
         for i, h in enumerate(hits, 1):
             c = h.chunk
             tag = f"[{i}]"
             loc = f"p.{c.page_number}" if c.page_number else c.corpus
-            # Prefix label for structured content so the LLM knows what type it is
             ctype_label = ""
             if c.content_type in ("table", "chart", "figure"):
                 ctype_label = f" [{c.content_type.upper()}]"
@@ -740,29 +762,56 @@ class GenerationAgent:
                     "page": c.page_number, "corpus": c.corpus,
                     "url": c.source_url, "chunk_id": c.chunk_id,
                     "confidence": h.eval_score, "method": c.extraction_method,
-                    "content_type": c.content_type}
+                    "content_type": c.content_type,
+                    "table_title": c.table_title, "report_type": c.report_type,
+                    "us_state": c.us_state}
             citations.append(cite)
-            # For visual content (chart/figure/table), prefer the VLM-extracted
-            # structured summary when present — it holds the actual data values.
+            # Header line carries the full provenance for grounded citation.
+            prov = f"{c.source_name or c.document_title}, {loc}"
+            if c.report_type:
+                prov += f", {c.report_type}"
+            if c.table_title:
+                prov += f', "{c.table_title}"'
+            # Body: prefer the structured table (addressable rows) for tables;
+            # the VLM summary (actual values) for charts/figures.
             body = c.text
-            if c.content_type in ("chart", "figure", "table") and \
-                    c.extraction_summary and c.extraction_summary not in c.text:
-                body = f"{c.extraction_summary}\n{c.text}"
-            ctx_lines.append(f"{tag}{ctype_label} ({c.source_name or c.document_title}, {loc}) "
-                             f"{body}")
-        context = "\n".join(ctx_lines) if ctx_lines else "(no evidence retrieved)"
+            if c.content_type == "table" and c.table_data:
+                has_structured = True
+                body = table_to_text(c.table_data) + (
+                    "\n" + c.text if c.text not in table_to_text(c.table_data) else "")
+            elif c.content_type in ("chart", "figure") and c.extraction_summary:
+                has_structured = True
+                body = c.extraction_summary + ("\n" + c.text if c.extraction_summary not in c.text else "")
+            ctx_lines.append(f"{tag}{ctype_label} ({prov})\n{body}")
+        context = "\n\n".join(ctx_lines) if ctx_lines else "(no evidence retrieved)"
         gp = ("\nKNOWN RELATIONSHIP PATHS:\n" + "\n".join(graph_paths)) \
             if graph_paths else ""
 
-        sys = ("You are an analyst for ATF-related data. Answer ONLY from the "
-               "provided context. Cite every claim with [n] referring to the "
-               "context items. Items labelled [TABLE] contain structured data — "
-               "extract specific numbers and values from them. Items labelled "
-               "[CHART] or [FIGURE] contain visual summaries — use their "
-               "descriptions. If the context is insufficient, say so. When "
-               "relationships or patterns are present, explain them.")
+        numeric = bool(_NUMERIC_Q.search(plan.question)) or plan.intent == "table"
+        # Did we actually retrieve table/chart evidence for a numeric question?
+        evidence_gap = numeric and not has_structured
+
+        if numeric:
+            sys = ("You are an analyst for ATF data. Answer ONLY from the "
+                   "context. For ANY number you report you MUST first quote the "
+                   "EXACT source — the table row/cell or chart value — verbatim, "
+                   "with its [n] and (source, page). Use this format:\n"
+                   "EVIDENCE:\n- [n] (source, p.X) \"<exact row or value copied "
+                   "verbatim>\"\nANSWER: <concise answer citing [n]>\n"
+                   "Do NOT compute or infer a number that is not present in a "
+                   "quoted row/value. If the exact figure is not in the context, "
+                   "say 'The provided context does not contain this figure' and "
+                   "state what IS available. When comparing rows or documents, "
+                   "quote each row you compare.")
+        else:
+            sys = ("You are an analyst for ATF-related data. Answer ONLY from the "
+                   "provided context. Cite every claim with [n]. Items labelled "
+                   "[TABLE] hold structured rows — read the exact cells; [CHART]/"
+                   "[FIGURE] hold visual values — use them. If the context is "
+                   "insufficient, say so. Explain relationships/patterns when present.")
         prompt = (f"QUESTION: {plan.question}\n\nCONTEXT:\n{context}{gp}\n\n"
-                  "Provide a clear, source-cited answer.")
+                  + ("Quote the exact source row/value, then answer."
+                     if numeric else "Provide a clear, source-cited answer."))
         answer_text = engine.llm.complete(prompt, system=sys)
 
         # Safety guardrail over the final answer (no-op unless configured).
@@ -771,9 +820,23 @@ class GenerationAgent:
             res = guard.filter_output(answer_text)
             answer_text = res.get("text", answer_text)
 
+        # ---- calibrated confidence + incompleteness signal -------------------
         confs = [h.eval_score or 0 for h in hits[:5]]
-        confidence = round(sum(confs) / len(confs), 3) if confs else 0.0
+        base = round(sum(confs) / len(confs), 3) if confs else 0.0
+        quoted = ("EVIDENCE:" in answer_text) or bool(re.search(r"\[\d+\]", answer_text))
+        if numeric:
+            # numeric answers are only as trustworthy as their quoted evidence
+            if evidence_gap:
+                base = round(base * 0.4, 3)          # no table/chart -> low
+            elif not quoted:
+                base = round(base * 0.7, 3)          # answered but didn't quote
+        confidence = base
+        notes = []
+        if evidence_gap:
+            notes.append("no table/chart evidence retrieved for this numeric "
+                         "question — answer may be incomplete")
         return Answer(question=plan.question, answer=answer_text,
                       citations=citations, confidence=confidence,
                       plan=plan.__dict__, graph_paths=graph_paths,
-                      evidence_count=len(hits))
+                      evidence_count=len(hits),
+                      incomplete=evidence_gap, notes="; ".join(notes))

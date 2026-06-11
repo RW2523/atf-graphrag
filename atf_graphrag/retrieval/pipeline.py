@@ -184,6 +184,8 @@ class Retriever:
             "evidence_count": ans.evidence_count,
             "intent": plan.intent,
             "mode": plan.mode,
+            "incomplete": getattr(ans, "incomplete", False),
+            "notes": getattr(ans, "notes", ""),
             "web_research": steps.get("4b_web_research", {"triggered": False}),
         }
         if trace:

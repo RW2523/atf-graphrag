@@ -41,6 +41,46 @@ _CITY_STATE = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*([A-Z]{2})\b")
 _SELLER = re.compile(r"\bsold (?:to|by)\s+([A-Z][a-z]+(?:\s+(?:&\s+)?[A-Z][a-z]+){0,3})")
 _BUYER = re.compile(r"\b(?:purchased|bought) by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})")
 
+# Report-type classification (from source/document name + text) for filtered
+# retrieval and grounding — "which report did this number come from?".
+_REPORT_TYPES = [
+    ("AFMER", ("afmer", "firearms manufacturing and export", "manufacturing and export")),
+    ("NFCTA", ("nfcta", "national firearms commerce and trafficking")),
+    ("Firearms-Commerce", ("firearms commerce", "commerce report")),
+    ("Theft-Loss", ("theft", "theft_loss", "theft/loss", "stolen")),
+    ("Explosives-EIR", ("explosives incident", "eir", "explosive incident")),
+    ("Arson", ("arson", "incendiary")),
+    ("Tracing", ("tracing center", "etrace", "trace data", "ntc")),
+    ("FFL-Statistics", ("ffl statistics", "licensee statistics", "ffl inventory")),
+]
+_US_STATES = {
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine",
+    "maryland", "massachusetts", "michigan", "minnesota", "mississippi",
+    "missouri", "montana", "nebraska", "nevada", "new hampshire", "new jersey",
+    "new mexico", "new york", "north carolina", "north dakota", "ohio",
+    "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina",
+    "south dakota", "tennessee", "texas", "utah", "vermont", "virginia",
+    "washington", "west virginia", "wisconsin", "wyoming",
+}
+
+
+def detect_report_type(*sources: str) -> str:
+    blob = " ".join(s or "" for s in sources).lower()
+    for label, keys in _REPORT_TYPES:
+        if any(k in blob for k in keys):
+            return label
+    return ""
+
+
+def detect_us_state(text: str) -> str:
+    low = (text or "").lower()
+    for st in _US_STATES:
+        if re.search(r"\b" + re.escape(st) + r"\b", low):
+            return st.title()
+    return ""
+
 # Noise words to filter from entity extraction — includes common table headers,
 # section words, conjunctions, and filler terms that pollute the graph.
 _NOISE = {
@@ -136,6 +176,14 @@ def enrich_metadata(chunk: ChunkRecord) -> ChunkRecord:
     cm = _CASE.search(text)
     if cm:
         chunk.case_reference = cm.group(1).strip()
+
+    # Report type (from doc/source name + text) and US state — for filtered
+    # retrieval and to ground numbers to "which report / which state".
+    if not chunk.report_type:
+        chunk.report_type = detect_report_type(
+            chunk.source_name, chunk.document_title, chunk.file_name, text[:200])
+    if not chunk.us_state:
+        chunk.us_state = detect_us_state(text)
 
     fts = _find_terms(low, FIREARM_TYPES)
     if fts:

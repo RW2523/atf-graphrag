@@ -318,6 +318,7 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
           <select id="seed-pick" style="display:none;padding:9px 10px;border:1px solid var(--line);border-radius:9px;font-size:13px"></select>
           <button class="btn" id="seed-load" style="display:none" onclick="loadSeed(this)" title="Clear current data and load the selected seed knowledge base">&#9889; Load seed</button>
           <button class="btn ghost" onclick="saveSeed(this)" title="Snapshot the CURRENT knowledge base as a named seed">&#128190; Save as seed</button>
+          <button class="btn ghost" onclick="fixTableTags(this)" title="Re-classify content types: demote number-dense prose mis-tagged as tables">&#129534; Fix table tags</button>
           <button class="btn ghost" onclick="doBackup(this)" title="Snapshot the vector index + graph">&#128190; Backup</button>
           <button class="btn ghost" onclick="doRestore(this)" title="Restore a previous snapshot">&#8635; Restore</button>
           <button class="btn danger" onclick="clearAll(this)">&#128465; Clear all data</button>
@@ -619,6 +620,14 @@ async function clearAll(btn){
     KBDOCS=[]; loadKB(); refresh();
   }catch(e){ toast('Clear failed'); }
   btn.disabled=false; btn.innerHTML=o;
+}
+async function fixTableTags(btn){
+  const o=btn.innerHTML;btn.disabled=true;btn.innerHTML='Re-classifying&hellip;';
+  try{const r=await fetch('/api/reclassify',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json());
+    toast('Re-classified: '+(r.demoted_table||0)+' prose chunks demoted from table, '+(r.kept_table||0)+' real tables kept');
+    loadKB();}
+  catch(e){toast('Re-classify failed');}
+  btn.disabled=false;btn.innerHTML=o;
 }
 async function doBackup(btn){
   const o=btn.innerHTML;btn.disabled=true;btn.innerHTML='Backing up&hellip;';
@@ -968,6 +977,8 @@ function renderAnswer(res){
   if(conf)html+='<span class="chip">confidence '+conf+'</span>';
   if(tm)html+='<span class="chip">'+Math.round(tm)+' ms</span>';
   html+='<span class="chip">'+cites.length+' sources</span>';
+  if(res.incomplete){html+='<span class="chip" style="background:#fef3c7;color:#92400e" title="'+
+    esc(res.notes||'')+'">&#9888; evidence may be incomplete</span>';}
   const wr=res.web_research||{};
   if(wr.triggered){
     const added=wr.added||0;

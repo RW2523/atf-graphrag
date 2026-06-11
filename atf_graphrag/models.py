@@ -43,6 +43,12 @@ class ChunkRecord:
     firearm_type: str = ""
     incident_type: str = ""
     case_reference: str = ""
+    report_type: str = ""             # AFMER|NFCTA|Commerce|Theft-Loss|EIR|Arson|…
+    us_state: str = ""                # state the row/table pertains to, if any
+    # --- structured table data (for exact lookup / numeric grounding) ---
+    table_title: str = ""             # caption/heading of the table
+    # table_data: {"columns": [...], "rows": [[...], ...]} — addressable cells
+    table_data: Dict[str, Any] = field(default_factory=dict)
     # --- visual/extraction metadata ---
     visual_content_type: str = ""     # image|table|chart|graph
     extraction_summary: str = ""
@@ -98,3 +104,5 @@ class Answer:
     plan: Optional[Dict[str, Any]] = None
     graph_paths: List[str] = field(default_factory=list)
     evidence_count: int = 0
+    incomplete: bool = False           # numeric Q with no table/chart evidence
+    notes: str = ""                    # human-readable caveats (e.g. incompleteness)
