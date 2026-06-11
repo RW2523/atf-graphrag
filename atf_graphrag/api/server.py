@@ -28,6 +28,10 @@ from .ui import INDEX_HTML
 # Serialises all store writes (async worker + sync ingest) so the non-thread-safe
 # local stores can't be corrupted by concurrent requests.
 _INGEST_LOCK = threading.Lock()
+
+# Reusable "seed" snapshot of a fully ingested+indexed KB. Frozen ingestion/
+# indexing; retrieval runs on demand. One-click clear+restore from the UI.
+SEED_BACKUP = "backup_seed.zip"
 _jobs: "JobManager | None" = None
 
 _engine: Engine | None = None
@@ -539,6 +543,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/backups":
             from .backup import list_backups
             return self._send(200, {"backups": list_backups(_storage_root())})
+        if self.path == "/api/seed/status":
+            sp = os.path.join(_storage_root(), "backups", SEED_BACKUP)
+            exists = os.path.isfile(sp)
+            return self._send(200, {
+                "exists": exists,
+                "name": SEED_BACKUP,
+                "bytes": os.path.getsize(sp) if exists else 0,
+                "documents": _documents()["total_documents"]})
         if self.path.startswith("/api/jobs/"):
             jid = self.path.split("/api/jobs/", 1)[1].strip("/")
             j = _jobs.get(jid) if _jobs else None
@@ -613,6 +625,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, make_backup(_storage_root(), label))
             if self.path == "/api/restore":
                 ok = _restore_all(data.get("name", ""))
+                return self._send(200 if ok else 404,
+                                  {"ok": ok, "documents": _documents()["total_documents"]})
+            if self.path == "/api/seed/save":
+                # Snapshot the CURRENT KB as the reusable seed dataset.
+                from .backup import make_backup
+                info = make_backup(_storage_root(), "seed")
+                return self._send(200, {"ok": True, "name": info["name"],
+                                        "bytes": info["bytes"],
+                                        "documents": _documents()["total_documents"]})
+            if self.path == "/api/seed/restore":
+                # One-click: clear current data and load the frozen seed KB.
+                ok = _restore_all(SEED_BACKUP)
                 return self._send(200 if ok else 404,
                                   {"ok": ok, "documents": _documents()["total_documents"]})
             if self.path == "/api/config/extraction":

@@ -315,6 +315,8 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
           <input id="kbsearch" placeholder="&#128269; Filter documents&hellip;" oninput="renderKB()"/>
           <button class="btn ghost" onclick="loadKB()">&#8635; Refresh</button>
           <button class="btn" onclick="document.querySelector('[data-view=upload]').click()">+ Add documents</button>
+          <button class="btn" id="seed-load" style="display:none" onclick="loadSeed(this)" title="Clear current data and load the frozen seed knowledge base">&#9889; Load seed dataset</button>
+          <button class="btn ghost" onclick="saveSeed(this)" title="Snapshot the CURRENT knowledge base as the reusable seed dataset">&#128190; Save as seed</button>
           <button class="btn ghost" onclick="doBackup(this)" title="Snapshot the vector index + graph">&#128190; Backup</button>
           <button class="btn ghost" onclick="doRestore(this)" title="Restore a previous snapshot">&#8635; Restore</button>
           <button class="btn danger" onclick="clearAll(this)">&#128465; Clear all data</button>
@@ -585,7 +587,7 @@ async function loadKB(){
     KBDOCS.forEach(x=>{pages+=x.page_count||0; tbl+=(x.content_types||{}).table||0;});
     $('#kb-pages').textContent=pages.toLocaleString();
     $('#kb-tables').textContent=tbl.toLocaleString();
-    renderKB();
+    renderKB(); checkSeed();
   }catch(e){ $('#kbempty').style.display='block'; }
 }
 async function clearAll(btn){
@@ -620,6 +622,34 @@ async function doRestore(btn){
     body:JSON.stringify({name:b.name})}).then(r=>r.json());
     toast(r.ok?('Restored — '+r.documents+' documents'):'Restore failed');loadKB();refresh();}
   catch(e){toast('Restore failed');}
+  btn.disabled=false;btn.innerHTML=o;
+}
+async function checkSeed(){
+  try{const s=await fetch('/api/seed/status').then(r=>r.json());
+    const btn=$('#seed-load');
+    if(s.exists){btn.style.display='';btn.title='Clear current data and load the frozen seed KB ('+
+      Math.round((s.bytes||0)/1024/1024)+' MB)';}
+    else btn.style.display='none';
+  }catch(e){}
+}
+async function saveSeed(btn){
+  if(!confirm('Snapshot the CURRENT knowledge base as the reusable seed dataset? '+
+    'This freezes the ingested + indexed data so it can be reloaded on demand.'))return;
+  const o=btn.innerHTML;btn.disabled=true;btn.innerHTML='Saving seed&hellip;';
+  try{const r=await fetch('/api/seed/save',{method:'POST'}).then(r=>r.json());
+    toast('Seed saved: '+r.documents+' documents ('+Math.round((r.bytes||0)/1024/1024)+' MB)');
+    checkSeed();}
+  catch(e){toast('Save seed failed');}
+  btn.disabled=false;btn.innerHTML=o;
+}
+async function loadSeed(btn){
+  if(!confirm('Load the seed dataset? This CLEARS the current knowledge base and '+
+    'restores the frozen seed (ingestion + indexing already done — retrieval ready immediately).'))return;
+  const o=btn.innerHTML;btn.disabled=true;btn.innerHTML='Loading seed&hellip;';
+  try{const r=await fetch('/api/seed/restore',{method:'POST'}).then(r=>r.json());
+    toast(r.ok?('Seed loaded — '+r.documents+' documents ready'):'Seed not found');
+    loadKB();refresh();}
+  catch(e){toast('Load seed failed');}
   btn.disabled=false;btn.innerHTML=o;
 }
 function renderKB(){
