@@ -402,49 +402,11 @@ def _storage_root() -> str:
     return os.path.dirname(_engine.settings["vector_store"]["path"])
 
 
-# --- single-writer storage lock -------------------------------------------
-# Two server processes pointed at the same storage root can clobber each
-# other: a stale process holding divergent in-memory state can commit over a
-# newer on-disk index, silently destroying data. A PID lockfile makes the
-# storage root single-writer; a second `serve()` against it refuses to start.
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)            # signal 0 = liveness probe, no-op
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True                # exists but owned by another user
-    return True
-
-
-def acquire_storage_lock(root: str) -> str:
-    """Create storage/.writer.lock with this PID. Raises RuntimeError if a
-    live process already holds it. Returns the lock path."""
-    os.makedirs(root, exist_ok=True)
-    lock = os.path.join(root, ".writer.lock")
-    if os.path.isfile(lock):
-        try:
-            holder = int(open(lock).read().strip() or "0")
-        except (ValueError, OSError):
-            holder = 0
-        if holder and holder != os.getpid() and _pid_alive(holder):
-            raise RuntimeError(
-                f"storage root {root!r} is locked by live process {holder}. "
-                f"Stop it before starting another writer (or remove {lock} if "
-                f"that PID is dead).")
-    with open(lock, "w") as f:
-        f.write(str(os.getpid()))
-    return lock
-
-
-def release_storage_lock(root: str) -> None:
-    lock = os.path.join(root, ".writer.lock")
-    try:
-        if os.path.isfile(lock) and int(open(lock).read().strip() or "0") == os.getpid():
-            os.remove(lock)
-    except (ValueError, OSError):
-        pass
+# --- single-writer storage lock (shared with batch write-scripts) ----------
+# Moved to atf_graphrag.storage_lock so reload/extraction scripts acquire the
+# SAME lock and can never write over a running server (or vice-versa).
+from ..storage_lock import (acquire_storage_lock, release_storage_lock,  # noqa: E402,F401
+                            pid_alive as _pid_alive)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -619,6 +581,13 @@ class Handler(BaseHTTPRequestHandler):
                 comms = _orch.build_communities(force=True)
                 _retriever.reload_communities()
                 return self._send(200, {"communities": len(comms)})
+            if self.path == "/api/graph/verify":
+                from ..graph.verify import verify_and_prune
+                use_llm = bool(data.get("use_llm", True))
+                gpath = _engine.settings["graph_store"]["path"]
+                rep = verify_and_prune(_engine.graph, llm=_engine.llm,
+                                       use_llm=use_llm, cache_dir=gpath)
+                return self._send(200, rep)
             if self.path == "/api/clear":
                 return self._send(200, _clear_all())
             if self.path == "/api/backup":
@@ -775,9 +744,18 @@ def serve():
     print(f"[ATF GraphRAG] profile={_engine.settings['profile']} "
           f"llm={_engine.llm.name} embeddings={_engine.embedder.name} "
           f"OPENROUTER_API_KEY={key}")
+    profile = _engine.settings.get("profile", "local")
     if not expected_token():
+        if profile != "local":
+            # Fail-closed: any non-local profile is a deployment — refuse to
+            # serve an unauthenticated, CORS-open API. Set a token to proceed.
+            release_storage_lock(root)
+            raise SystemExit(
+                f"[ATF GraphRAG] REFUSING to start: profile '{profile}' requires "
+                "auth. Set ATF_API_TOKEN (or server.auth_token) before deploying. "
+                "Use profile 'local' for unauthenticated local development.")
         print("[ATF GraphRAG] WARNING: no API auth token set and CORS is open — "
-              "set server.auth_token or ATF_API_TOKEN before any non-local deploy.")
+              "fine for local dev; set ATF_API_TOKEN before any non-local deploy.")
     print(f"[ATF GraphRAG] listening on http://{host}:{port}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 

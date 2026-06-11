@@ -17,8 +17,19 @@ def main():
     os.environ.setdefault("ATF_PROFILE", "local")
     from atf_graphrag.engine import Engine
     from atf_graphrag.indexing.indexer import Indexer
+    from atf_graphrag.storage_lock import acquire_storage_lock, release_storage_lock
 
+    # Single-writer: refuse to run if a server (or another script) holds the
+    # lock — prevents this heavy write pass from clobbering live data.
     eng = Engine()
+    root = os.path.dirname(eng.settings["vector_store"]["path"])
+    try:
+        acquire_storage_lock(root)
+    except RuntimeError as ex:
+        print(f"[reload] ABORT: {ex}", flush=True)
+        return 1
+    import atexit
+    atexit.register(release_storage_lock, root)
     # --- wipe stores -------------------------------------------------------
     vectors = eng.settings["vector_store"]["path"]
     base = os.path.dirname(vectors)

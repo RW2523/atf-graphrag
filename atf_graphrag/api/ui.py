@@ -363,7 +363,9 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
           <option value="off">extraction: off (fastest)</option>
         </select>
         <button class="btn" id="upbtn" onclick="doUpload()" disabled>Ingest 0 files</button>
-        <span style="margin-left:auto"><button class="btn ghost" onclick="buildCommunities(this)">&#8635; Rebuild communities</button></span>
+        <span style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn ghost" onclick="verifyGraph(this)" title="LLM cross-verify: drop nodes that aren't real entities (dates, headers, noise)">&#129529; Clean graph</button>
+          <button class="btn ghost" onclick="buildCommunities(this)">&#8635; Rebuild communities</button></span>
       </div>
       <input type="file" id="filePick" multiple style="display:none"/>
       <input type="file" id="folderPick" webkitdirectory multiple style="display:none"/>
@@ -1063,6 +1065,18 @@ async function buildCommunities(btn){
   try{const r=await fetch('/api/communities/build',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json());
     toast('Built '+(r.communities||0)+' communities');refresh();}
   catch(e){toast('Build failed');}
+  btn.disabled=false;btn.innerHTML=o;
+}
+async function verifyGraph(btn){
+  if(!confirm('LLM cross-verify the graph and remove nodes that are not real '+
+    'entities (dates, headers, generic words, noise)? This prunes them and their '+
+    'edges.'))return;
+  btn.disabled=true;const o=btn.innerHTML;btn.innerHTML='<span class="spin"></span> Cleaning&hellip;';
+  try{const r=await fetch('/api/graph/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json());
+    toast('Cleaned: '+(r.rule_dropped||0)+' rule + '+(r.llm_dropped||0)+' LLM nodes removed ('+
+      (r.edges_removed||0)+' edges) · '+(r.nodes_after||0)+' kept');
+    if(typeof loadGraph==='function')loadGraph(); else refresh();}
+  catch(e){toast('Verify failed');}
   btn.disabled=false;btn.innerHTML=o;
 }
 

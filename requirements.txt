@@ -29,3 +29,7 @@ requests>=2.31
 # neo4j>=5.0           # graph_store.provider = neo4j
 # pytesseract>=0.3     # OCR (also needs the tesseract binary)
 # pillow>=10.0         # image loading for OCR/vision
+
+# Optional: tighter Leiden communities (falls back to networkx Louvain if absent)
+leidenalg
+igraph

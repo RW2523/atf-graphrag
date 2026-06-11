@@ -80,7 +80,16 @@ def ontology_prompt() -> str:
         '"type":<relationship type>,"description":str}]}. '
         "description = one short factual clause about the entity/relationship "
         "grounded in the text. Keep names short and canonical. Drop anything "
-        "that does not fit the allowed types."
+        "that does not fit the allowed types. "
+        # --- calibration (the extraction experiment showed these failure modes) -
+        "RULES: (1) NEVER use a date, year, month, day-of-week, quarter or other "
+        "time expression as an entity or as the target of LOCATED_IN / "
+        "OCCURRED_AT — those take a PLACE, not a time. (2) NEVER make a document, "
+        "report, table, exhibit, form, or the source text itself a relation "
+        "source or target (e.g. do NOT output '2015 Arson Report INVOLVED_IN "
+        "Automobile') — relations connect the real-world actors/things described "
+        "IN the document, not the document. (3) Prefer fewer high-confidence "
+        "relations over many speculative ones; if unsure, omit it."
     )
 
 

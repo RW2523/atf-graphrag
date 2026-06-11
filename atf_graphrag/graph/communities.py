@@ -63,6 +63,9 @@ class CommunityBuilder:
         if G.number_of_edges() == 0:
             return {}
         clusters: List[List[str]] = []
+        # Preference order: graspologic Leiden -> leidenalg Leiden -> networkx
+        # Louvain. Leiden gives tighter, more stable communities (better
+        # sensemaking) than Louvain; we try whichever Leiden lib is installed.
         try:
             from graspologic.partition import hierarchical_leiden
             res = hierarchical_leiden(G, max_cluster_size=self.max_cluster_size,
@@ -71,7 +74,9 @@ class CommunityBuilder:
             for part in res:
                 by_cluster.setdefault(part.cluster, []).append(part.node)
             clusters = list(by_cluster.values())
-        except Exception:  # noqa: BLE001  fall back to networkx Louvain
+        except Exception:  # noqa: BLE001
+            clusters = self._leiden_igraph(G)
+        if not clusters:                       # neither Leiden lib worked
             from networkx.algorithms.community import louvain_communities
             clusters = [list(c) for c in
                         louvain_communities(G, weight="weight", seed=42)]
@@ -82,6 +87,22 @@ class CommunityBuilder:
                 out[cid] = sorted(members)
                 cid += 1
         return out
+
+    def _leiden_igraph(self, G) -> List[List[str]]:
+        """Leiden via leidenalg + igraph (no gensim dep). Returns [] if absent."""
+        try:
+            import leidenalg
+            import igraph as ig
+        except Exception:  # noqa: BLE001
+            return []
+        nodes = list(G.nodes())
+        idx = {n: i for i, n in enumerate(nodes)}
+        edges = [(idx[u], idx[v]) for u, v in G.edges()]
+        weights = [G[u][v].get("weight", 1) for u, v in G.edges()]
+        h = ig.Graph(n=len(nodes), edges=edges)
+        part = leidenalg.find_partition(
+            h, leidenalg.ModularityVertexPartition, weights=weights, seed=42)
+        return [[nodes[i] for i in comm] for comm in part]
 
     # ---- per-cluster info ---------------------------------------------------
     def _collect_info(self, members: List[str]) -> Dict[str, Any]:

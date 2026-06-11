@@ -79,23 +79,61 @@ class LocalGraphStore:
         # Collapse internal whitespace (catches multi-line PDF extractions)
         return re.sub(r"\s+", " ", name.strip()).lower()
 
-    @staticmethod
-    def _is_valid_name(name: str) -> bool:
-        """Reject entity names that are table-header artefacts or encoding noise."""
-        s = name.strip()
-        if not s or len(s) < 3:
-            return False
-        # Multi-line leftovers from PDF table cells
+    # Time expressions + generic words that are never meaningful ATF entities
+    # (the extraction experiment produced 'March', 'Sunday', '2015' as nodes).
+    _MONTHS = {"january", "february", "march", "april", "may", "june", "july",
+               "august", "september", "october", "november", "december",
+               "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept",
+               "oct", "nov", "dec"}
+    _WEEKDAYS = {"monday", "tuesday", "wednesday", "thursday", "friday",
+                 "saturday", "sunday"}
+    _GENERIC = {"total", "report", "table", "figure", "exhibit", "data",
+                "number", "year", "page", "section", "appendix", "note",
+                "source", "other", "various", "unknown", "n/a", "none",
+                "percent", "rate", "count", "type", "category", "overview"}
+    _TIMEISH = re.compile(r"^(q[1-4]|fy\d{2,4}|[12]\d{3}|\d{1,4}(st|nd|rd|th)?)$")
+
+    @classmethod
+    def is_junk_name(cls, name: str) -> bool:
+        """True when a name is a non-entity: time expression, generic header
+        word, or numeric/noise. Used both at creation and by the verify pass."""
+        s = (name or "").strip()
+        low = re.sub(r"\s+", " ", s).lower()
+        if not low or len(low) < 3:
+            return True
         if "\n" in s or "\t" in s:
-            return False
-        # Purely numeric or mostly-numeric strings
+            return True
+        if low in cls._MONTHS or low in cls._WEEKDAYS or low in cls._GENERIC:
+            return True
+        if cls._TIMEISH.match(low):                 # 2015, Q3, FY24, 3rd …
+            return True
         alnum = sum(1 for c in s if c.isalpha())
-        if alnum / max(len(s), 1) < 0.4:
-            return False
-        # Suspiciously long (> 80 chars usually means a sentence, not an entity)
-        if len(s) > 80:
-            return False
-        return True
+        if alnum / max(len(s), 1) < 0.4:            # mostly numeric/symbols
+            return True
+        if len(s) > 80:                             # a sentence, not an entity
+            return True
+        return False
+
+    @classmethod
+    def _is_valid_name(cls, name: str) -> bool:
+        """Reject table-header artefacts, encoding noise, and time/generic junk."""
+        return not cls.is_junk_name(name)
+
+    def remove_node(self, key: str) -> int:
+        """Delete a node and every edge incident to it. Returns edges removed."""
+        if key not in self.nodes:
+            return 0
+        del self.nodes[key]
+        dead = [k for k in self.edges if k[0] == key or k[1] == key]
+        for k in dead:
+            del self.edges[k]
+        self.adj.pop(key, None)
+        self.adj_typed.pop(key, None)
+        for nbrs in self.adj.values():
+            nbrs.discard(key)
+        for nbrs in self.adj_typed.values():
+            nbrs.discard(key)
+        return len(dead)
 
     def add_entity(self, name: str, etype: str = "entity",
                    chunk_id: str = "", corpus: str = "",
