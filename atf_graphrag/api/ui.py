@@ -421,6 +421,13 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
         <button class="btn" onclick="dbgRun('communities',this)">5 &middot; Communities</button>
         <button class="btn ghost" onclick="dbgAll(this)">&#9654; Run all</button>
       </div>
+      <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+        <div class="s" style="font-weight:600;margin-bottom:6px">6 &middot; Retrieve / Answer &mdash; query just this file &amp; see the full trace</div>
+        <div style="display:flex;gap:8px">
+          <input id="dbg-q" placeholder="Ask a question about this document&hellip;" style="flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:9px" onkeydown="if(event.key==='Enter')dbgQuery(this)"/>
+          <button class="btn" onclick="dbgQuery(this)">Ask</button>
+        </div>
+      </div>
       <div id="dbg-timing" style="margin-top:12px"></div>
       <div id="dbg-out" style="margin-top:12px"></div>
     </div>
@@ -1578,6 +1585,32 @@ function dbgRender(stage,r){
     return '<div class="dsec-title">COMMUNITIES &mdash; '+r.n_communities+' detected · '+r.communities_ms+' ms</div>'+(cs||'<span class="s">graph too small for communities</span>');
   }
   return '';
+}
+async function dbgQuery(btn){
+  const q=$('#dbg-q').value.trim(); if(!q){toast('Enter a question');return;}
+  const out=$('#dbg-out'); const o=btn.innerHTML; btn.disabled=true; btn.innerHTML='<span class="spin"></span>';
+  try{
+    const r=await fetch('/api/debug/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})}).then(x=>x.json());
+    if(!r.ok){out.innerHTML='<div style="color:#dc2626">'+esc(r.error||'failed')+'</div>';btn.disabled=false;btn.innerHTML=o;return;}
+    const cites=(r.citations||[]).map(c=>'<div class="src" style="cursor:default"><div class="t">['+(c.ref||'')+'] p.'+(c.page||'—')+' · '+esc(c.content_type||'')+' · '+esc(c.method||'')+'</div><div class="d s">'+esc(c.preview||'')+'&hellip;</div></div>').join('');
+    const tl=r.timings_ms||{};
+    const lanes='<table class="kbtable"><tbody>'+
+      '<tr><td>1 · Query understanding</td><td class="s">'+esc(r.understanding||'')+'</td></tr>'+
+      '<tr><td>2 · Corpus selection</td><td class="s">'+esc((r.corpora||[]).join(', '))+'</td></tr>'+
+      '<tr><td>3 · Retrieval</td><td class="s">'+r.candidates+' candidates · graph lane: <b>'+esc(r.graph_mode||'none')+'</b></td></tr>'+
+      '<tr><td>4 · Evaluation</td><td class="s">'+r.kept+' kept after quality filter</td></tr>'+
+      '<tr><td>5 · Reranking</td><td class="s">'+esc(r.reranker||'linear')+'</td></tr>'+
+      '<tr><td>Intent / mode</td><td class="s">'+esc(r.intent||'')+' / '+esc(r.mode||'')+'</td></tr>'+
+      '</tbody></table>';
+    const gp=(r.graph_paths||[]).length?'<div class="k">Graph paths used</div><div class="s">'+r.graph_paths.map(p=>'<code>'+esc(p)+'</code>').join(' ')+'</div>':'';
+    out.innerHTML='<div class="dsec-title">RETRIEVE / ANSWER &mdash; '+Math.round(r.query_ms)+' ms</div>'+
+      '<div class="ans" style="background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:8px">'+fmt(r.answer||'')+'</div>'+
+      '<div class="meta"><span class="chip">confidence '+Math.round((r.confidence||0)*100)+'%</span>'+
+        (r.incomplete?'<span class="chip" style="background:#fef3c7;color:#92400e">&#9888; '+esc(r.notes||'evidence incomplete')+'</span>':'')+'</div>'+
+      '<div class="k" style="margin-top:8px">Retrieval trace (which lanes fired)</div>'+lanes+gp+
+      '<div class="k">Evidence cited from this file</div>'+(cites||'<span class="s">none</span>');
+    btn.disabled=false;btn.innerHTML=o;
+  }catch(e){out.innerHTML='<div style="color:#dc2626">error: '+esc(''+e)+'</div>';btn.disabled=false;btn.innerHTML=o;}
 }
 // ---- AWS provision / teardown control plane ----
 function _provBody(action){return JSON.stringify({

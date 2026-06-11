@@ -382,6 +382,8 @@ def _debug_engine(mode: str):
     s._cfg["vector_store"]["path"] = os.path.join(tmp, "vectors")
     s._cfg["graph_store"]["path"] = os.path.join(tmp, "graph")
     s._cfg["blob_store"] = {"provider": "local", "path": os.path.join(tmp, "blobs")}
+    s._cfg.setdefault("web_search", {})["enabled"] = False   # isolate to this file
+    s._cfg["retrieval"]["llm_refine"] = False                # deterministic trace
     eng = Engine(s)
     _DEBUG.clear()
     _DEBUG.update({"engine": eng, "mode": mode, "tmp": tmp, "timings": {}})
@@ -520,6 +522,46 @@ def _debug_communities() -> dict:
            for cid, members in list(comms.items())[:20]]
     return {"ok": True, "n_communities": len(comms), "communities_ms": dt,
             "timings": _DEBUG.get("timings", {}), "communities": out}
+
+
+def _debug_query(data: dict) -> dict:
+    """Ask a question against ONLY the debugged file and return the full
+    retrieval trace (which lanes fired, what was reranked, the grounded answer)."""
+    import time
+    eng = _DEBUG.get("engine")
+    if eng is None or not _DEBUG.get("recs"):
+        return {"ok": False, "error": "parse + chunk + index a file first"}
+    if eng.vstore("debug").count() == 0:
+        _debug_index()                      # auto-index if not done yet
+    q = (data.get("question") or "").strip()
+    if not q:
+        return {"ok": False, "error": "enter a question"}
+    from ..retrieval.pipeline import Retriever
+    r = Retriever(eng)
+    t = time.time()
+    res = r.answer(q, trace=True)
+    dt = round((time.time() - t) * 1000, 1)
+    tr = res.get("trace", {}) or {}
+    ret = tr.get("3_retrieval", {}) or {}
+    rer = tr.get("5_reranking", {}) or {}
+    cites = []
+    for c in (res.get("citations") or [])[:6]:
+        rec = eng.vstore(c.get("corpus", "debug")).get(c.get("chunk_id"))
+        cites.append({"ref": c.get("ref"), "page": c.get("page"),
+                      "content_type": (rec.content_type if rec else c.get("content_type")),
+                      "method": c.get("method"),
+                      "preview": (rec.text[:200] if rec else "")})
+    return {"ok": True, "question": q, "answer": res.get("answer", ""),
+            "confidence": res.get("confidence"), "incomplete": res.get("incomplete"),
+            "notes": res.get("notes", ""), "intent": res.get("intent"),
+            "mode": res.get("mode"), "query_ms": dt,
+            "understanding": tr.get("1_query_understanding", ""),
+            "corpora": tr.get("2_corpus_selection", []),
+            "candidates": ret.get("candidates"), "graph_mode": ret.get("graph_mode"),
+            "kept": (tr.get("4_evaluation", {}) or {}).get("kept"),
+            "reranker": rer.get("reranker"),
+            "graph_paths": res.get("graph_paths", [])[:5],
+            "timings_ms": tr.get("timings_ms", {}), "citations": cites}
 
 
 # ── Configurable building blocks (the "compose your RAG" panel) ─────────────
@@ -928,6 +970,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, _debug_graph())
             if self.path == "/api/debug/communities":
                 return self._send(200, _debug_communities())
+            if self.path == "/api/debug/query":
+                return self._send(200, _debug_query(data))
             if self.path in ("/api/aws/plan", "/api/aws/provision",
                              "/api/aws/teardown", "/api/aws/inventory"):
                 from ..aws.provision import ControlPlane
