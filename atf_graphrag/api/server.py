@@ -354,6 +354,174 @@ def _apply_aws(form: dict) -> dict:
     return {"ok": True, "wiring": wiring(_engine)}
 
 
+# ── Debug: run ONE file through each stage in isolation (temp engine) ────────
+# Lets you watch parse → chunk → index → graph → communities one step at a time,
+# with per-stage timing, WITHOUT touching the main corpus.
+_DEBUG: dict = {}
+
+
+def _debug_engine(mode: str):
+    import tempfile
+    from ..config import Settings
+    if _DEBUG.get("engine") is not None and _DEBUG.get("mode") == mode:
+        return _DEBUG["engine"]
+    if mode == "aws":
+        s = Settings(profile="aws"); s._cfg["profile"] = "aws"
+    elif mode == "custom":
+        live = _engine.settings._cfg
+        s = Settings(profile=live.get("profile", "local"))
+        for k in ("llm", "embeddings", "vision", "reranker", "vector_store",
+                  "graph_store", "guardrails"):
+            if k in live:
+                s._cfg[k] = dict(live[k])
+        s._cfg.setdefault("ingestion", {})["parser"] = dict(
+            (live.get("ingestion", {}) or {}).get("parser", {}) or {"provider": "docling"})
+    else:                                   # hybrid = rich local (Docling + VLM)
+        s = Settings(profile="local")
+    tmp = tempfile.mkdtemp(prefix="atf_debug_")
+    s._cfg["vector_store"]["path"] = os.path.join(tmp, "vectors")
+    s._cfg["graph_store"]["path"] = os.path.join(tmp, "graph")
+    s._cfg["blob_store"] = {"provider": "local", "path": os.path.join(tmp, "blobs")}
+    eng = Engine(s)
+    _DEBUG.clear()
+    _DEBUG.update({"engine": eng, "mode": mode, "tmp": tmp, "timings": {}})
+    return eng
+
+
+def _debug_parse(data: dict) -> dict:
+    import base64, time
+    mode = data.get("mode", "hybrid")
+    eng = _debug_engine(mode)
+    name = os.path.basename(data.get("name", "upload.pdf")) or "upload.pdf"
+    raw = base64.b64decode((data.get("content_b64") or "").split(",")[-1] or b"")
+    p = os.path.join(_DEBUG["tmp"], name)
+    with open(p, "wb") as f:
+        f.write(raw)
+    t = time.time()
+    pages = eng.parser.load(p, vision_provider=eng.vision)
+    dt = round((time.time() - t) * 1000, 1)
+    _DEBUG.update({"pages": pages, "path": p, "name": name})
+    _DEBUG["timings"] = {"parse_ms": dt}
+    _DEBUG.pop("recs", None)
+    tbl = sum(1 for _, t2 in pages if "[EXTRACTED TABLE]" in t2 or "[TABLE]" in t2 or "| " in t2)
+    return {"ok": True, "parser": type(eng.parser).__name__, "mode": mode,
+            "vision": type(eng.vision).__name__, "n_pages": len(pages),
+            "pages_with_tables": tbl, "parse_ms": dt,
+            "pages": [{"page": pno, "chars": len(txt),
+                       "has_table": ("|" in txt), "preview": txt[:500]}
+                      for pno, txt in pages[:25]]}
+
+
+def _debug_make_records():
+    from ..ingestion.chunker import chunk_text
+    from ..ingestion.metadata import enrich_metadata
+    from ..indexing.tables import parse_table, table_title_from
+    from ..models import ChunkRecord
+    eng = _DEBUG["engine"]
+    size = eng.settings["ingestion"]["chunk_size"]
+    ov = eng.settings["ingestion"]["chunk_overlap"]
+    recs = []
+    for pno, txt in _DEBUG["pages"]:
+        for heading, piece, ct in chunk_text(txt, size, ov):
+            rec = ChunkRecord(text=piece, corpus="debug", content_type=ct,
+                              section_heading=heading, page_number=pno,
+                              source_name=_DEBUG["name"], document_id="debug",
+                              document_title=_DEBUG["name"])
+            if ct in ("table", "chart", "figure"):
+                rec.visual_content_type = ct
+                rec.extraction_method = "vision" if "[VLM" in piece else "table_extraction"
+            if ct == "table":
+                td = parse_table(piece)
+                if td:
+                    rec.table_data = td
+                rec.table_title = table_title_from(heading, piece)
+            recs.append(enrich_metadata(rec))
+    _DEBUG["recs"] = recs
+    return recs
+
+
+def _debug_chunk() -> dict:
+    import time
+    if not _DEBUG.get("pages"):
+        return {"ok": False, "error": "parse a file first"}
+    t = time.time()
+    recs = _debug_make_records()
+    dt = round((time.time() - t) * 1000, 1)
+    _DEBUG["timings"]["chunk_ms"] = dt
+    from collections import Counter
+    by = Counter(r.content_type for r in recs)
+    return {"ok": True, "n_chunks": len(recs), "by_type": dict(by), "chunk_ms": dt,
+            "chunks": [{"i": i, "page": r.page_number, "content_type": r.content_type,
+                        "chars": len(r.text), "table_rows": (r.table_data or {}).get("n_rows"),
+                        "table_title": r.table_title, "report_type": r.report_type,
+                        "entities": (r.entities or [])[:8], "preview": r.text[:350]}
+                       for i, r in enumerate(recs[:50])]}
+
+
+def _debug_index() -> dict:
+    import time
+    recs = _DEBUG.get("recs") or (_debug_make_records() if _DEBUG.get("pages") else None)
+    if not recs:
+        return {"ok": False, "error": "parse + chunk first"}
+    eng = _DEBUG["engine"]
+    vs = eng.vstore("debug")
+    t = time.time()
+    vecs = eng.embedder.embed([r.text for r in recs])
+    for r, v in zip(recs, vecs):
+        vs.upsert(r, v)
+    dt = round((time.time() - t) * 1000, 1)
+    _DEBUG["timings"]["index_ms"] = dt
+    return {"ok": True, "indexed": len(recs), "embedder": getattr(eng.embedder, "name", "?"),
+            "dim": getattr(eng.embedder, "dim", None), "index_ms": dt,
+            "vector_count": vs.count()}
+
+
+def _debug_graph() -> dict:
+    import time
+    recs = _DEBUG.get("recs") or (_debug_make_records() if _DEBUG.get("pages") else None)
+    if not recs:
+        return {"ok": False, "error": "parse + chunk first"}
+    eng = _DEBUG["engine"]
+    # fresh graph for a clean view
+    from ..stores.graph_store import LocalGraphStore
+    import os as _os
+    gpath = _os.path.join(_DEBUG["tmp"], "graph_dbg")
+    eng.graph = LocalGraphStore(gpath)
+    idx = Indexer(eng, use_llm_extraction=False)
+    t = time.time()
+    for r in recs:
+        idx._build_graph(r)
+    dt = round((time.time() - t) * 1000, 1)
+    _DEBUG["timings"]["graph_ms"] = dt
+    g = eng.graph
+    nodes = [{"name": v.get("label", k), "type": v.get("type"),
+              "count": v.get("count")} for k, v in list(g.nodes.items())[:60]]
+    edges = [{"src": g.nodes.get(s, {}).get("label", s),
+              "rel": v.get("rel"), "dst": g.nodes.get(d, {}).get("label", d),
+              "typed": v.get("typed"), "weight": v.get("weight")}
+             for (s, d), v in list(g.edges.items())[:60]]
+    return {"ok": True, "stats": g.stats(), "graph_ms": dt,
+            "nodes": nodes, "edges": edges}
+
+
+def _debug_communities() -> dict:
+    import time
+    eng = _DEBUG.get("engine")
+    if eng is None or not getattr(eng, "graph", None) or not eng.graph.nodes:
+        return {"ok": False, "error": "build the graph first"}
+    from ..graph.communities import CommunityBuilder
+    t = time.time()
+    cb = CommunityBuilder(eng.graph, llm=None, min_community_size=2)
+    comms = cb.detect()
+    dt = round((time.time() - t) * 1000, 1)
+    _DEBUG["timings"]["communities_ms"] = dt
+    out = [{"id": cid, "size": len(members),
+            "members": [eng.graph.nodes.get(m, {}).get("label", m) for m in members[:12]]}
+           for cid, members in list(comms.items())[:20]]
+    return {"ok": True, "n_communities": len(comms), "communities_ms": dt,
+            "timings": _DEBUG.get("timings", {}), "communities": out}
+
+
 # ── Configurable building blocks (the "compose your RAG" panel) ─────────────
 # Each block = one swappable component, its provider options, where it lives in
 # config, whether it can be applied at runtime, and a cost hint. Changing a
@@ -750,6 +918,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, {"ok": False, "error": str(e)})
             if self.path == "/api/config/apply":
                 return self._send(200, _config_apply(data))
+            if self.path == "/api/debug/parse":
+                return self._send(200, _debug_parse(data))
+            if self.path == "/api/debug/chunk":
+                return self._send(200, _debug_chunk())
+            if self.path == "/api/debug/index":
+                return self._send(200, _debug_index())
+            if self.path == "/api/debug/graph":
+                return self._send(200, _debug_graph())
+            if self.path == "/api/debug/communities":
+                return self._send(200, _debug_communities())
             if self.path in ("/api/aws/plan", "/api/aws/provision",
                              "/api/aws/teardown", "/api/aws/inventory"):
                 from ..aws.provision import ControlPlane

@@ -261,6 +261,7 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
     <button data-view="upload"><span class="ico">&#8593;</span> Upload</button>
     <button data-view="graph"><span class="ico">&#128376;</span> Graph</button>
     <button data-view="config"><span class="ico">&#129520;</span> Configuration</button>
+    <button data-view="debug"><span class="ico">&#128027;</span> Debug</button>
     <button data-view="aws"><span class="ico">&#9729;</span> AWS Native</button>
   </nav>
   <div class="spacer"></div>
@@ -396,6 +397,32 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
           Click <b>Load graph</b>, then click any node to inspect its connections and source documents.
         </div>
       </div>
+    </div>
+  </section>
+
+  <section class="view" id="v-debug">
+    <div class="card">
+      <h2 style="margin:0 0 4px">Debug &mdash; watch one file flow through every stage</h2>
+      <p style="color:var(--muted);margin:0 0 12px;font-size:13px">Upload a single document, pick a mode, then run each stage one at a time and see exactly what happens behind the scenes &mdash; with timing. Runs on an isolated temp engine; your main corpus is untouched.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <input type="file" id="dbg-file" accept=".pdf,.txt,.html,.png,.jpg,.jpeg"/>
+        <label class="s" style="font-weight:600">Mode:</label>
+        <select id="dbg-mode" style="padding:9px 12px;border:1px solid var(--line);border-radius:9px">
+          <option value="hybrid">Hybrid (Docling + VLM, local)</option>
+          <option value="aws">AWS Native (BDA / Textract / Bedrock)</option>
+          <option value="custom">Customised (current Configuration)</option>
+        </select>
+      </div>
+      <div class="actions" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
+        <button class="btn" onclick="dbgRun('parse',this)">1 &middot; Parse</button>
+        <button class="btn" onclick="dbgRun('chunk',this)">2 &middot; Chunk</button>
+        <button class="btn" onclick="dbgRun('index',this)">3 &middot; Index</button>
+        <button class="btn" onclick="dbgRun('graph',this)">4 &middot; Graph (nodes/edges)</button>
+        <button class="btn" onclick="dbgRun('communities',this)">5 &middot; Communities</button>
+        <button class="btn ghost" onclick="dbgAll(this)">&#9654; Run all</button>
+      </div>
+      <div id="dbg-timing" style="margin-top:12px"></div>
+      <div id="dbg-out" style="margin-top:12px"></div>
     </div>
   </section>
 
@@ -622,6 +649,7 @@ document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{
     upload:['Upload','Add files and folders to the knowledge base'],
     graph:['Graph','Explore entities, communities and connections'],
     config:['Configuration','Compose your RAG from swappable building blocks'],
+    debug:['Debug','Watch one file flow through every stage with timing'],
     aws:['AWS Native','Configure &amp; test the AWS-native stack end to end']};
   $('#t-title').textContent=titles[v][0]; $('#t-sub').textContent=titles[v][1];
   if(v==='kb') loadKB();
@@ -1470,6 +1498,86 @@ async function applyConfig(btn,override){
     toast('Configuration applied'); loadConfig(); refresh();
   }catch(e){toast('Apply failed');}
   if(btn){btn.disabled=false;btn.innerHTML=o;}
+}
+// ---- Debug: single-file pipeline inspector ----
+function dbgTiming(t){
+  if(!t)return;
+  const order=[['parse_ms','Parse'],['chunk_ms','Chunk'],['index_ms','Index'],['graph_ms','Graph'],['communities_ms','Communities']];
+  const cells=order.filter(([k])=>t[k]!=null).map(([k,l])=>
+    '<div class="kbstat"><b>'+Math.round(t[k])+' ms</b><span>'+l+'</span></div>').join('');
+  const total=order.reduce((s,[k])=>s+(t[k]||0),0);
+  $('#dbg-timing').innerHTML='<div class="kbsum">'+cells+
+    '<div class="kbstat"><b>'+Math.round(total)+' ms</b><span>total</span></div></div>';
+}
+function _badge(ct){const c={text:'#64748b',table:'#0ea5e9',chart:'#f59e0b',figure:'#8b5cf6',list:'#10b981'}[ct]||'#94a3b8';
+  return '<span class="ctbadge" style="background:'+c+'">'+ct+'</span>';}
+async function dbgRun(stage,btn){
+  const out=$('#dbg-out'); const o=btn?btn.innerHTML:'';
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span>';}
+  try{
+    let r;
+    if(stage==='parse'){
+      const f=$('#dbg-file').files[0];
+      if(!f){toast('Choose a file first');if(btn){btn.disabled=false;btn.innerHTML=o;}return null;}
+      const b64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(f);});
+      r=await fetch('/api/debug/parse',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:f.name,content_b64:b64,mode:$('#dbg-mode').value})}).then(x=>x.json());
+    }else{
+      r=await fetch('/api/debug/'+stage,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(x=>x.json());
+    }
+    if(!r.ok){out.innerHTML='<div class="bad" style="color:#dc2626">'+esc(r.error||'failed')+'</div>';if(btn){btn.disabled=false;btn.innerHTML=o;}return r;}
+    dbgTiming(r.timings||window._dbgT||(window._dbgT={}));
+    if(r.parse_ms!=null)(window._dbgT=window._dbgT||{}).parse_ms=r.parse_ms;
+    if(r.chunk_ms!=null)(window._dbgT=window._dbgT||{}).chunk_ms=r.chunk_ms;
+    if(r.index_ms!=null)(window._dbgT=window._dbgT||{}).index_ms=r.index_ms;
+    if(r.graph_ms!=null)(window._dbgT=window._dbgT||{}).graph_ms=r.graph_ms;
+    if(r.communities_ms!=null)(window._dbgT=window._dbgT||{}).communities_ms=r.communities_ms;
+    dbgTiming(window._dbgT);
+    out.innerHTML=dbgRender(stage,r);
+    if(btn){btn.disabled=false;btn.innerHTML=o;}
+    return r;
+  }catch(e){out.innerHTML='<div style="color:#dc2626">error: '+esc(''+e)+'</div>';if(btn){btn.disabled=false;btn.innerHTML=o;}return null;}
+}
+async function dbgAll(btn){
+  window._dbgT={};
+  for(const s of ['parse','chunk','index','graph','communities']){
+    const r=await dbgRun(s,btn); if(!r||!r.ok)break;
+  }
+}
+function dbgRender(stage,r){
+  if(stage==='parse'){
+    const rows=(r.pages||[]).map(p=>'<tr><td>'+p.page+'</td><td class="num">'+p.chars+'</td><td>'+(p.has_table?'&#9745;':'')+'</td><td class="s">'+esc(p.preview).slice(0,180)+'&hellip;</td></tr>').join('');
+    return '<div class="dsec-title">PARSE &mdash; '+esc(r.parser)+' · vision '+esc(r.vision)+'</div>'+
+      '<div class="s" style="margin-bottom:6px">'+r.n_pages+' pages · '+r.pages_with_tables+' with tables · '+r.parse_ms+' ms</div>'+
+      '<table class="kbtable"><thead><tr><th>Page</th><th class="num">Chars</th><th>Table</th><th>Preview</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+  if(stage==='chunk'){
+    const chips=Object.entries(r.by_type||{}).map(([k,v])=>_badge(k)+' '+v).join(' &nbsp; ');
+    const cards=(r.chunks||[]).map(c=>'<div class="chunkcard"><div class="ch-top">'+_badge(c.content_type)+
+      '<span class="ch-meta">p'+(c.page||'—')+' · '+c.chars+' chars'+(c.table_rows?' · '+c.table_rows+' rows':'')+(c.report_type?' · '+esc(c.report_type):'')+'</span></div>'+
+      (c.entities&&c.entities.length?'<div class="ch-ents">'+c.entities.map(e=>'<span class="tagchip">'+esc(e)+'</span>').join('')+'</div>':'')+
+      '<div class="ch-text">'+esc(c.preview)+'&hellip;</div></div>').join('');
+    return '<div class="dsec-title">CHUNK &mdash; '+r.n_chunks+' chunks · '+r.chunk_ms+' ms</div><div style="margin-bottom:8px">'+chips+'</div>'+cards;
+  }
+  if(stage==='index'){
+    return '<div class="dsec-title">INDEX</div><div class="kbsum">'+
+      '<div class="kbstat"><b>'+r.indexed+'</b><span>vectors</span></div>'+
+      '<div class="kbstat"><b>'+esc(r.embedder)+'</b><span>embedder</span></div>'+
+      '<div class="kbstat"><b>'+r.dim+'d</b><span>dimensions</span></div>'+
+      '<div class="kbstat"><b>'+r.index_ms+' ms</b><span>embed+store</span></div></div>';
+  }
+  if(stage==='graph'){
+    const nodes=(r.nodes||[]).map(n=>'<span class="tagchip" title="'+esc(n.type)+'">'+esc(n.name)+' <i style="opacity:.6">'+esc(n.type)+'</i></span>').join(' ');
+    const edges=(r.edges||[]).map(e=>'<div class="s" style="padding:3px 0">'+esc(e.src)+' <b style="color:'+(e.typed?'#4f46e5':'#94a3b8')+'">--'+esc(e.rel)+'--&gt;</b> '+esc(e.dst)+' <span style="opacity:.5">(w'+e.weight+')</span></div>').join('');
+    return '<div class="dsec-title">GRAPH &mdash; '+r.stats.nodes+' nodes · '+r.stats.edges+' edges · '+r.graph_ms+' ms</div>'+
+      '<div class="k">NODES</div><div class="ch-ents" style="margin-bottom:10px">'+nodes+'</div>'+
+      '<div class="k">EDGES (nodes &rarr; relation &rarr; node)</div>'+edges;
+  }
+  if(stage==='communities'){
+    const cs=(r.communities||[]).map(c=>'<div class="chunkcard"><div class="ch-top"><b>Community '+c.id+'</b><span class="ch-meta">'+c.size+' members</span></div><div class="ch-ents">'+c.members.map(m=>'<span class="tagchip">'+esc(m)+'</span>').join('')+'</div></div>').join('');
+    return '<div class="dsec-title">COMMUNITIES &mdash; '+r.n_communities+' detected · '+r.communities_ms+' ms</div>'+(cs||'<span class="s">graph too small for communities</span>');
+  }
+  return '';
 }
 // ---- AWS provision / teardown control plane ----
 function _provBody(action){return JSON.stringify({
