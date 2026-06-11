@@ -94,6 +94,200 @@ def _documents() -> dict:
             "total_chunks": total_chunks, "by_corpus": by_corpus}
 
 
+# ── Per-document end-to-end detail (parsed / ingested / chunks / indexed) ─────
+
+_META_FIELDS = [
+    "source_type", "source_name", "source_url", "document_title", "file_name",
+    "page_number", "section_heading", "chunk_id", "document_id", "document_date",
+    "incident_date", "location", "entities", "organizations", "manufacturers",
+    "sellers", "buyers", "firearm_type", "incident_type", "case_reference",
+    "visual_content_type", "extraction_summary", "confidence",
+    "extraction_method", "vision_model", "ingested_at", "version",
+    "relationships", "access_level",
+]
+
+
+def _doc_payloads(corpus: str, doc_id: str, name: str = ""):
+    """All chunk payloads for a document, matched by document_id (or name)."""
+    vs = _engine.vstore(corpus)
+    out = []
+    for p in getattr(vs, "_payloads", {}).values():
+        if doc_id and p.get("document_id") == doc_id:
+            out.append(p)
+        elif name and not doc_id and (p.get("source_name") == name):
+            out.append(p)
+    out.sort(key=lambda p: (p.get("page_number") or 0, p.get("chunk_id", "")))
+    return out
+
+
+def _document_detail(corpus: str, doc_id: str, name: str = "",
+                     chunk_limit: int = 400) -> dict:
+    pays = _doc_payloads(corpus, doc_id, name)
+    if not pays:
+        return {}
+    first = pays[0]
+    pages = sorted({p["page_number"] for p in pays if p.get("page_number")})
+    ctypes: dict = {}
+    methods: dict = {}
+    vmodels: set = set()
+    entities: set = set()
+    rels = []
+    field_cov: dict = {f: 0 for f in _META_FIELDS}
+    for p in pays:
+        ct = p.get("content_type", "text")
+        ctypes[ct] = ctypes.get(ct, 0) + 1
+        m = p.get("extraction_method", "text")
+        methods[m] = methods.get(m, 0) + 1
+        if p.get("vision_model"):
+            vmodels.add(p["vision_model"])
+        for e in p.get("entities", []) or []:
+            entities.add(e)
+        for r in p.get("relationships", []) or []:
+            rels.append(r)
+        for f in _META_FIELDS:
+            v = p.get(f)
+            if v not in (None, "", [], {}, 0):
+                field_cov[f] += 1
+    # graph contribution: nodes & edges that reference any of this doc's chunks.
+    doc_cids = {p.get("chunk_id") for p in pays if p.get("chunk_id")}
+    nodes_present = 0
+    edges_present = 0
+    try:
+        g = _engine.graph
+        for node in getattr(g, "nodes", {}).values():
+            if node.get("chunks") and (node["chunks"] & doc_cids):
+                nodes_present += 1
+        for edge in getattr(g, "edges", {}).values():
+            if edge.get("chunks") and (edge["chunks"] & doc_cids):
+                edges_present += 1
+    except Exception:  # noqa: BLE001
+        nodes_present = edges_present = 0
+
+    chunks = []
+    for p in pays[:chunk_limit]:
+        body = p.get("text", "") or ""
+        chunks.append({
+            "chunk_id": p.get("chunk_id", ""),
+            "page": p.get("page_number"),
+            "section": p.get("section_heading", ""),
+            "content_type": p.get("content_type", "text"),
+            "method": p.get("extraction_method", "text"),
+            "vision_model": p.get("vision_model", ""),
+            "chars": len(body),
+            "text": body[:1200],
+            "truncated": len(body) > 1200,
+            "summary": p.get("extraction_summary", ""),
+            "entities": (p.get("entities", []) or [])[:12],
+            "relationships": (p.get("relationships", []) or [])[:8],
+        })
+
+    emb = _engine.embedder
+    src_path, resolvable = _resolve_source_file(corpus, doc_id, first.get("source_name", ""))
+    return {
+        "file": {
+            "name": first.get("source_name", ""),
+            "file_name": first.get("file_name", ""),
+            "title": first.get("document_title", ""),
+            "corpus": corpus, "document_id": doc_id or first.get("document_id", ""),
+            "date": first.get("document_date", ""),
+            "ingested_at": max((p.get("ingested_at", 0) or 0) for p in pays),
+            "pages": len(pages), "page_list": pages,
+            "preview_available": resolvable,
+        },
+        "parsed": {
+            "parser": (_engine.settings.get("ingestion", {}).get("parser", {})
+                       or {}).get("provider", "advanced")
+            if isinstance(_engine.settings.get("ingestion", {}).get("parser"), dict)
+            else _engine.settings.get("ingestion", {}).get("parser", "advanced"),
+            "ocr": (_engine.settings.get("ingestion", {}).get("ocr", {}) or {}).get("provider", "auto"),
+            "methods": methods,
+            "vision_models": sorted(vmodels),
+        },
+        "ingested": {
+            "total_chunks": len(pays),
+            "content_types": ctypes,
+            "tables": ctypes.get("table", 0),
+            "charts": ctypes.get("chart", 0),
+            "figures": ctypes.get("figure", 0),
+            "text": ctypes.get("text", 0),
+            "vision_chunks": methods.get("vision", 0),
+            "ocr_chunks": methods.get("ocr", 0),
+            "table_extracted": methods.get("table_extraction", 0)
+            + methods.get("table", 0),
+        },
+        "indexed": {
+            "vector_count": len(pays),
+            "embedding_model": getattr(emb, "name", "?"),
+            "embedding_dim": getattr(emb, "dim", None),
+            "metadata_fields_total": len(_META_FIELDS),
+            "metadata_fields_populated": sum(1 for v in field_cov.values() if v),
+            "field_coverage": field_cov,
+            "unique_entities": len(entities),
+            "entity_sample": sorted(entities)[:40],
+            "relationships": len(rels),
+            "relationship_sample": rels[:20],
+            "graph_nodes_present": nodes_present,
+            "graph_edges_present": edges_present,
+        },
+        "chunks": chunks,
+        "chunk_total": len(pays),
+        "chunk_shown": len(chunks),
+    }
+
+
+def _preview_roots() -> list:
+    """Directories to resolve original source files for preview: env override
+    (ATF_PREVIEW_ROOTS, ':'-separated) + configured server.preview_roots + the
+    uploads dir. Original files never leave the user's machine."""
+    roots = []
+    env = os.environ.get("ATF_PREVIEW_ROOTS", "")
+    roots += [r for r in env.split(os.pathsep) if r]
+    roots += list(_engine.settings.get("server", {}).get("preview_roots", []) or [])
+    roots.append(os.path.join(_storage_root(), "uploads"))
+    return [r for r in roots if r]
+
+
+def _resolve_source_file(corpus: str, doc_id: str, source_name: str = ""):
+    """Best-effort locate the original file on disk. Returns (path|None, bool)."""
+    if not source_name:
+        pays = _doc_payloads(corpus, doc_id)
+        source_name = pays[0].get("source_name", "") if pays else ""
+        # a chunk may carry an absolute source_path (future ingests)
+        sp = pays[0].get("source_path") if pays else ""
+        if sp and os.path.isfile(sp):
+            return sp, True
+    base = os.path.basename(source_name)
+    for root in _preview_roots():
+        direct = os.path.join(root, source_name)   # source_name is rel-to-root
+        if os.path.isfile(direct):
+            return direct, True
+        # shallow basename search (handles uploads/<hash>/<file>)
+        try:
+            for dp, _dn, fns in os.walk(root):
+                if base in fns:
+                    return os.path.join(dp, base), True
+        except Exception:  # noqa: BLE001
+            pass
+    return None, False
+
+
+def _render_page_png(path: str, page: int, zoom: float = 1.6) -> bytes:
+    """Render one PDF page to PNG via PyMuPDF. Empty bytes on failure."""
+    try:
+        import fitz  # type: ignore
+        doc = fitz.open(path)
+        try:
+            idx = max(0, min(page - 1, doc.page_count - 1))
+            mat = fitz.Matrix(zoom, zoom)
+            pix = doc[idx].get_pixmap(matrix=mat, alpha=False)
+            return pix.tobytes("png")
+        finally:
+            doc.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[preview] page render failed: {exc}")
+        return b""
+
+
 def _clear_all() -> dict:
     """Wipe ALL persisted data — vectors, graph, communities, blobs, caches,
     and the ingest manifest — then rebuild a fresh empty engine. Destructive."""
@@ -270,6 +464,23 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_bytes(self, code: int, content_type: str, data: bytes,
+                    inline_name: str = ""):
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(data)))
+        if inline_name:
+            self.send_header("Content-Disposition",
+                             f'inline; filename="{inline_name}"')
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _query(self) -> dict:
+        from urllib.parse import urlparse, parse_qs
+        q = parse_qs(urlparse(self.path).query)
+        return {k: v[0] for k, v in q.items()}
+
     def _read(self) -> dict:
         n = int(self.headers.get("Content-Length", 0))
         if not n:
@@ -291,6 +502,36 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, _engine.stats())
         if self.path == "/api/documents":
             return self._send(200, _documents())
+        if self.path.split("?")[0] == "/api/document":
+            q = self._query()
+            detail = _document_detail(q.get("corpus", "pdf"),
+                                      q.get("doc_id", ""), q.get("name", ""))
+            return self._send(200, detail) if detail \
+                else self._send(404, {"error": "document not found"})
+        if self.path.split("?")[0] == "/api/document/file":
+            q = self._query()
+            path, ok = _resolve_source_file(q.get("corpus", "pdf"),
+                                            q.get("doc_id", ""), q.get("name", ""))
+            if not ok:
+                return self._send(404, {"error": "source file unavailable"})
+            try:
+                with open(path, "rb") as f:
+                    data = f.read()
+            except Exception:  # noqa: BLE001
+                return self._send(404, {"error": "source file unreadable"})
+            ctype = "application/pdf" if path.lower().endswith(".pdf") \
+                else "application/octet-stream"
+            return self._send_bytes(200, ctype, data, os.path.basename(path))
+        if self.path.split("?")[0] == "/api/document/page":
+            q = self._query()
+            path, ok = _resolve_source_file(q.get("corpus", "pdf"),
+                                            q.get("doc_id", ""), q.get("name", ""))
+            if not ok or not path.lower().endswith(".pdf"):
+                return self._send(404, {"error": "page preview unavailable"})
+            png = _render_page_png(path, int(q.get("page", "1") or 1),
+                                   float(q.get("zoom", "1.6") or 1.6))
+            return self._send_bytes(200, "image/png", png) if png \
+                else self._send(404, {"error": "render failed"})
         if self.path == "/api/jobs":
             return self._send(200, {"jobs": _jobs.list() if _jobs else []})
         if self.path == "/api/jobs/active":

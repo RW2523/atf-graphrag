@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "atf-graphrag",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "ATF_PROFILE=local",
+        "ATF_PREVIEW_ROOTS=/Users/richardwatsonstephenamudha/Documents/flows/Rag_Dataset",
+        "PYTHONPATH=/Users/richardwatsonstephenamudha/Documents/flows/atf-graphrag",
+        "/Users/richardwatsonstephenamudha/miniconda3/bin/python",
+        "-m",
+        "atf_graphrag",
+        "serve"
+      ],
+      "port": 8077
+    }
+  ]
+}

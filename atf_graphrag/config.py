@@ -153,7 +153,11 @@ DEFAULTS: Dict[str, Any] = {
     # ---- API server -------------------------------------------------------
     # auth_token: empty = open (local dev). Set it (or env ATF_API_TOKEN) to
     # require "Authorization: Bearer <token>" on POST endpoints before deploy.
-    "server": {"host": "127.0.0.1", "port": 8077, "auth_token": ""},
+    # preview_roots: extra directories to resolve original source files for the
+    # KB document preview (also honours env ATF_PREVIEW_ROOTS). Uploads dir is
+    # always searched. Files are read locally and never copied off-machine.
+    "server": {"host": "127.0.0.1", "port": 8077, "auth_token": "",
+               "preview_roots": []},
 }
 
 

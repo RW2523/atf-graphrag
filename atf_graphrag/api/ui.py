@@ -138,6 +138,59 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
 .modal label{font-size:12px;font-weight:600;color:#475569} .modal input{width:100%;margin:5px 0 14px;
   border:1px solid var(--line);border-radius:9px;padding:10px;font-size:14px}
 .modal .actions{display:flex;gap:10px;justify-content:flex-end}
+/* ---- Document detail modal (KB end-to-end view) ---- */
+.docbox{background:#fff;border-radius:16px;width:min(1180px,96vw);height:90vh;
+  display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(0,0,0,.35);overflow:hidden}
+.dochead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;
+  padding:16px 20px;border-bottom:1px solid var(--line)}
+.dochead h2{margin:0;font-size:16px;word-break:break-word}
+.dochead .sub{color:var(--muted);font-size:12px;margin-top:3px}
+.docbody{display:grid;grid-template-columns:minmax(360px,1fr) minmax(440px,1.1fr);
+  flex:1;min-height:0}
+.docprev{border-right:1px solid var(--line);display:flex;flex-direction:column;background:#f1f5f9}
+.docprev .pgwrap{flex:1;overflow:auto;display:grid;place-items:start center;padding:14px}
+.docprev img{max-width:100%;box-shadow:0 4px 18px rgba(0,0,0,.18);border-radius:4px;background:#fff}
+.docprev .pgbar{display:flex;align-items:center;gap:8px;justify-content:center;
+  padding:8px;border-top:1px solid var(--line);background:#fff;font-size:13px}
+.docprev .pgbar button{border:1px solid var(--line);background:#fff;border-radius:8px;
+  padding:4px 10px;cursor:pointer}
+.docprev .noprev{color:var(--muted);font-size:13px;text-align:center;padding:30px}
+.docdetail{display:flex;flex-direction:column;min-height:0}
+.doctabs{display:flex;gap:4px;padding:10px 14px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.doctab{border:none;background:none;padding:8px 12px;cursor:pointer;font-size:13px;
+  font-weight:600;color:var(--muted);border-bottom:2px solid transparent}
+.doctab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.docpane{flex:1;overflow:auto;padding:16px;display:none}
+.docpane.active{display:block}
+.dgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.dcard{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+.dcard .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.dcard .v{font-size:20px;font-weight:700;margin-top:2px}
+.dcard .v small{font-size:12px;font-weight:500;color:var(--muted)}
+.dbar{height:9px;border-radius:6px;overflow:hidden;display:flex;background:#e2e8f0;margin:8px 0}
+.dbar i{height:100%}
+.dlegend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:#475569}
+.dlegend span{display:flex;align-items:center;gap:5px}
+.dlegend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+.dsec-title{font-size:12px;font-weight:700;color:#334155;text-transform:uppercase;
+  letter-spacing:.04em;margin:16px 0 8px}
+.chunkcard{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:9px}
+.chunkcard:hover{border-color:var(--accent);cursor:pointer}
+.chunkcard .ch-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.ctbadge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;color:#fff}
+.ch-meta{font-size:11px;color:var(--muted)}
+.chunkcard .ch-text{font-size:12.5px;color:#1e293b;white-space:pre-wrap;line-height:1.45;
+  max-height:120px;overflow:auto}
+.chunkcard .ch-sum{font-size:12px;color:#7c3aed;background:#f5f3ff;border-radius:8px;
+  padding:6px 8px;margin-bottom:6px;white-space:pre-wrap;max-height:120px;overflow:auto}
+.chunkcard .ch-ents{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}
+.tagchip{font-size:11px;background:#eef2ff;color:#3730a3;border-radius:12px;padding:1px 8px}
+.covgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
+.covitem{display:flex;align-items:center;gap:6px;font-size:12px;color:#475569}
+.covitem i{width:8px;height:8px;border-radius:50%}
+.kbtable tbody tr{cursor:pointer}
+.kbtable tbody tr:hover{background:#f1f5f9}
+.viewbtn{font-size:11px;color:var(--accent);font-weight:600}
 /* ---- Processing pill + details modal ---- */
 .procpill{display:flex;align-items:center;gap:8px;background:#eef2ff;color:#4338ca;
   border:1px solid #c7d2fe;border-radius:22px;padding:7px 14px;font-size:13px;
@@ -438,6 +491,42 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
     <div class="proclog" id="proc-log"></div>
   </div>
 </div>
+<div class="modal" id="docmodal">
+  <div class="docbox">
+    <div class="dochead">
+      <div>
+        <h2 id="doc-title">&hellip;</h2>
+        <div class="sub" id="doc-sub"></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <a class="btn ghost" id="doc-open" target="_blank" rel="noopener">&#11015; Open PDF</a>
+        <button class="btn ghost" onclick="closeDoc()">Close</button>
+      </div>
+    </div>
+    <div class="docbody">
+      <div class="docprev">
+        <div class="pgwrap" id="doc-pgwrap"><div class="noprev">Loading preview&hellip;</div></div>
+        <div class="pgbar" id="doc-pgbar" style="display:none">
+          <button onclick="docPage(-1)">&#8249; Prev</button>
+          <span id="doc-pgnum">1 / 1</span>
+          <button onclick="docPage(1)">Next &#8250;</button>
+        </div>
+      </div>
+      <div class="docdetail">
+        <div class="doctabs">
+          <button class="doctab active" data-pane="parsed" onclick="docTab('parsed')">Parsed</button>
+          <button class="doctab" data-pane="ingested" onclick="docTab('ingested')">Ingested</button>
+          <button class="doctab" data-pane="chunks" onclick="docTab('chunks')">Chunks</button>
+          <button class="doctab" data-pane="indexed" onclick="docTab('indexed')">Indexed</button>
+        </div>
+        <div class="docpane active" id="pane-parsed"></div>
+        <div class="docpane" id="pane-ingested"></div>
+        <div class="docpane" id="pane-chunks"></div>
+        <div class="docpane" id="pane-indexed"></div>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -545,14 +634,153 @@ function renderKB(){
     const meth=Object.entries(d.methods||{}).sort((a,b)=>b[1]-a[1])
       .map(([k,v])=>chip(k,v,tot)).join('');
     const tr=document.createElement('tr');
-    tr.innerHTML='<td class="kbname" title="'+esc(d.name)+'">'+
-        '<span class="fdot"></span>'+esc(d.name)+'</td>'+
+    tr.innerHTML='<td class="kbname" title="Click to inspect — '+esc(d.name)+'">'+
+        '<span class="fdot"></span>'+esc(d.name)+' <span class="viewbtn">&rsaquo; view</span></td>'+
       '<td><span class="corp">'+esc(d.corpus)+'</span></td>'+
       '<td class="num">'+(d.page_count||'—')+'</td>'+
       '<td class="num"><b>'+d.chunks.toLocaleString()+'</b></td>'+
       '<td>'+cts+'</td><td>'+meth+'</td>';
+    tr.onclick=()=>openDoc(d.corpus,d.document_id,d.name);
     tb.appendChild(tr);
   });
+}
+
+// ---- Document end-to-end detail ----
+let DOC=null, DOCPAGE=1;
+const METHOD_LABEL={text:'Text layer',vision:'Vision/VLM',ocr:'OCR',
+  table_extraction:'Table extraction',table:'Table extraction',web:'Web'};
+function openDoc(corpus,doc_id,name){
+  $('#docmodal').classList.add('show');
+  $('#doc-title').textContent=name; $('#doc-sub').textContent='Loading…';
+  ['parsed','ingested','chunks','indexed'].forEach(p=>$('#pane-'+p).innerHTML='');
+  $('#doc-pgwrap').innerHTML='<div class="noprev">Loading preview…</div>';
+  $('#doc-pgbar').style.display='none';
+  const qs='corpus='+encodeURIComponent(corpus)+'&doc_id='+encodeURIComponent(doc_id||'')+
+           '&name='+encodeURIComponent(name||'');
+  fetch('/api/document?'+qs).then(r=>r.json()).then(det=>{
+    if(det.error){$('#doc-sub').textContent='Not found';return;}
+    DOC=det; DOC._qs=qs; DOCPAGE=(det.file.page_list||[1])[0]||1;
+    renderDoc(det); docTab('parsed');
+  }).catch(()=>{$('#doc-sub').textContent='Failed to load detail';});
+}
+function closeDoc(){$('#docmodal').classList.remove('show');DOC=null;}
+function docTab(p){
+  document.querySelectorAll('.doctab').forEach(t=>t.classList.toggle('active',t.dataset.pane===p));
+  document.querySelectorAll('.docpane').forEach(x=>x.classList.remove('active'));
+  $('#pane-'+p).classList.add('active');
+}
+function statCard(k,v,sub){return '<div class="dcard"><div class="k">'+k+'</div>'+
+  '<div class="v">'+v+(sub?' <small>'+sub+'</small>':'')+'</div></div>';}
+function ctBar(cts,total){
+  const order=['text','table','chart','figure','list'];
+  const segs=order.filter(k=>cts[k]).map(k=>'<i style="width:'+(cts[k]/total*100)+
+    '%;background:'+(CT_COLORS[k]||'#94a3b8')+'"></i>').join('');
+  const leg=order.filter(k=>cts[k]).map(k=>'<span><i style="background:'+(CT_COLORS[k]||'#94a3b8')+
+    '"></i>'+k+' '+cts[k]+'</span>').join('');
+  return '<div class="dbar">'+segs+'</div><div class="dlegend">'+leg+'</div>';
+}
+function renderDoc(det){
+  const f=det.file, p=det.parsed, ing=det.ingested, ix=det.indexed;
+  $('#doc-sub').textContent=f.corpus.toUpperCase()+' · '+f.pages+' pages · '+
+    det.chunk_total.toLocaleString()+' chunks · doc '+f.document_id;
+  const open=$('#doc-open');
+  if(f.preview_available){open.style.display='';open.href='/api/document/file?'+DOC._qs;}
+  else open.style.display='none';
+  // preview
+  if(f.preview_available){
+    $('#doc-pgbar').style.display='flex'; showPage(DOCPAGE);
+  }else{
+    $('#doc-pgwrap').innerHTML='<div class="noprev">Original file not found on disk for preview.<br><br>'+
+      'Set <b>ATF_PREVIEW_ROOTS</b> to the folder you ingested from (or re-upload) to enable page rendering.<br><br>'+
+      'All parsing / ingestion / indexing detail is shown on the right.</div>';
+  }
+  // ---- Parsed ----
+  $('#pane-parsed').innerHTML=
+    '<div class="dgrid">'+
+      statCard('Parser',p.parser)+
+      statCard('OCR engine',p.ocr)+
+      statCard('Pages',f.pages)+
+      statCard('Vision model',(p.vision_models[0]||'—'))+
+    '</div>'+
+    '<div class="dsec-title">How each chunk was extracted</div>'+
+    Object.entries(p.methods).sort((a,b)=>b[1]-a[1]).map(([k,v])=>
+      '<div class="covitem" style="margin:4px 0"><i style="background:'+(CT_COLORS[k]||'#64748b')+
+      '"></i><b>'+v+'</b>&nbsp;chunks &middot; '+(METHOD_LABEL[k]||k)+'</div>').join('')+
+    '<div class="dsec-title">What this means</div>'+
+    '<div style="font-size:12.5px;color:#475569;line-height:1.5">Text-layer chunks come straight '+
+    'from the PDF text. <b style="color:#ec4899">Vision/VLM</b> chunks are pages/figures rendered to an '+
+    'image and described by the vision model. <b style="color:#0ea5e9">Table</b> chunks are reconstructed '+
+    'into Markdown rows/columns. <b style="color:#ef4444">OCR</b> chunks come from scanned pages.</div>';
+  // ---- Ingested ----
+  $('#pane-ingested').innerHTML=
+    '<div class="dgrid">'+
+      statCard('Total chunks',det.chunk_total.toLocaleString())+
+      statCard('Tables',ing.tables)+
+      statCard('Charts',ing.charts)+
+      statCard('Figures',ing.figures)+
+    '</div>'+
+    '<div class="dsec-title">Content mix</div>'+ctBar(ing.content_types,det.chunk_total)+
+    '<div class="dsec-title">Visual handling</div>'+
+    '<div class="dgrid">'+
+      statCard('Vision/VLM chunks',ing.vision_chunks)+
+      statCard('Table-extracted',ing.table_extracted)+
+      statCard('OCR chunks',ing.ocr_chunks)+
+      statCard('Plain text',ing.text)+
+    '</div>';
+  // ---- Indexed ----
+  const fc=ix.field_coverage||{};
+  const cov=Object.keys(fc).map(k=>'<div class="covitem"><i style="background:'+
+    (fc[k]?'#10b981':'#cbd5e1')+'"></i>'+k+'</div>').join('');
+  $('#pane-indexed').innerHTML=
+    '<div class="dgrid">'+
+      statCard('Vectors',ix.vector_count.toLocaleString(),'@ '+ix.embedding_dim+'d')+
+      statCard('Embedding',ix.embedding_model)+
+      statCard('Entities',ix.unique_entities)+
+      statCard('Relationships',ix.relationships)+
+    '</div>'+
+    '<div class="dgrid">'+
+      statCard('Graph nodes',ix.graph_nodes_present)+
+      statCard('Graph edges',ix.graph_edges_present)+
+      statCard('Metadata fields',ix.metadata_fields_populated+' / '+ix.metadata_fields_total)+
+      statCard('In corpus',f.corpus)+
+    '</div>'+
+    (ix.entity_sample.length?'<div class="dsec-title">Entities extracted &rarr; graph</div><div class="ch-ents">'+
+      ix.entity_sample.map(e=>'<span class="tagchip">'+esc(e)+'</span>').join('')+'</div>':'')+
+    (ix.relationship_sample.length?'<div class="dsec-title">Relationships</div><div class="ch-ents">'+
+      ix.relationship_sample.map(r=>'<span class="tagchip">'+esc((r.source||'')+' →'+(r.relation||'rel')+'→ '+(r.target||''))+'</span>').join('')+'</div>':'')+
+    '<div class="dsec-title">Metadata field coverage ('+ix.metadata_fields_populated+'/'+ix.metadata_fields_total+' populated)</div>'+
+    '<div class="covgrid">'+cov+'</div>';
+  // ---- Chunks ----
+  $('#pane-chunks').innerHTML=
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Showing '+det.chunk_shown+
+    ' of '+det.chunk_total+' chunks · click a chunk to jump the preview to its page</div>'+
+    det.chunks.map(c=>{
+      const col=CT_COLORS[c.content_type]||'#64748b';
+      const ents=(c.entities||[]).map(e=>'<span class="tagchip">'+esc(e)+'</span>').join('');
+      return '<div class="chunkcard" onclick="showPage('+(c.page||1)+')">'+
+        '<div class="ch-top"><span class="ctbadge" style="background:'+col+'">'+c.content_type+'</span>'+
+        '<span class="ch-meta">page '+(c.page||'—')+' · '+(METHOD_LABEL[c.method]||c.method)+
+        (c.vision_model?' · '+c.vision_model:'')+' · '+c.chars+' chars'+
+        (c.section?' · '+esc(c.section):'')+'</span></div>'+
+        (c.summary?'<div class="ch-sum">'+esc(c.summary)+'</div>':'')+
+        '<div class="ch-text">'+esc(c.text)+(c.truncated?' …':'')+'</div>'+
+        (ents?'<div class="ch-ents">'+ents+'</div>':'')+'</div>';
+    }).join('');
+}
+function showPage(n){
+  if(!DOC||!DOC.file.preview_available)return;
+  const pl=DOC.file.page_list||[1];
+  DOCPAGE=n;
+  $('#doc-pgwrap').innerHTML='<img id="doc-img" src="/api/document/page?'+DOC._qs+'&page='+n+
+    '" onerror="this.parentNode.innerHTML=\'<div class=noprev>Could not render this page.</div>\'"/>';
+  $('#doc-pgnum').textContent='page '+n;
+}
+function docPage(delta){
+  if(!DOC)return;
+  const pl=DOC.file.page_list||[];
+  let n=DOCPAGE+delta;
+  if(pl.length){const i=pl.indexOf(DOCPAGE); const j=Math.max(0,Math.min((i<0?0:i)+delta,pl.length-1)); n=pl[j];}
+  showPage(n);
 }
 
 function openKey(){$('#keymodal').classList.add('show');}
