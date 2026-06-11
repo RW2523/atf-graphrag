@@ -115,6 +115,21 @@ class Retriever:
         hits = _timed("retrieve",
                       lambda: self.retrieve_agent.retrieve(plan, corpora, self.e))
         graph_paths = list(getattr(self.retrieve_agent, "last_graph_paths", []))
+
+        # ── Comparison fan-out (generic): "compare A and B" needs BOTH sides ──
+        from .structured import (is_comparison, comparison_targets,
+                                 expand_whole_tables)
+        if is_comparison(question):
+            from dataclasses import replace as _replace
+            targets = comparison_targets(question)
+            steps["3b_comparison"] = {"targets": targets}
+            seen = {h.chunk.chunk_id for h in hits}
+            for tgt in targets:
+                sub = _replace(plan, question=f"{tgt} {question}")
+                for h in self.retrieve_agent.retrieve(sub, corpora, self.e):
+                    if h.chunk.chunk_id not in seen:
+                        seen.add(h.chunk.chunk_id)
+                        hits.append(h)
         # Mixed mode: enrich the local answer with corpus-wide community context
         # (the generator renders graph_paths as "KNOWN RELATIONSHIP PATHS").
         if plan.mode == "mixed" and self._has_communities():
@@ -166,6 +181,13 @@ class Retriever:
             "reranked_chunk_ids": [h.chunk.chunk_id for h in hits],
             "reranked_doc_ids": _unique([h.chunk.document_id for h in hits]),
         }
+
+        # ── Whole-table reconstruction (generic): AFTER rerank so it survives the
+        # top-k cut — pull every sibling chunk of a retrieved table so the COMPLETE
+        # table (all rows) reaches generation (which-is-highest / multi-row).
+        before = len(hits)
+        hits = expand_whole_tables(hits, self.e)
+        steps["5b_whole_table"] = {"added": len(hits) - before}
 
         ans: Answer = _timed(
             "generate",

@@ -257,8 +257,8 @@ class Indexer:
                 rec.extraction_summary = piece.strip()[:300]
             # Structured table data + title for exact cell lookup / numeric grounding.
             if ctype == "table":
-                from .tables import parse_markdown_table, table_title_from
-                td = parse_markdown_table(piece)
+                from .tables import parse_table, table_title_from
+                td = parse_table(piece)
                 if td:
                     rec.table_data = td
                 rec.table_title = table_title_from(heading, piece)

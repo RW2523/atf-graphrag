@@ -58,6 +58,50 @@ def parse_markdown_table(text: str) -> Dict[str, Any]:
             "n_cols": width}
 
 
+_NUM = re.compile(r"-?\$?\d[\d,]*\.?\d*%?")
+
+
+def parse_columnar_table(text: str) -> Dict[str, Any]:
+    """Parse a space/tab-aligned columnar table (no pipes) into {columns, rows}.
+    Heuristic + generic: a run of lines where most have a leading label and >=2
+    numeric columns separated by 2+ spaces. Returns {} if it isn't tabular."""
+    if not text:
+        return {}
+    rows: List[List[str]] = []
+    header: List[str] = []
+    for raw in text.splitlines():
+        ln = raw.rstrip()
+        s = ln.strip()
+        if not s or s.startswith("[") or "|" in s:
+            continue
+        cells = [c.strip() for c in re.split(r"\s{2,}|\t", ln.strip()) if c.strip()]
+        if len(cells) >= 2 and sum(1 for c in cells if _NUM.fullmatch(c)) >= 1:
+            rows.append(cells)
+        elif len(cells) >= 2 and not rows and not header \
+                and not any(_NUM.fullmatch(c) for c in cells):
+            header = cells               # all-text first line = header
+    if len(rows) < 2:
+        return {}
+    width = max(len(r) for r in rows)
+    if width < 2:
+        return {}
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    columns = (header + [f"col{i+1}" for i in range(len(header), width)]) if header \
+        else [f"col{i+1}" for i in range(width)]
+    columns = columns[:width]
+    return {"columns": columns, "rows": rows, "n_rows": len(rows),
+            "n_cols": width, "format": "columnar"}
+
+
+def parse_table(text: str) -> Dict[str, Any]:
+    """Try markdown first, then columnar. Generic table -> {columns, rows}."""
+    td = parse_markdown_table(text)
+    if td:
+        td["format"] = "markdown"
+        return td
+    return parse_columnar_table(text)
+
+
 def table_to_text(td: Dict[str, Any], max_rows: int = 40) -> str:
     """Render structured table data back to compact markdown for the prompt."""
     if not td or not td.get("columns"):
