@@ -1,0 +1,169 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="1680" viewBox="0 0 1240 1680" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .band{rx:18;}
+      .box{rx:10; stroke-width:1.5;}
+      .h{font-size:22px; font-weight:700;}
+      .t{font-size:15px; font-weight:600; fill:#0f172a;}
+      .s{font-size:12.5px; fill:#475569;}
+      .lbl{font-size:13px; font-weight:700; fill:#fff;}
+      .flow{stroke:#475569; stroke-width:2.5; fill:none;}
+    </style>
+  </defs>
+
+  <rect width="1240" height="1680" fill="#f8fafc"/>
+  <text x="620" y="42" text-anchor="middle" font-size="28" font-weight="800" fill="#0f172a">ATF GraphRAG — End-to-End Architecture</text>
+  <text x="620" y="68" text-anchor="middle" class="s" font-size="14">Ingestion → Indexing → Retrieval · every component swappable by config (local / OSS / hybrid / AWS)</text>
+
+  <!-- ===================== SOURCES ===================== -->
+  <rect x="60" y="92" width="1120" height="86" class="band" fill="#f1f5f9" stroke="#cbd5e1"/>
+  <text x="84" y="120" class="lbl" fill="#334155">SOURCES</text>
+  <rect x="84" y="128" width="250" height="38" class="box" fill="#fff" stroke="#cbd5e1"/><text x="209" y="152" text-anchor="middle" class="t">PDFs · reports · records</text>
+  <rect x="350" y="128" width="270" height="38" class="box" fill="#fff" stroke="#cbd5e1"/><text x="485" y="152" text-anchor="middle" class="t">scans · images · charts · tables</text>
+  <rect x="636" y="128" width="250" height="38" class="box" fill="#fff" stroke="#cbd5e1"/><text x="761" y="152" text-anchor="middle" class="t">ATF websites (sitemap.xml)</text>
+  <rect x="902" y="128" width="256" height="38" class="box" fill="#fff" stroke="#cbd5e1"/><text x="1030" y="152" text-anchor="middle" class="t">connected document sets</text>
+  <path class="flow" d="M620,178 L620,208" marker-end="url(#arrow)"/>
+
+  <!-- ===================== INGESTION ===================== -->
+  <rect x="60" y="212" width="1120" height="350" class="band" fill="#eff6ff" stroke="#3b82f6"/>
+  <rect x="60" y="212" width="1120" height="34" rx="18" fill="#3b82f6"/>
+  <text x="80" y="235" class="h" fill="#fff">1 · INGESTION LAYER</text>
+  <text x="1160" y="234" text-anchor="end" class="lbl" fill="#dbeafe">read &amp; rewrite everything into clean notes</text>
+
+  <rect x="84" y="262" width="1072" height="48" class="box" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="100" y="282" class="t">ORCHESTRATOR (router)</text>
+  <text x="100" y="300" class="s">per file decides: parse? OCR? vision? table-extract? which corpus? duplicate-skip?  —  idempotency by md5 hash</text>
+
+  <rect x="84" y="324" width="525" height="118" class="box" fill="#fff" stroke="#93c5fd"/>
+  <text x="100" y="346" class="t">PARSE</text>
+  <text x="100" y="368" class="s"><tspan font-weight="700" fill="#1d4ed8">Docling</tspan> — DocLayNet layout + TableFormer tables  <tspan fill="#1d4ed8" font-weight="700">[DEFAULT]</tspan></text>
+  <text x="100" y="388" class="s">fallback: PyMuPDF (sort) + pdfplumber (advanced loader)</text>
+  <text x="100" y="408" class="s">OCR: Tesseract / RapidOCR / AWS Textract  (scanned pages)</text>
+  <text x="100" y="428" class="s">VLM: vision model describes charts/figures (every value)</text>
+
+  <rect x="631" y="324" width="525" height="118" class="box" fill="#fff" stroke="#93c5fd"/>
+  <text x="647" y="346" class="t">WEB CRAWL</text>
+  <text x="647" y="368" class="s">sitemap.xml discovery · robots.txt-aware · rate-limited</text>
+  <text x="647" y="388" class="s">extracts title / headings / dates / linked PDFs</text>
+  <text x="647" y="416" class="t">→ same (page, text) contract as PDFs</text>
+
+  <rect x="84" y="456" width="525" height="92" class="box" fill="#fff" stroke="#93c5fd"/>
+  <text x="100" y="478" class="t">CHUNK</text>
+  <text x="100" y="500" class="s">structure-aware splitter: text / table / chart / figure / list</text>
+  <text x="100" y="520" class="s">tables kept WHOLE → parsed to {columns, rows} (table_data)</text>
+  <text x="100" y="540" class="s">exact-cell lookup &amp; numeric grounding</text>
+
+  <rect x="631" y="456" width="525" height="92" class="box" fill="#fff" stroke="#93c5fd"/>
+  <text x="647" y="478" class="t">ENRICH METADATA (~30 fields)</text>
+  <text x="647" y="500" class="s">source · page · dates · location · us_state · report_type</text>
+  <text x="647" y="520" class="s">firearm_type · entities · orgs · manufacturers · case ref</text>
+  <text x="647" y="540" class="s">confidence · extraction method · vision model · access level</text>
+
+  <path class="flow" d="M620,562 L620,592" marker-end="url(#arrow)"/>
+  <text x="640" y="582" class="s">clean, metadata-rich chunks</text>
+
+  <!-- ===================== INDEXING ===================== -->
+  <rect x="60" y="596" width="1120" height="300" class="band" fill="#ecfdf5" stroke="#10b981"/>
+  <rect x="60" y="596" width="1120" height="34" rx="18" fill="#10b981"/>
+  <text x="80" y="619" class="h" fill="#fff">2 · INDEXING LAYER</text>
+  <text x="1160" y="618" text-anchor="end" class="lbl" fill="#d1fae5">file the notes three ways so they're findable</text>
+
+  <rect x="84" y="648" width="340" height="232" class="box" fill="#fff" stroke="#6ee7b7"/>
+  <text x="104" y="672" class="t">A · VECTOR INDEX</text>
+  <text x="104" y="694" class="s" font-weight="700" fill="#047857">find by MEANING</text>
+  <text x="104" y="716" class="s">embeddings (sentence-transformers /</text>
+  <text x="104" y="734" class="s">Titan / Cohere)</text>
+  <text x="104" y="758" class="s">search: cosine similarity (numpy)</text>
+  <text x="104" y="790" class="s">scales to Qdrant / OpenSearch</text>
+  <rect x="104" y="808" width="300" height="50" class="box" fill="#ecfdf5" stroke="#6ee7b7"/>
+  <text x="120" y="828" class="s">use: "how many firearms manufactured" →</text>
+  <text x="120" y="846" class="s">chunks with similar meaning</text>
+
+  <rect x="448" y="648" width="300" height="232" class="box" fill="#fff" stroke="#6ee7b7"/>
+  <text x="468" y="672" class="t">B · KEYWORD INDEX</text>
+  <text x="468" y="694" class="s" font-weight="700" fill="#047857">find by EXACT WORDS</text>
+  <text x="468" y="720" class="s">Okapi BM25 ranking</text>
+  <text x="468" y="744" class="s">(TF × IDF, length-normalized)</text>
+  <text x="468" y="776" class="s">catches exact terms a meaning-</text>
+  <text x="468" y="794" class="s">search misses: "3,939,517",</text>
+  <text x="468" y="812" class="s">"Demand Letter 2"</text>
+
+  <rect x="772" y="648" width="384" height="232" class="box" fill="#fff" stroke="#6ee7b7"/>
+  <text x="792" y="672" class="t">C · KNOWLEDGE GRAPH  (GraphRAG)</text>
+  <text x="792" y="694" class="s" font-weight="700" fill="#047857">find by CONNECTION</text>
+  <text x="792" y="716" class="s">1. entity extraction (rules + ontology LLM)</text>
+  <text x="792" y="736" class="s">2. entity resolution — fuzzy merge</text>
+  <text x="792" y="754" class="s">    (difflib ≥0.88 + union-find): S&amp;W = Smith &amp; Wesson</text>
+  <text x="792" y="774" class="s">3. typed edges: MANUFACTURED_BY, TRACED_TO…</text>
+  <text x="792" y="794" class="s">4. community detection: Leiden / Louvain</text>
+  <text x="792" y="814" class="s">5. LLM community summaries (sensemaking)</text>
+  <text x="792" y="834" class="s">6. LLM node cross-verify &amp; prune noise</text>
+  <text x="792" y="862" class="s" font-style="italic">every node/edge remembers its source chunk_ids</text>
+
+  <path class="flow" d="M620,896 L620,926" marker-end="url(#arrow)"/>
+  <text x="640" y="916" class="s">3 aligned indexes, linked by chunk_id</text>
+
+  <!-- ===================== RETRIEVAL ===================== -->
+  <rect x="60" y="930" width="1120" height="600" class="band" fill="#eef2ff" stroke="#6366f1"/>
+  <rect x="60" y="930" width="1120" height="34" rx="18" fill="#6366f1"/>
+  <text x="80" y="953" class="h" fill="#fff">3 · RETRIEVAL LAYER  (team of agents)</text>
+  <text x="1160" y="952" text-anchor="end" class="lbl" fill="#e0e7ff">gather → verify → rank → write a cited answer</text>
+
+  <rect x="84" y="978" width="1072" height="40" class="box" fill="#e0e7ff" stroke="#6366f1"/>
+  <text x="100" y="1003" class="t">QUESTION  ───►  1 QUERY UNDERSTANDING   (intent: fact / table / relationship / pattern / visual …  +  mode: local · global · mixed)</text>
+
+  <path class="flow" d="M620,1018 L620,1040" marker-end="url(#arrow)"/>
+  <rect x="84" y="1044" width="1072" height="36" class="box" fill="#fff" stroke="#a5b4fc"/>
+  <text x="100" y="1067" class="t">2 CORPUS SELECTION  →  choose which corpora to search:  pdf · web · connected · visual · news  (one, several, or all)</text>
+
+  <path class="flow" d="M620,1080 L620,1100" marker-end="url(#arrow)"/>
+  <rect x="84" y="1104" width="1072" height="92" class="box" fill="#fff" stroke="#a5b4fc"/>
+  <text x="100" y="1126" class="t">3 RETRIEVAL  —  hybrid fusion of three lanes</text>
+  <rect x="104" y="1136" width="300" height="48" class="box" fill="#eef2ff" stroke="#a5b4fc"/><text x="254" y="1156" text-anchor="middle" class="s" font-weight="700">dense VECTOR (cosine)</text><text x="254" y="1174" text-anchor="middle" class="s">meaning</text>
+  <rect x="420" y="1136" width="300" height="48" class="box" fill="#eef2ff" stroke="#a5b4fc"/><text x="570" y="1156" text-anchor="middle" class="s" font-weight="700">BM25 KEYWORD</text><text x="570" y="1174" text-anchor="middle" class="s">exact words</text>
+  <rect x="736" y="1136" width="404" height="48" class="box" fill="#eef2ff" stroke="#a5b4fc"/><text x="938" y="1156" text-anchor="middle" class="s" font-weight="700">GRAPH: BFS  or  Personalized PageRank</text><text x="938" y="1174" text-anchor="middle" class="s">connections / multi-hop  (HippoRAG)</text>
+
+  <path class="flow" d="M620,1196 L620,1214" marker-end="url(#arrow)"/>
+  <rect x="84" y="1218" width="525" height="58" class="box" fill="#fff" stroke="#a5b4fc"/>
+  <text x="100" y="1240" class="t">comparison fan-out</text>
+  <text x="100" y="1260" class="s">"compare A vs B" → retrieve BOTH sides (states/years/entities)</text>
+  <rect x="631" y="1218" width="525" height="58" class="box" fill="#fff" stroke="#a5b4fc"/>
+  <text x="647" y="1240" class="t">3b WEB RESEARCH (Tavily) — only if needed</text>
+  <text x="647" y="1260" class="s">event-y question AND local thin → search · judge · ingest worthy</text>
+
+  <path class="flow" d="M620,1276 L620,1294" marker-end="url(#arrow)"/>
+  <rect x="84" y="1298" width="340" height="56" class="box" fill="#fff" stroke="#a5b4fc"/>
+  <text x="100" y="1320" class="t">4 EVALUATION</text>
+  <text x="100" y="1340" class="s">score relevance / grounding; drop weak chunks</text>
+  <rect x="448" y="1298" width="340" height="56" class="box" fill="#fff" stroke="#a5b4fc"/>
+  <text x="464" y="1320" class="t">4c WHOLE-TABLE</text>
+  <text x="464" y="1340" class="s">pull all sibling chunks → COMPLETE table</text>
+  <rect x="812" y="1298" width="344" height="56" class="box" fill="#fff" stroke="#a5b4fc"/>
+  <text x="828" y="1320" class="t">5 RERANKING</text>
+  <text x="828" y="1340" class="s">linear blend  or  BGE cross-encoder</text>
+
+  <path class="flow" d="M620,1354 L620,1372" marker-end="url(#arrow)"/>
+  <rect x="84" y="1376" width="1072" height="86" class="box" fill="#e0e7ff" stroke="#6366f1"/>
+  <text x="100" y="1400" class="t">6 GENERATION  (LLM behind Guardrails)</text>
+  <text x="100" y="1422" class="s">writes the answer · cites every claim [n] · <tspan font-weight="700" fill="#4338ca">quotes the exact table row + page</tspan> · calibrated confidence</text>
+  <text x="100" y="1442" class="s">flags "evidence may be incomplete" when no table/chart backs a numeric answer</text>
+  <text x="1140" y="1400" text-anchor="end" class="s" font-style="italic">Global mode: map-reduce</text>
+  <text x="1140" y="1418" text-anchor="end" class="s" font-style="italic">over community summaries</text>
+  <text x="1140" y="1436" text-anchor="end" class="s" font-style="italic">instead of chunks</text>
+
+  <path class="flow" d="M620,1462 L620,1486" marker-end="url(#arrow)"/>
+
+  <!-- ===================== ANSWER ===================== -->
+  <rect x="320" y="1490" width="600" height="70" class="band" fill="#fffbeb" stroke="#f59e0b"/>
+  <text x="620" y="1522" text-anchor="middle" font-size="20" font-weight="800" fill="#92400e">CITED, GROUNDED ANSWER</text>
+  <text x="620" y="1546" text-anchor="middle" class="s">sources + pages + quoted rows · confidence · relationship/pattern explanation</text>
+
+  <!-- ===================== INSPIRATION FOOTER ===================== -->
+  <rect x="60" y="1582" width="1120" height="74" class="band" fill="#f1f5f9" stroke="#cbd5e1"/>
+  <text x="80" y="1606" class="t">Inspired by:</text>
+  <text x="80" y="1628" class="s">Microsoft GraphRAG (local/global + community map-reduce) · LightRAG (typed graph) · HippoRAG (Personalized PageRank) · Okapi BM25 · Leiden/Louvain</text>
+  <text x="80" y="1646" class="s">IBM Docling (DocLayNet + TableFormer) · BGE cross-encoder reranker · LangGraph (agentic orchestration) · ColPali/visual-RAG · RAGAS (eval)</text>
+</svg>
