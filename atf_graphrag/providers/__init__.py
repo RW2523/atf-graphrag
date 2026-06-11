@@ -123,6 +123,14 @@ def make_parser(settings: Settings) -> Parser:
             return BedrockDocumentParser(cfg)
         except Exception as e:  # noqa: BLE001
             _warn_fallback("parser", "bedrock", e)
+    if prov == "bda":                 # Amazon Bedrock Data Automation
+        try:
+            from .bda import BedrockDataAutomationParser
+            bcfg = dict(settings.get("ingestion", {}).get("bda", {}) or {})
+            bcfg.update({k: v for k, v in cfg.items() if k != "provider"})
+            return BedrockDataAutomationParser(bcfg)
+        except Exception as e:  # noqa: BLE001
+            _warn_fallback("parser", "bda", e)
     return AdvancedParser(cfg)
 
 

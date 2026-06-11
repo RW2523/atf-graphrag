@@ -84,7 +84,7 @@ DEFAULTS: Dict[str, Any] = {
         "chunk_size": 900,        # characters (approx tokens*4)
         "chunk_overlap": 150,
         "ocr": {"provider": "auto"},        # auto | tesseract | textract | off
-        "parser": {"provider": "docling"},  # docling | advanced | textract | bedrock
+        "parser": {"provider": "docling"},  # docling | advanced | textract | bedrock | bda
                                             #  docling  = DocLayNet+TableFormer
                                             #             structured tables (default;
                                             #             ~4.2s/page, falls back to
@@ -92,6 +92,11 @@ DEFAULTS: Dict[str, Any] = {
                                             #  advanced = fast PyMuPDF+pdfplumber
                                             #  textract = AWS structured/OCR parsing
                                             #  bedrock  = AWS foundation-model parsing
+                                            #  bda      = Amazon Bedrock Data Automation
+                                            #             (needs bda.bucket + project_arn)
+        # Bedrock Data Automation working config (used when parser.provider="bda").
+        "bda": {"region": "us-east-1", "bucket": "", "prefix": "bda/",
+                "project_arn": "", "profile_arn": ""},
         "orchestrator": "sequential",       # sequential | langgraph
         "llm_extraction": "auto",           # off | auto | on  (per-chunk LLM
                                             # entity/relation extraction)

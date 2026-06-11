@@ -33,6 +33,7 @@ _COST = {
     "opensearch_serverless": 350,   # 2 OCU minimum
     "neptune_analytics": 350,       # min capacity, always-on
     "knowledge_base": 0,            # pay per ingest/query
+    "bda_project": 0,               # pay per page processed
 }
 
 
@@ -411,9 +412,63 @@ class SsmConfig(Component):
             return {"component": self.key, "exists": None, "error": str(e)}
 
 
+class BdaProject(Component):
+    key, label = "bda_project", "Bedrock Data Automation project"
+
+    def _name(self):
+        return f"{self.cp.project}-bda"
+
+    def _find(self, bda):
+        try:
+            for p in bda.list_data_automation_projects().get(
+                    "projects", []):
+                if p.get("projectName") == self._name():
+                    return p.get("projectArn")
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    def create(self):
+        try:
+            bda = _client("bedrock-data-automation", self.cp.region)
+            if self._find(bda):
+                return self._ok("create", self._name() + " (exists)")
+            resp = bda.create_data_automation_project(
+                projectName=self._name(),
+                projectDescription="ATF GraphRAG document extraction",
+                standardOutputConfiguration={"document": {"extraction": {
+                    "granularity": {"types": ["PAGE", "ELEMENT"]},
+                    "boundingBox": {"state": "ENABLED"}}}},
+                tags=self.cp.tagset())
+            return self._ok("create", resp.get("projectArn", ""),
+                            resources=[resp.get("projectArn", "")])
+        except Exception as e:  # noqa: BLE001
+            return self._err("create", e)
+
+    def delete(self):
+        try:
+            bda = _client("bedrock-data-automation", self.cp.region)
+            arn = self._find(bda)
+            if arn:
+                bda.delete_data_automation_project(projectArn=arn)
+                return self._ok("delete", arn + " removed")
+            return self._ok("delete", "none")
+        except Exception as e:  # noqa: BLE001
+            return self._err("delete", e)
+
+    def status(self):
+        try:
+            bda = _client("bedrock-data-automation", self.cp.region)
+            arn = self._find(bda)
+            return {"component": self.key, "exists": bool(arn),
+                    "resources": [arn] if arn else [], "cost_month": self.cost}
+        except Exception as e:  # noqa: BLE001
+            return {"component": self.key, "exists": None, "error": str(e)}
+
+
 class ControlPlane:
     # provision order; teardown runs in reverse
-    ORDER = ["s3", "dynamodb", "ssm", "guardrail",
+    ORDER = ["s3", "dynamodb", "ssm", "guardrail", "bda_project",
              "opensearch_serverless", "neptune_analytics"]
 
     def __init__(self, region: str = "us-east-1", project: str = "atf-graphrag"):
@@ -422,7 +477,7 @@ class ControlPlane:
         self.account_id = self._account_id()
         self._by_key = {c.key: c for c in [
             S3Buckets(self), DynamoCatalog(self), SsmConfig(self), Guardrail(self),
-            OpenSearchServerless(self), NeptuneAnalytics(self)]}
+            BdaProject(self), OpenSearchServerless(self), NeptuneAnalytics(self)]}
 
     def _account_id(self) -> str:
         try:

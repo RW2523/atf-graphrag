@@ -206,6 +206,9 @@ class BedrockGuardrail(Guardrail):
         self.enabled = bool(cfg.get("enabled", False))
         self.gid = cfg.get("guardrail_id", "")
         self.version = str(cfg.get("guardrail_version", "DRAFT"))
+        # Automated Reasoning policy ARN — when attached to the guardrail, Bedrock
+        # runs formal factual-accuracy checks on generated content.
+        self.automated_reasoning = cfg.get("automated_reasoning_policy", "")
         self._rt = None
         if self.enabled and self.gid:
             try:
