@@ -315,8 +315,9 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
           <input id="kbsearch" placeholder="&#128269; Filter documents&hellip;" oninput="renderKB()"/>
           <button class="btn ghost" onclick="loadKB()">&#8635; Refresh</button>
           <button class="btn" onclick="document.querySelector('[data-view=upload]').click()">+ Add documents</button>
-          <button class="btn" id="seed-load" style="display:none" onclick="loadSeed(this)" title="Clear current data and load the frozen seed knowledge base">&#9889; Load seed dataset</button>
-          <button class="btn ghost" onclick="saveSeed(this)" title="Snapshot the CURRENT knowledge base as the reusable seed dataset">&#128190; Save as seed</button>
+          <select id="seed-pick" style="display:none;padding:9px 10px;border:1px solid var(--line);border-radius:9px;font-size:13px"></select>
+          <button class="btn" id="seed-load" style="display:none" onclick="loadSeed(this)" title="Clear current data and load the selected seed knowledge base">&#9889; Load seed</button>
+          <button class="btn ghost" onclick="saveSeed(this)" title="Snapshot the CURRENT knowledge base as a named seed">&#128190; Save as seed</button>
           <button class="btn ghost" onclick="doBackup(this)" title="Snapshot the vector index + graph">&#128190; Backup</button>
           <button class="btn ghost" onclick="doRestore(this)" title="Restore a previous snapshot">&#8635; Restore</button>
           <button class="btn danger" onclick="clearAll(this)">&#128465; Clear all data</button>
@@ -627,29 +628,39 @@ async function doRestore(btn){
   btn.disabled=false;btn.innerHTML=o;
 }
 async function checkSeed(){
-  try{const s=await fetch('/api/seed/status').then(r=>r.json());
-    const btn=$('#seed-load');
-    if(s.exists){btn.style.display='';btn.title='Clear current data and load the frozen seed KB ('+
-      Math.round((s.bytes||0)/1024/1024)+' MB)';}
-    else btn.style.display='none';
+  try{const s=await fetch('/api/seeds').then(r=>r.json());
+    const seeds=s.seeds||[]; const pick=$('#seed-pick'), btn=$('#seed-load');
+    if(seeds.length){
+      pick.innerHTML=seeds.map(z=>{
+        const lbl=z.name+(z.graph_nodes?(' · '+z.documents+' docs · '+z.graph_nodes+' nodes'+
+          (z.communities?'/'+z.communities+'c':'')):'')+(z.note?' — '+z.note:'');
+        return '<option value="'+esc(z.name)+'">'+esc(lbl)+'</option>';}).join('');
+      pick.style.display=''; btn.style.display='';
+    }else{pick.style.display='none'; btn.style.display='none';}
   }catch(e){}
 }
 async function saveSeed(btn){
-  if(!confirm('Snapshot the CURRENT knowledge base as the reusable seed dataset? '+
-    'This freezes the ingested + indexed data so it can be reloaded on demand.'))return;
+  const name=(prompt('Save current KB as seed named:','new')||'').trim();
+  if(!name)return;
+  const note=(prompt('Short note for this seed (optional):','')||'').trim();
   const o=btn.innerHTML;btn.disabled=true;btn.innerHTML='Saving seed&hellip;';
-  try{const r=await fetch('/api/seed/save',{method:'POST'}).then(r=>r.json());
-    toast('Seed saved: '+r.documents+' documents ('+Math.round((r.bytes||0)/1024/1024)+' MB)');
+  try{const r=await fetch('/api/seed/save',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name,note})}).then(r=>r.json());
+    toast('Seed "'+r.name+'" saved: '+r.documents+' docs · '+(r.graph_nodes||0)+' nodes ('+
+      Math.round((r.bytes||0)/1024/1024)+' MB)');
     checkSeed();}
   catch(e){toast('Save seed failed');}
   btn.disabled=false;btn.innerHTML=o;
 }
 async function loadSeed(btn){
-  if(!confirm('Load the seed dataset? This CLEARS the current knowledge base and '+
-    'restores the frozen seed (ingestion + indexing already done — retrieval ready immediately).'))return;
+  const name=$('#seed-pick').value;
+  if(!name)return;
+  if(!confirm('Load seed "'+name+'"? This CLEARS the current knowledge base and '+
+    'restores that frozen snapshot (ingestion + indexing already done — retrieval ready immediately).'))return;
   const o=btn.innerHTML;btn.disabled=true;btn.innerHTML='Loading seed&hellip;';
-  try{const r=await fetch('/api/seed/restore',{method:'POST'}).then(r=>r.json());
-    toast(r.ok?('Seed loaded — '+r.documents+' documents ready'):'Seed not found');
+  try{const r=await fetch('/api/seed/restore',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name})}).then(r=>r.json());
+    toast(r.ok?('Seed "'+name+'" loaded — '+r.documents+' documents ready'):'Seed not found');
     loadKB();refresh();}
   catch(e){toast('Load seed failed');}
   btn.disabled=false;btn.innerHTML=o;

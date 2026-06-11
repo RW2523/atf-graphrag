@@ -509,13 +509,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/backups":
             from .backup import list_backups
             return self._send(200, {"backups": list_backups(_storage_root())})
-        if self.path == "/api/seed/status":
-            sp = os.path.join(_storage_root(), "backups", SEED_BACKUP)
-            exists = os.path.isfile(sp)
+        if self.path in ("/api/seed/status", "/api/seeds"):
+            from .seeds import list_seeds
+            seeds = list_seeds(_storage_root())
             return self._send(200, {
-                "exists": exists,
-                "name": SEED_BACKUP,
-                "bytes": os.path.getsize(sp) if exists else 0,
+                "seeds": seeds, "exists": bool(seeds),
                 "documents": _documents()["total_documents"]})
         if self.path.startswith("/api/jobs/"):
             jid = self.path.split("/api/jobs/", 1)[1].strip("/")
@@ -601,17 +599,33 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200 if ok else 404,
                                   {"ok": ok, "documents": _documents()["total_documents"]})
             if self.path == "/api/seed/save":
-                # Snapshot the CURRENT KB as the reusable seed dataset.
-                from .backup import make_backup
-                info = make_backup(_storage_root(), "seed")
-                return self._send(200, {"ok": True, "name": info["name"],
-                                        "bytes": info["bytes"],
-                                        "documents": _documents()["total_documents"]})
+                # Snapshot the CURRENT KB as a named seed (default 'new').
+                from .seeds import save_seed
+                name = (data.get("name") or "new").strip()
+                _engine.commit()              # flush in-memory state first
+                gstats = _engine.graph.stats()
+                ncomm = _retriever.communities.count() \
+                    if _retriever is not None and getattr(_retriever, "communities", None) else 0
+                meta = {
+                    "documents": _documents()["total_documents"],
+                    "graph_nodes": gstats.get("nodes"),
+                    "graph_edges": gstats.get("edges"),
+                    "communities": ncomm,
+                    "news": _engine.vstore("news").count() if "news" in _engine.corpora else 0,
+                    "note": data.get("note", ""),
+                }
+                info = save_seed(_storage_root(), name, meta)
+                return self._send(200, {"ok": True, **info})
             if self.path == "/api/seed/restore":
-                # One-click: clear current data and load the frozen seed KB.
-                ok = _restore_all(SEED_BACKUP)
+                # One-click: clear current data and load a named seed (default 'new').
+                from .seeds import seed_zip_name
+                name = (data.get("name") or "new").strip()
+                ok = _restore_all(seed_zip_name(name))
+                if ok and _retriever is not None:
+                    _retriever.reload_communities()
                 return self._send(200 if ok else 404,
-                                  {"ok": ok, "documents": _documents()["total_documents"]})
+                                  {"ok": ok, "name": name,
+                                   "documents": _documents()["total_documents"]})
             if self.path == "/api/config/extraction":
                 mode = (data.get("mode") or "auto").lower()
                 if mode not in ("off", "auto", "on"):
