@@ -260,6 +260,7 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
     <button data-view="kb"><span class="ico">&#128218;</span> Knowledge Base</button>
     <button data-view="upload"><span class="ico">&#8593;</span> Upload</button>
     <button data-view="graph"><span class="ico">&#128376;</span> Graph</button>
+    <button data-view="config"><span class="ico">&#129520;</span> Configuration</button>
     <button data-view="aws"><span class="ico">&#9729;</span> AWS Native</button>
   </nav>
   <div class="spacer"></div>
@@ -395,6 +396,26 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
           Click <b>Load graph</b>, then click any node to inspect its connections and source documents.
         </div>
       </div>
+    </div>
+  </section>
+
+  <section class="view" id="v-config">
+    <div class="card">
+      <h2 style="margin:0 0 4px">Compose your RAG &mdash; building blocks</h2>
+      <p style="color:var(--muted);margin:0 0 14px;font-size:13px">Every component is swappable. Pick a provider per block, or load a deployment preset, then <b>Apply</b> to switch the live engine. Runtime blocks take effect instantly; embeddings / vector / graph stores change the data space, so they need a re-ingest or import.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <label class="s" style="font-weight:600">Preset:</label>
+        <select id="cfg-preset" style="padding:9px 12px;border:1px solid var(--line);border-radius:9px"></select>
+        <button class="btn ghost" onclick="loadPreset()">Load preset</button>
+        <span style="margin-left:auto"></span>
+        <button class="btn" onclick="applyConfig(this)">&#9889; Apply configuration</button>
+      </div>
+      <div id="cfg-blocks"></div>
+      <div id="cfg-result" style="margin-top:12px"></div>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 8px">Live wiring</h3>
+      <div id="cfg-wiring" class="awswire"></div>
     </div>
   </section>
 
@@ -566,10 +587,12 @@ document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{
     kb:['Knowledge Base','Documents currently indexed in the corpus'],
     upload:['Upload','Add files and folders to the knowledge base'],
     graph:['Graph','Explore entities, communities and connections'],
+    config:['Configuration','Compose your RAG from swappable building blocks'],
     aws:['AWS Native','Configure &amp; test the AWS-native stack end to end']};
   $('#t-title').textContent=titles[v][0]; $('#t-sub').textContent=titles[v][1];
   if(v==='kb') loadKB();
   if(v==='aws') awsStatus();
+  if(v==='config') loadConfig();
 });
 
 async function refresh(){
@@ -1358,6 +1381,46 @@ async function awsRevert(){
   try{const r=await fetch('/api/aws/revert',{method:'POST'}).then(r=>r.json());
     awsRenderWiring(r.wiring||{});toast('Reverted to local engine');refresh();
   }catch(e){toast('Revert failed: '+e);}
+}
+// ---- Configuration: compose your RAG from building blocks ----
+let CFG=null;
+async function loadConfig(){
+  try{CFG=await fetch('/api/config/blocks').then(r=>r.json());}catch(e){return;}
+  $('#cfg-preset').innerHTML=(CFG.profiles||[]).map(p=>'<option'+(p===CFG.profile?' selected':'')+'>'+p+'</option>').join('');
+  renderBlocks(); cfgWiring(CFG.wiring||{});
+}
+function renderBlocks(){
+  const rows=(CFG.blocks||[]).map(b=>{
+    const opts=b.options.map(o=>'<option'+(o===b.current?' selected':'')+'>'+o+'</option>').join('');
+    const tag=b.runtime?'<span style="font-size:11px;color:#16a34a;font-weight:700">runtime</span>'
+                       :'<span style="font-size:11px;color:#b45309;font-weight:700">needs re-ingest</span>';
+    return '<tr><td style="font-weight:600">'+esc(b.label)+'</td>'+
+      '<td><select id="cfgb-'+b.key+'" style="padding:7px 9px;border:1px solid var(--line);border-radius:8px;min-width:170px">'+opts+'</select></td>'+
+      '<td>'+tag+'</td><td class="s">'+esc(b.cost)+'</td></tr>';
+  }).join('');
+  $('#cfg-blocks').innerHTML='<table class="kbtable"><thead><tr><th>Block</th><th>Provider</th><th>Apply</th><th>Cost</th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+async function loadPreset(){
+  const p=$('#cfg-preset').value;
+  // load preset = apply with the chosen profile and no overrides (resets blocks to that profile's defaults)
+  applyConfig(null,{profile:p,blocks:{}});
+}
+function cfgWiring(w){
+  $('#cfg-wiring').innerHTML=Object.entries(w).map(([k,v])=>
+    '<div class="row"><span>'+esc(k)+'</span><b>'+esc(v)+'</b></div>').join('');
+}
+async function applyConfig(btn,override){
+  const body=override||{profile:$('#cfg-preset').value,blocks:Object.fromEntries(
+    (CFG.blocks||[]).map(b=>[b.key,$('#cfgb-'+b.key).value]))};
+  const o=btn?btn.innerHTML:''; if(btn){btn.disabled=true;btn.innerHTML='Applying&hellip;';}
+  try{const r=await fetch('/api/config/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+    cfgWiring(r.wiring||{});
+    let msg='Applied ('+r.profile+').';
+    if((r.needs_reingest||[]).length) msg+=' &#9888; '+r.needs_reingest.join(', ')+' changed — re-ingest or import to repopulate.';
+    $('#cfg-result').innerHTML='<div style="font-size:13px;color:#334155">'+msg+'</div>';
+    toast('Configuration applied'); loadConfig(); refresh();
+  }catch(e){toast('Apply failed');}
+  if(btn){btn.disabled=false;btn.innerHTML=o;}
 }
 // ---- AWS provision / teardown control plane ----
 function _provBody(action){return JSON.stringify({

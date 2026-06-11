@@ -354,6 +354,93 @@ def _apply_aws(form: dict) -> dict:
     return {"ok": True, "wiring": wiring(_engine)}
 
 
+# ── Configurable building blocks (the "compose your RAG" panel) ─────────────
+# Each block = one swappable component, its provider options, where it lives in
+# config, whether it can be applied at runtime, and a cost hint. Changing a
+# RUNTIME block (llm/vision/reranker/guardrail/parser/ocr) takes effect
+# immediately; changing embeddings/vector_store/graph_store changes the data
+# space, so the corpus must be re-ingested or imported.
+_BLOCKS = [
+    {"key": "llm", "path": ["llm"], "label": "LLM (generation)",
+     "options": ["offline", "openrouter", "bedrock"], "runtime": True,
+     "cost": "offline=free · openrouter/bedrock=per-call"},
+    {"key": "embeddings", "path": ["embeddings"], "label": "Embeddings",
+     "options": ["local", "sentence_transformer", "openrouter", "bedrock"],
+     "runtime": False, "cost": "local/ST=free · bedrock=per-call · changes vector space"},
+    {"key": "vision", "path": ["vision"], "label": "Vision / VLM",
+     "options": ["offline", "openrouter", "bedrock"], "runtime": True,
+     "cost": "offline=free · per-call otherwise"},
+    {"key": "reranker", "path": ["reranker"], "label": "Reranker",
+     "options": ["local", "llm", "bge", "bedrock"], "runtime": True,
+     "cost": "local=free · bge=GPU · bedrock=per-call"},
+    {"key": "parser", "path": ["ingestion", "parser"], "label": "Document parser",
+     "options": ["docling", "advanced", "textract", "bedrock", "bda"], "runtime": True,
+     "cost": "docling/advanced=local · textract/bda/bedrock=per-page (ingest only)"},
+    {"key": "ocr", "path": ["ingestion", "ocr"], "label": "OCR",
+     "options": ["auto", "tesseract", "textract", "off"], "runtime": True,
+     "cost": "tesseract=free · textract=per-page"},
+    {"key": "vector_store", "path": ["vector_store"], "label": "Vector store",
+     "options": ["local", "qdrant", "opensearch"], "runtime": False,
+     "cost": "local=free · qdrant=free self-host · opensearch≈$700/mo · needs re-ingest"},
+    {"key": "graph_store", "path": ["graph_store"], "label": "Graph store",
+     "options": ["local", "neo4j", "neptune"], "runtime": False,
+     "cost": "local=free · neo4j=free tier · neptune≈$350/mo · needs re-ingest"},
+    {"key": "guardrails", "path": ["guardrails"], "label": "Guardrails",
+     "options": ["none", "local", "bedrock"], "runtime": True,
+     "cost": "none/local=free · bedrock=per-call"},
+]
+_PROFILES = ["local", "oss", "hybrid", "bedrock-hybrid", "aws", "aws-ingest", "ec2"]
+
+
+def _dig(cfg, path):
+    cur = cfg
+    for p in path:
+        cur = (cur or {}).get(p, {})
+    return cur
+
+
+def _config_state() -> dict:
+    cfg = _engine.settings._cfg
+    blocks = []
+    for b in _BLOCKS:
+        cur = (_dig(cfg, b["path"]) or {}).get("provider", "")
+        blocks.append({**b, "current": cur})
+    from .aws_setup import wiring
+    return {"profile": cfg.get("profile", "local"), "profiles": _PROFILES,
+            "blocks": blocks, "wiring": wiring(_engine)}
+
+
+def _config_apply(data: dict) -> dict:
+    """Apply block-provider overrides (optionally onto a chosen profile) and
+    rebind the live engine. Reports which changes need a re-ingest."""
+    from ..config import Settings
+    from .aws_setup import wiring
+    base = data.get("profile") or _engine.settings._cfg.get("profile", "local")
+    s = Settings(profile=base)
+    s._cfg["profile"] = base
+    overrides = data.get("blocks", {}) or {}
+    reingest = []
+    for b in _BLOCKS:
+        val = overrides.get(b["key"])
+        if not val:
+            continue
+        # navigate/create the nested dict and set provider
+        cur = s._cfg
+        for p in b["path"][:-1]:
+            cur = cur.setdefault(p, {})
+        leaf = b["path"][-1]
+        cur.setdefault(leaf, {})
+        if not isinstance(cur[leaf], dict):
+            cur[leaf] = {}
+        cur[leaf]["provider"] = val
+        if not b["runtime"]:
+            reingest.append(b["key"])
+    _rebind(s)
+    return {"ok": True, "profile": base, "wiring": wiring(_engine),
+            "needs_reingest": reingest,
+            "documents": _documents()["total_documents"]}
+
+
 def _revert_local() -> dict:
     """Switch the live engine back to the default (local) profile."""
     from ..config import Settings
@@ -523,6 +610,8 @@ class Handler(BaseHTTPRequestHandler):
             from .aws_setup import wiring, credentials_present
             return self._send(200, {"wiring": wiring(_engine),
                                     "credentials": credentials_present()})
+        if self.path == "/api/config/blocks":
+            return self._send(200, _config_state())
         if self.path == "/graph/top":
             return self._send(200, {"top_entities": _engine.graph.top_entities(15)})
         if self.path == "/graph/export":
@@ -648,6 +737,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, _aws_smoke())
             if self.path == "/api/aws/revert":
                 return self._send(200, _revert_local())
+            if self.path == "/api/config/apply":
+                return self._send(200, _config_apply(data))
             if self.path in ("/api/aws/plan", "/api/aws/provision",
                              "/api/aws/teardown", "/api/aws/inventory"):
                 from ..aws.provision import ControlPlane

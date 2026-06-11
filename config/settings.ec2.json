@@ -1,0 +1,15 @@
+{
+  "_comment": "EC2-PERFORMANCE: run the heavy open-source libraries (Docling, BGE reranker, sentence-transformers, optional local vLLM) on one EC2 box (GPU recommended). No per-call managed-service fees; you pay only for the instance. Stores local on the box or Qdrant/Neo4j alongside.",
+  "profile": "ec2",
+  "llm": {"provider": "openrouter", "model": "openai/gpt-4o-mini"},
+  "vision": {"provider": "openrouter", "model": "openai/gpt-4o-mini"},
+  "embeddings": {"provider": "sentence_transformer", "dim": 384},
+  "reranker": {"provider": "bge", "model": "BAAI/bge-reranker-v2-m3"},
+  "vector_store": {"provider": "qdrant", "url": "http://localhost:6333", "collection_prefix": "atf", "dim": 384},
+  "graph_store": {"provider": "local"},
+  "guardrails": {"provider": "local", "enabled": false},
+  "ingestion": {
+    "ocr": {"provider": "tesseract"},
+    "parser": {"provider": "docling"}
+  }
+}

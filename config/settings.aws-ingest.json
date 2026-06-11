@@ -1,0 +1,16 @@
+{
+  "_comment": "COST-OPTIMIZED: pay AWS to PARSE+EMBED once at ingest; serve from FREE/cheap stores. Avoids the always-on OpenSearch+Neptune (~$700/mo). BDA/Textract/Bedrock are serverless pay-per-use, so idle cost is ~$0.",
+  "profile": "aws-ingest",
+  "llm": {"provider": "bedrock", "model": "anthropic.claude-3-5-sonnet-20240620-v1:0", "region": "us-east-1"},
+  "vision": {"provider": "bedrock", "model": "anthropic.claude-3-5-sonnet-20240620-v1:0"},
+  "embeddings": {"provider": "bedrock", "model": "amazon.titan-embed-text-v2:0", "dim": 1024, "region": "us-east-1"},
+  "reranker": {"provider": "local"},
+  "vector_store": {"provider": "qdrant", "url": "http://localhost:6333", "collection_prefix": "atf", "dim": 1024},
+  "graph_store": {"provider": "neo4j", "uri": "bolt://localhost:7687"},
+  "guardrails": {"provider": "bedrock", "enabled": false, "guardrail_id": ""},
+  "ingestion": {
+    "ocr": {"provider": "textract", "region": "us-east-1"},
+    "parser": {"provider": "bda"},
+    "bda": {"region": "us-east-1", "bucket": "", "project_arn": "", "profile_arn": ""}
+  }
+}
