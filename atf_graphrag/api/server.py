@@ -579,6 +579,9 @@ class Handler(BaseHTTPRequestHandler):
                 comms = _orch.build_communities(force=True)
                 _retriever.reload_communities()
                 return self._send(200, {"communities": len(comms)})
+            if self.path == "/api/reclassify":
+                from ..indexing.reclassify import reclassify_all
+                return self._send(200, reclassify_all(_engine))
             if self.path == "/api/graph/verify":
                 from ..graph.verify import verify_and_prune
                 use_llm = bool(data.get("use_llm", True))
