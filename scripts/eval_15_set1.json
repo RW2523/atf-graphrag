@@ -1,0 +1,692 @@
+{
+  "rows": [
+    {
+      "id": "Q1",
+      "kind": "import-rank",
+      "expect_report": "Commerce",
+      "answered": false,
+      "evidence_quoted": true,
+      "has_number": true,
+      "right_report_cited": false,
+      "structured_used": true,
+      "confidence": 0.636,
+      "incomplete": false,
+      "secs": 8.2,
+      "citations": [
+        {
+          "src": "nited States/2024_firearms_commerce_report.pdf",
+          "page": 18,
+          "ctype": "table",
+          "report": "Firearms-Commerce",
+          "has_table": true
+        },
+        {
+          "src": "lume I Part II/1_NFCTA_Vol_1_Foreward_508c.pdf",
+          "page": 10,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        },
+        {
+          "src": "nited States/2024_firearms_commerce_report.pdf",
+          "page": 7,
+          "ctype": "text",
+          "report": "Firearms-Commerce",
+          "has_table": false
+        },
+        {
+          "src": "nited States/2024_firearms_commerce_report.pdf",
+          "page": 8,
+          "ctype": "text",
+          "report": "Firearms-Commerce",
+          "has_table": false
+        },
+        {
+          "src": "earms Imported into the United States_508c.pdf",
+          "page": 5,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        }
+      ],
+      "answer": "EVIDENCE:\n- [4] (Official_ATF_Masterdata/USBDC/Firearms Commerce Report in the United States/2024_firearms_commerce_report.pdf, p.8) \"A total of 5,933,210 firearms were imported into the United States in Fiscal Year 2023, with Turkey being the largest source of imports.\"\n\nThe provided context does not specify which firearm type had the highest import count for 2023. However, it does indicate that handguns were the most imported type in 2022.\n\nEVIDENCE:\n- [3] (Official_ATF_Masterdata/USBDC/Firearms Commerce Report in the United States/2024_firearms_commerce_report.pdf, p.7) \"A total of 7,070,56"
+    },
+    {
+      "id": "Q2",
+      "kind": "cross-table",
+      "expect_report": "Commerce",
+      "answered": true,
+      "evidence_quoted": false,
+      "has_number": true,
+      "right_report_cited": false,
+      "structured_used": true,
+      "confidence": 0.575,
+      "incomplete": false,
+      "secs": 6.7,
+      "citations": [
+        {
+          "src": "nited States/2024_firearms_commerce_report.pdf",
+          "page": 18,
+          "ctype": "table",
+          "report": "Firearms-Commerce",
+          "has_table": true
+        },
+        {
+          "src": "nited States/2024_firearms_commerce_report.pdf",
+          "page": 8,
+          "ctype": "text",
+          "report": "Firearms-Commerce",
+          "has_table": false
+        },
+        {
+          "src": "Firearms Trace Data_ Colorado - 2023 _ ATF.pdf",
+          "page": 7,
+          "ctype": "text",
+          "report": "Tracing",
+          "has_table": false
+        },
+        {
+          "src": "5/Firearms Trace Data_ Alaska - 2023 _ ATF.pdf",
+          "page": 2,
+          "ctype": "text",
+          "report": "Tracing",
+          "has_table": false
+        },
+        {
+          "src": "rearms Trace Data_ New Jersey - 2023 _ ATF.pdf",
+          "page": 2,
+          "ctype": "text",
+          "report": "Tracing",
+          "has_table": false
+        }
+      ],
+      "answer": "In 2023, a total of 5,933,210 firearms were imported into the United States [2]. However, the data regarding firearm exports for the same year is not provided in the context. Therefore, it is not possible to determine whether more firearms were imported or exported in 2023 based on the available information."
+    },
+    {
+      "id": "Q3",
+      "kind": "state-table",
+      "expect_report": "AFMER",
+      "answered": true,
+      "evidence_quoted": true,
+      "has_number": true,
+      "right_report_cited": false,
+      "structured_used": true,
+      "confidence": 0.456,
+      "incomplete": false,
+      "secs": 3.5,
+      "citations": [
+        {
+          "src": "nited States/2024_firearms_commerce_report.pdf",
+          "page": 2,
+          "ctype": "figure",
+          "report": "Firearms-Commerce",
+          "has_table": false
+        }
+      ],
+      "answer": "EVIDENCE:\n- [1] (Official_ATF_Masterdata/USBDC/Firearms Commerce Report in the United States/2024_firearms_commerce_report.pdf, p.2) \"Texas 1,000,000\"\n\nANSWER: Texas had the highest total firearm manufacturing count with a total of 1,000,000."
+    },
+    {
+      "id": "Q4",
+      "kind": "mfr-table",
+      "expect_report": "AFMER",
+      "answered": true,
+      "evidence_quoted": true,
+      "has_number": true,
+      "right_report_cited": true,
+      "structured_used": false,
+      "confidence": 0.266,
+      "incomplete": true,
+      "secs": 3.3,
+      "citations": [
+        {
+          "src": "FMER_Report/AFMER 2024 Final Report 508c_0.pdf",
+          "page": 1,
+          "ctype": "text",
+          "report": "AFMER",
+          "has_table": false
+        }
+      ],
+      "answer": "EVIDENCE:\n- [1] (Official_ATF_Masterdata/USBDC/AFMER_Report/AFMER 2024 Final Report 508c_0.pdf, p.1, AFMER) \"TO 9MM                       2,383,198\"\n\nANSWER: The manufacturer with the highest pistol production count produced 2,383,198 pistols [1]."
+    },
+    {
+      "id": "Q5",
+      "kind": "definition",
+      "expect_report": "NFCTA",
+      "answered": true,
+      "evidence_quoted": false,
+      "has_number": false,
+      "right_report_cited": false,
+      "structured_used": true,
+      "confidence": 0.415,
+      "incomplete": false,
+      "secs": 6.0,
+      "citations": [
+        {
+          "src": "/2007-firearms-manufacturers-export-report.pdf",
+          "page": 1,
+          "ctype": "text",
+          "report": "AFMER",
+          "has_table": false
+        },
+        {
+          "src": "/2008-firearms-manufacturers-export-report.pdf",
+          "page": 1,
+          "ctype": "text",
+          "report": "AFMER",
+          "has_table": false
+        },
+        {
+          "src": "F PDF reports/afmer_2023_final_report_508c.pdf",
+          "page": 109,
+          "ctype": "table",
+          "report": "AFMER",
+          "has_table": true
+        },
+        {
+          "src": "/2007-firearms-manufacturers-export-report.pdf",
+          "page": 1,
+          "ctype": "text",
+          "report": "AFMER",
+          "has_table": false
+        },
+        {
+          "src": "/2008-firearms-manufacturers-export-report.pdf",
+          "page": 24,
+          "ctype": "table",
+          "report": "AFMER",
+          "has_table": false
+        }
+      ],
+      "answer": "According to the NFCTA manufacturing section, a person \"engaged in the business\" of manufacturing firearms is defined as someone who is involved in the production of firearms for commercial purposes, which includes manufacturing and disposing of firearms in commerce. This is distinct from a person making a firearm for personal use, who does not engage in such activities for profit or commercial distribution. The latter is typically allowed under certain regulations, as long as the firearm is not intended for sale or transfer to others [1][2]. \n\nIn summary, the key difference lies in the intent"
+    },
+    {
+      "id": "Q6",
+      "kind": "compliance",
+      "expect_report": "NFCTA",
+      "answered": true,
+      "evidence_quoted": false,
+      "has_number": false,
+      "right_report_cited": true,
+      "structured_used": false,
+      "confidence": 0.511,
+      "incomplete": false,
+      "secs": 3.1,
+      "citations": [
+        {
+          "src": "l_1_Part II - Privately Made Firearms_508c.pdf",
+          "page": 12,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        },
+        {
+          "src": "nited States/121611-firearms-commerce-2011.pdf",
+          "page": 4,
+          "ctype": "text",
+          "report": "Firearms-Commerce",
+          "has_table": false
+        },
+        {
+          "src": "ol_1_Part VIII - FFL Inventory Losses_508c.pdf",
+          "page": 1,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        },
+        {
+          "src": "ol_1_Part VIII - FFL Inventory Losses_508c.pdf",
+          "page": 1,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        },
+        {
+          "src": "rts/2012-firearms-reported-lost-and-stolen.pdf",
+          "page": 3,
+          "ctype": "text",
+          "report": "Theft-Loss",
+          "has_table": false
+        }
+      ],
+      "answer": "According to the NFCTA recordkeeping section, a licensed dealer must maintain acquisition and disposition (A&D) records that include the following:\n\n1. **Acquisition Records**: Dealers must record any firearm they acquire, which includes firearms taken into inventory for purposes other than adjustment or repair. If a firearm is possessed for one day or longer, it must be recorded as an acquisition and serialized [1].\n\n2. **Disposition Records**: When a firearm is returned to the customer after being in the dealer's possession, it must be recorded as a disposition in the A&D records [1]. \n\nAddi"
+    },
+    {
+      "id": "Q7",
+      "kind": "legal-req",
+      "expect_report": "NFCTA",
+      "answered": true,
+      "evidence_quoted": false,
+      "has_number": false,
+      "right_report_cited": true,
+      "structured_used": false,
+      "confidence": 0.639,
+      "incomplete": false,
+      "secs": 4.5,
+      "citations": [
+        {
+          "src": "l_1_Part II - Privately Made Firearms_508c.pdf",
+          "page": 12,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        },
+        {
+          "src": "turing of Firearms and Ammunition_508c (1).pdf",
+          "page": 1,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        },
+        {
+          "src": "turing of Firearms and Ammunition_508c (1).pdf",
+          "page": 2,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        },
+        {
+          "src": "turing of Firearms and Ammunition_508c (1).pdf",
+          "page": 2,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        },
+        {
+          "src": "earms Imported into the United States_508c.pdf",
+          "page": 1,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        }
+      ],
+      "answer": "According to the NFCTA marking requirements, a licensed manufacturer or importer must mark the following identifying information on a firearm:\n\n1. **Serial Number**: Engraved or cast on the frame or receiver of the firearm.\n2. **Manufacturer or Importer Name**: The name or recognized abbreviation of the manufacturer or importer.\n3. **Model Designation**: If such designation has been made.\n4. **Caliber or Gauge**: The caliber or gauge of the firearm.\n5. **Location of Manufacture**: For domestically made firearms, the city and state (or recognized abbreviation) where the firearm was made; for im"
+    },
+    {
+      "id": "Q8",
+      "kind": "list",
+      "expect_report": "NFCTA",
+      "answered": true,
+      "evidence_quoted": false,
+      "has_number": false,
+      "right_report_cited": true,
+      "structured_used": false,
+      "confidence": 0.685,
+      "incomplete": false,
+      "secs": 2.8,
+      "citations": [
+        {
+          "src": "lume I Part II/1_NFCTA_Vol_1_Foreward_508c.pdf",
+          "page": 10,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        },
+        {
+          "src": "l_1_Part II - Privately Made Firearms_508c.pdf",
+          "page": 1,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        },
+        {
+          "src": "nited States/121611-firearms-commerce-2011.pdf",
+          "page": 4,
+          "ctype": "text",
+          "report": "Firearms-Commerce",
+          "has_table": false
+        },
+        {
+          "src": "nited States/121611-firearms-commerce-2011.pdf",
+          "page": 2,
+          "ctype": "text",
+          "report": "Firearms-Commerce",
+          "has_table": false
+        },
+        {
+          "src": "ume I Part II/27_NFCTA_Vol_1_Endnotes_508c.pdf",
+          "page": 3,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        }
+      ],
+      "answer": "The types of weapons regulated under the National Firearms Act (NFA) include:\n\n1. **Machineguns**\n2. **Destructive devices**\n3. **Short-barreled rifles**\n4. **Short-barreled shotguns**\n5. **Silencers**\n6. **Any other weapon** (which may include various types of firearms not classified under the other categories)\n\nThese categories are specified in the context of the NFA, which requires the registration of these weapons and imposes taxes on their making and transfer [4][5]."
+    },
+    {
+      "id": "Q9",
+      "kind": "process",
+      "expect_report": "Tracing",
+      "answered": true,
+      "evidence_quoted": false,
+      "has_number": true,
+      "right_report_cited": true,
+      "structured_used": false,
+      "confidence": 0.626,
+      "incomplete": false,
+      "secs": 4.8,
+      "citations": [
+        {
+          "src": "ume I Part II/27_NFCTA_Vol_1_Endnotes_508c.pdf",
+          "page": 2,
+          "ctype": "text",
+          "report": "NFCTA",
+          "has_table": false
+        },
+        {
+          "src": "rms Trace Data_ Massachusetts - 2023 _ ATF.pdf",
+          "page": 7,
+          "ctype": "text",
+          "report": "Tracing",
+          "has_table": false
+        },
+        {
+          "src": "rms Trace Data_ West Virginia - 2023 _ ATF.pdf",
+          "page": 7,
+          "ctype": "text",
+          "report": "Tracing",
+          "has_table": false
+        },
+        {
+          "src": "rts/2012-firearms-reported-lost-and-stolen.pdf",
+          "page": 3,
+          "ctype": "text",
+          "report": "Theft-Loss",
+          "has_table": false
+        },
+        {
+          "src": "rearms Trace Data_ Washington - 2023 _ ATF.pdf",
+          "page": 7,
+          "ctype": "text",
+          "report": "Tracing",
+          "has_table": false
+        }
+      ],
+      "answer": "The main steps involved in tracing a firearm from recovery to the first retail purchaser, according to the National Tracing Center Fact Sheet FY24, are as follows:\n\n1. **Recovery of the Firearm**: A law enforcement agency discovers a firearm at a crime scene and initiates the tracing process to learn about its origin and background to develop investigative leads.\n\n2. **Systematic Tracking**: The tracing process systematically tracks the movement of the firearm from its first sale by the manufacturer or importer through the distribution chain, which includes wholesalers and retailers, until it "
+    },
+    {
+      "id": "Q10",
+      "kind": "num-compare",
+      "expect_report": "Theft-Loss",
+      "answered": false,
+      "evidence_quoted": true,
+      "has_number": true,
+      "right_report_cited": true,
+      "structured_used": true,
+      "confidence": 0.618,
+      "incomplete": false,
+      "secs": 8.2,
+      "citations": [
+        {
+          "src": " Firearms Licensee Theft_Loss Report _ ATF.pdf",
+          "page": 6,
+          "ctype": "table",
+          "report": "Theft-Loss",
+          "has_table": false
+        },
+        {
+          "src": " Firearms Licensee Theft_Loss Report _ ATF.pdf",
+          "page": 13,
+          "ctype": "text",
+          "report": "Theft-Loss",
+          "has_table": false
+        },
+        {
+          "src": "/Firearms Trace Data_ Florida - 2023 _ ATF.pdf",
+          "page": 2,
+          "ctype": "table",
+          "report": "Tracing",
+          "has_table": true
+        },
+        {
+          "src": "irearms Trace Data_ Minnesota - 2023 _ ATF.pdf",
+          "page": 2,
+          "ctype": "table",
+          "report": "Tracing",
+          "has_table": true
+        },
+        {
+          "src": "/Firearms Trace Data_ Alabama - 2023 _ ATF.pdf",
+          "page": 2,
+          "ctype": "table",
+          "report": "Tracing",
+          "has_table": true
+        }
+      ],
+      "answer": "EVIDENCE:\n- [1] (ATF PDF reports/2025 - Federal Firearms Licensee Theft_Loss Report _ ATF.pdf, p.6, Theft-Loss) \"For calendar year 2025, ATF data provides that the 10 FFLs with the most firearms reported in Theft/Loss Reports are associated with 2,093 firearms reported lost or stolen.\"\n- [1] (ATF PDF reports/2025 - Federal Firearms Licensee Theft_Loss Report _ ATF.pdf, p.6, Theft-Loss) \"The 100 FFLs with the most firearms reported in Theft/Loss Reports are associated with 5,182 firearms reported lost or stolen.\"\n\nThe provided context does not specify the exact breakdown of firearms reported lo"
+    },
+    {
+      "id": "Q11",
+      "kind": "state-rank",
+      "expect_report": "Theft-Loss",
+      "answered": true,
+      "evidence_quoted": true,
+      "has_number": true,
+      "right_report_cited": false,
+      "structured_used": true,
+      "confidence": 0.729,
+      "incomplete": false,
+      "secs": 3.2,
+      "citations": [
+        {
+          "src": "_1_Appendix  IL -FFL Inventory Losses_508c.pdf",
+          "page": 3,
+          "ctype": "table",
+          "report": "NFCTA",
+          "has_table": true
+        },
+        {
+          "src": "_1_Appendix  IL -FFL Inventory Losses_508c.pdf",
+          "page": 3,
+          "ctype": "table",
+          "report": "NFCTA",
+          "has_table": false
+        }
+      ],
+      "answer": "EVIDENCE:\n- [1] (ATF PDF reports/22_NFCTA_Vol_1_Appendix IL -FFL Inventory Losses_508c.pdf, p.3, NFCTA) \"WA 110 1.8% 22.0 1,014 2.2% 202.8 1,623 74:1\"\nANSWER: Washington (WA) reported the highest number of firearms involved in theft/loss incidents with 1,014 firearms."
+    },
+    {
+      "id": "Q12",
+      "kind": "multi-doc",
+      "expect_report": "Tracing",
+      "answered": false,
+      "evidence_quoted": true,
+      "has_number": true,
+      "right_report_cited": true,
+      "structured_used": true,
+      "confidence": 0.576,
+      "incomplete": false,
+      "secs": 10.2,
+      "citations": [
+        {
+          "src": "25/Firearms Trace Data_ Texas - 2023 _ ATF.pdf",
+          "page": 5,
+          "ctype": "table",
+          "report": "Tracing",
+          "has_table": true
+        },
+        {
+          "src": "rms Trace Data_ New Hampshire - 2023 _ ATF.pdf",
+          "page": 5,
+          "ctype": "table",
+          "report": "Tracing",
+          "has_table": true
+        },
+        {
+          "src": "Firearms Trace Data_ Nebraska - 2023 _ ATF.pdf",
+          "page": 4,
+          "ctype": "table",
+          "report": "Tracing",
+          "has_table": true
+        },
+        {
+          "src": "/Firearms Trace Data_ Florida - 2023 _ ATF.pdf",
+          "page": 2,
+          "ctype": "table",
+          "report": "Tracing",
+          "has_table": true
+        },
+        {
+          "src": "/Firearms Trace Data_ Alabama - 2023 _ ATF.pdf",
+          "page": 2,
+          "ctype": "table",
+          "report": "Tracing",
+          "has_table": true
+        }
+      ],
+      "answer": "The provided context does not contain the specific firearms trace data for California in 2023. However, I can provide the available data for Texas.\n\nEVIDENCE:\n- [1] (Official_ATF_Masterdata/USBDC/Firearms Trace Data Reports2025/Firearms Trace Data_ Texas - 2023 _ ATF.pdf, p.5, Tracing) \"Under 3 Months | 4,277\"\n- [1] (Official_ATF_Masterdata/USBDC/Firearms Trace Data Reports2025/Firearms Trace Data_ Texas - 2023 _ ATF.pdf, p.5, Tracing) \"3 Months to Under 7 Months | 3,353\"\n- [1] (Official_ATF_Masterdata/USBDC/Firearms Trace Data Reports2025/Firearms Trace Data_ Texas - 2023 _ ATF.pdf, p.5, Trac"
+    },
+    {
+      "id": "Q13",
+      "kind": "cross-doc-agg",
+      "expect_report": "Tracing",
+      "answered": true,
+      "evidence_quoted": false,
+      "has_number": true,
+      "right_report_cited": true,
+      "structured_used": false,
+      "confidence": 0.732,
+      "incomplete": false,
+      "secs": 3.6,
+      "citations": [
+        {
+          "src": "rearms Trace Data_ Washington - 2023 _ ATF.pdf",
+          "page": 4,
+          "ctype": "text",
+          "report": "Tracing",
+          "has_table": false
+        },
+        {
+          "src": "5/Firearms Trace Data_ Alaska - 2023 _ ATF.pdf",
+          "page": 4,
+          "ctype": "text",
+          "report": "Tracing",
+          "has_table": false
+        },
+        {
+          "src": "arms Trace Data_ North Dakota - 2023 _ ATF.pdf",
+          "page": 4,
+          "ctype": "text",
+          "report": "Tracing",
+          "has_table": false
+        },
+        {
+          "src": "/Firearms Trace Data_ Montana - 2023 _ ATF.pdf",
+          "page": 4,
+          "ctype": "text",
+          "report": "Tracing",
+          "has_table": false
+        },
+        {
+          "src": "irearms Trace Data_ Minnesota - 2023 _ ATF.pdf",
+          "page": 4,
+          "ctype": "text",
+          "report": "Tracing",
+          "has_table": false
+        }
+      ],
+      "answer": "In the 2023 firearms trace data, Washington appears most often as the top source for recovered firearms across multiple state reports. Specifically, Washington is the top source state for firearms recovered in its own state with 3,430 traces [1]. Additionally, it is also listed as a source state for Alaska (14 traces) and Montana (44 traces) [2][4]. This indicates that Washington is a significant source of firearms not only within its own borders but also for other states."
+    },
+    {
+      "id": "Q14",
+      "kind": "table-cat",
+      "expect_report": "Explosives-EIR",
+      "answered": true,
+      "evidence_quoted": true,
+      "has_number": true,
+      "right_report_cited": true,
+      "structured_used": false,
+      "confidence": 0.228,
+      "incomplete": true,
+      "secs": 3.9,
+      "citations": [
+        {
+          "src": "es/2023_explosives_incident_report_eir_0_0.pdf",
+          "page": 8,
+          "ctype": "list",
+          "report": "Explosives-EIR",
+          "has_table": false
+        },
+        {
+          "src": "2024_explosives_incident_report_eir_508c_0.pdf",
+          "page": 12,
+          "ctype": "text",
+          "report": "Explosives-EIR",
+          "has_table": false
+        },
+        {
+          "src": "ives/2022_explosives_incident_report_eir_0.pdf",
+          "page": 17,
+          "ctype": "text",
+          "report": "Explosives-EIR",
+          "has_table": false
+        },
+        {
+          "src": "2024_explosives_incident_report_eir_508c_0.pdf",
+          "page": 11,
+          "ctype": "list",
+          "report": "Explosives-EIR",
+          "has_table": false
+        },
+        {
+          "src": "/2021_explosives_incident_report_eir_0_0_0.pdf",
+          "page": 10,
+          "ctype": "text",
+          "report": "Explosives-EIR",
+          "has_table": false
+        }
+      ],
+      "answer": "EVIDENCE:\n- [2] (Official_ATF_Masterdata/USBDC/Explosives/2024_explosives_incident_report_eir_508c_0.pdf, p.12) \"No Target Specified had the highest overall count of 2,339.\"\n- [4] (Official_ATF_Masterdata/USBDC/Explosives/2024_explosives_incident_report_eir_508c_0.pdf, p.11) \"Explosives (non-IED: comm, mil, fireworks, HME): 3,850\"\n\nANSWER: The main categories of explosives-related incidents include \"Explosives (non-IED: comm, mil, fireworks, HME)\" with a count of 3,850 and \"No Target Specified\" with a count of 2,339. The category with the highest count is \"Explosives (non-IED: comm, mil, firew"
+    },
+    {
+      "id": "Q15",
+      "kind": "table-compare",
+      "expect_report": "Arson",
+      "answered": true,
+      "evidence_quoted": true,
+      "has_number": true,
+      "right_report_cited": true,
+      "structured_used": true,
+      "confidence": 0.51,
+      "incomplete": false,
+      "secs": 5.6,
+      "citations": [
+        {
+          "src": "a/USBDC/Arson/2023_arson_incident_report_0.pdf",
+          "page": 13,
+          "ctype": "text",
+          "report": "Arson",
+          "has_table": false
+        },
+        {
+          "src": "irearms Trace Data_ Minnesota - 2023 _ ATF.pdf",
+          "page": 2,
+          "ctype": "table",
+          "report": "Tracing",
+          "has_table": true
+        },
+        {
+          "src": "rms Trace Data_ New Hampshire - 2023 _ ATF.pdf",
+          "page": 5,
+          "ctype": "table",
+          "report": "Tracing",
+          "has_table": true
+        },
+        {
+          "src": "Firearms Trace Data_ Nebraska - 2023 _ ATF.pdf",
+          "page": 4,
+          "ctype": "table",
+          "report": "Tracing",
+          "has_table": true
+        },
+        {
+          "src": "a/USBDC/Arson/2023_arson_incident_report_0.pdf",
+          "page": 17,
+          "ctype": "text",
+          "report": "Arson",
+          "has_table": false
+        }
+      ],
+      "answer": "EVIDENCE:\n- [1] (Official_ATF_Masterdata/USBDC/Arson/2023_arson_incident_report_0.pdf, p.13, Arson) \"<5,440 Incendiary fires reported in 2023>\"\n- [5] (Official_ATF_Masterdata/USBDC/Arson/2023_arson_incident_report_0.pdf, p.17, Arson) \"<113 were listed as \u201cIncendiary,\u201d 60 were listed as \u201cAccidental,\u201d and 23 were listed as \u201cUndetermined.\u201d>\"\n\nANSWER: The category with the highest reported count is incendiary fires, with 5,440 reported incidents [1]."
+    }
+  ]
+}

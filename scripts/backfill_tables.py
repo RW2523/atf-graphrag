@@ -15,7 +15,7 @@ import sys
 def main():
     os.environ.setdefault("ATF_PROFILE", "local")
     from atf_graphrag.engine import Engine
-    from atf_graphrag.indexing.tables import parse_markdown_table, table_title_from
+    from atf_graphrag.indexing.tables import parse_table, table_title_from
     from atf_graphrag.ingestion.metadata import detect_report_type, detect_us_state
     from atf_graphrag.storage_lock import acquire_storage_lock, release_storage_lock
 
@@ -48,7 +48,7 @@ def main():
                 continue
             tables += 1
             if not p.get("table_data"):
-                td = parse_markdown_table(p.get("text", ""))
+                td = parse_table(p.get("text", ""))
                 if td:
                     p["table_data"] = td
                     parsed += 1

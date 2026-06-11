@@ -159,10 +159,17 @@ def _split_content_blocks(text: str) -> List[Tuple[str, str]]:
         # separator, and every data row) into one segment. Without this the
         # per-line look-ahead window shrinks below 2 rows at the end of the
         # table and splits the last row(s) off — breaking multi-row tables.
-        if wtype == "table":
+        # GUARD: only enter when the CURRENT line is itself a table line, else
+        # the inner loop can't advance i and we'd infinite-loop (the window may
+        # report 'table' because a table starts a couple lines below).
+        _ls = line.strip()
+        _table_start = (_is_table_line(_ls) or _TABLE_CAP.match(_ls)
+                        or _VLM_BLOCK.match(_ls))
+        if wtype == "table" and _table_start:
             flush()
             cur_type = "table"
-            while i < len(lines):
+            absorbed = 0
+            while i < len(lines) and absorbed < 400:   # cap: no giant chunk/hang
                 s = lines[i].strip()
                 if _HEADING.match(s):
                     break
@@ -170,6 +177,7 @@ def _split_content_blocks(text: str) -> List[Tuple[str, str]]:
                         or (not s and buf and _is_table_line(lines[i - 1].strip())):
                     buf.append(lines[i])
                     i += 1
+                    absorbed += 1
                     continue
                 break
             flush()

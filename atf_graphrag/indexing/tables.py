@@ -27,12 +27,16 @@ def _split_row(line: str) -> List[str]:
     return [c.strip() for c in s.split("|")]
 
 
+_MAX_CHARS = 60000        # safety cap: never parse a pathologically huge chunk
+_MAX_LINES = 1000
+
+
 def parse_markdown_table(text: str) -> Dict[str, Any]:
     """Parse markdown (or pipe-delimited) table text into {columns, rows}.
     Returns {} if fewer than 2 usable rows or it doesn't look like a table."""
-    if not text or "|" not in text:
+    if not text or "|" not in text or len(text) > _MAX_CHARS:
         return {}
-    lines = [ln for ln in text.splitlines() if ln.strip()]
+    lines = [ln for ln in text.splitlines()[:_MAX_LINES] if ln.strip()]
     rows: List[List[str]] = []
     for ln in lines:
         if _SEP.match(ln):                 # markdown header/body separator
@@ -65,11 +69,11 @@ def parse_columnar_table(text: str) -> Dict[str, Any]:
     """Parse a space/tab-aligned columnar table (no pipes) into {columns, rows}.
     Heuristic + generic: a run of lines where most have a leading label and >=2
     numeric columns separated by 2+ spaces. Returns {} if it isn't tabular."""
-    if not text:
+    if not text or len(text) > _MAX_CHARS:
         return {}
     rows: List[List[str]] = []
     header: List[str] = []
-    for raw in text.splitlines():
+    for raw in text.splitlines()[:_MAX_LINES]:
         ln = raw.rstrip()
         s = ln.strip()
         if not s or s.startswith("[") or "|" in s:

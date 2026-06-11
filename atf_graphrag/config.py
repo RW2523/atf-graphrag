@@ -212,6 +212,9 @@ def _apply_env(cfg: Dict[str, Any]) -> Dict[str, Any]:
         cfg["embeddings"]["provider"] = os.environ["ATF_EMBED_PROVIDER"]
     if os.environ.get("ATF_PORT"):
         cfg["server"]["port"] = int(os.environ["ATF_PORT"])
+    if os.environ.get("ATF_PARSER"):          # advanced | docling | textract | bedrock
+        cfg.setdefault("ingestion", {}).setdefault("parser", {})
+        cfg["ingestion"]["parser"] = {"provider": os.environ["ATF_PARSER"]}
     # Setting TAVILY_API_KEY is enough to turn web research on (auto-enable).
     # ATF_WEB_SEARCH=0 force-disables even when a key is present.
     if os.environ.get("TAVILY_API_KEY") and os.environ.get("ATF_WEB_SEARCH") != "0":
