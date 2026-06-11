@@ -152,6 +152,8 @@ class QueryUnderstandingAgent:
             plan.intent = "multi"
         if "pattern" in q or "across" in q:
             plan.use_graph = True
+            if plan.intent in ("fact", "entity"):   # don't clobber table/visual/timeline
+                plan.intent = "pattern"
         # Domain-specific intent hints stored in plan.filters for routing
         if any(w in q for w in MANUFACTURE_WORDS):
             plan.intent = "table"; plan.filters["domain"] = "manufacture"
@@ -180,15 +182,18 @@ class QueryUnderstandingAgent:
         # answered from community summaries; direct facts stay on the hybrid
         # vector lane. A global question that also names a specific year/entity
         # is "mixed" (run both, merge with provenance).
-        is_global = (any(w in q for w in GLOBAL_WORDS)
-                     or plan.intent in ("relationship", "pattern", "multi"))
+        is_global = any(w in q for w in GLOBAL_WORDS) or plan.intent == "multi"
         if is_global:
             has_specific = bool(re.search(r"\b(19|20)\d{2}\b", q)) or \
                 plan.intent in ("table",)
             plan.mode = "mixed" if has_specific else "global"
-            # NOTE: mode is additive metadata only — it does NOT change use_graph
-            # or any local-lane behaviour, so the hybrid baseline is unchanged.
-            # The global branch acts only when community summaries exist.
+        elif plan.intent in ("relationship", "pattern"):
+            # Relationship/pattern questions run the LOCAL lane (graph retrieval /
+            # PPR) AND get community context — 'mixed' — instead of being fully
+            # answered from community summaries. This ensures graph-structured
+            # evidence (and the PPR retriever, when enabled) is actually used,
+            # rather than the local lane being skipped entirely.
+            plan.mode = "mixed"
         else:
             plan.mode = "local"
 
@@ -354,14 +359,17 @@ class RetrievalAgent:
                     add(chunk, s * boost, "vector")
 
         graph_paths: List[str] = []
+        self.last_graph_mode = "none"
         if plan.use_graph:
             # Personalized-PageRank retrieval for relationship/pattern queries
             # when enabled (HippoRAG-style); otherwise BFS subgraph expansion.
             gr_mode = engine.settings["retrieval"].get("graph_retriever", "bfs")
             if gr_mode == "ppr" and plan.intent in ("relationship", "pattern"):
                 graph_paths = self._graph_expand_ppr(plan, corpora, engine, add)
+                self.last_graph_mode = "ppr"
             else:
                 graph_paths = self._graph_expand(plan, corpora, engine, add)
+                self.last_graph_mode = "bfs"
 
         hits = list(merged.values())
 
@@ -604,10 +612,12 @@ class RerankingAgent:
 
         # Provider reranker (e.g. cross-encoder BGEReranker). Returns a reordered
         # list to override the linear blend, or None to keep it (local/llm).
+        self.last_reranker = "linear"
         reranker = getattr(engine, "reranker", None)
         if reranker is not None:
             reordered = reranker.rerank(plan.question, hits)
             if reordered is not None:
+                self.last_reranker = getattr(reranker, "name", "provider")
                 return reordered[:plan.top_k]
 
         hits.sort(key=lambda h: (-(h.rerank_score or 0), h.chunk.chunk_id))

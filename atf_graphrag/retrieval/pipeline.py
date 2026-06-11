@@ -124,6 +124,7 @@ class Retriever:
         steps["3_retrieval"] = {
             "candidates": len(hits),
             "graph_paths": len(graph_paths),
+            "graph_mode": getattr(self.retrieve_agent, "last_graph_mode", "none"),
             "retrieved_chunk_ids": [h.chunk.chunk_id for h in hits],
             "retrieved_doc_ids": _unique([h.chunk.document_id for h in hits]),
         }
@@ -139,6 +140,7 @@ class Retriever:
         else:
             hits = hits[:plan.top_k]
         steps["5_reranking"] = {
+            "reranker": getattr(self.rerank, "last_reranker", "linear"),
             "scores": [round(h.rerank_score or 0, 3) for h in hits],
             "reranked_chunk_ids": [h.chunk.chunk_id for h in hits],
             "reranked_doc_ids": _unique([h.chunk.document_id for h in hits]),

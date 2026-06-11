@@ -115,11 +115,24 @@ def _is_refusal(ans: str) -> bool:
 
 def main():
     os.environ.setdefault("ATF_PROFILE", "local")
+    from atf_graphrag.config import Settings
     from atf_graphrag.engine import Engine
     from atf_graphrag.retrieval.pipeline import Retriever
     from eval.faithfulness import judge_faithfulness
 
-    eng = Engine()
+    # A/B toggles (env): ATF_EVAL_PPR=1 -> graph_retriever=ppr,
+    #                    ATF_EVAL_BGE=1 -> reranker=bge.
+    use_ppr = os.environ.get("ATF_EVAL_PPR") == "1"
+    use_bge = os.environ.get("ATF_EVAL_BGE") == "1"
+    label = os.environ.get("ATF_EVAL_LABEL", "enhanced" if (use_ppr or use_bge) else "baseline")
+    s = Settings()
+    s._cfg["retrieval"]["graph_retriever"] = "ppr" if use_ppr else "bfs"
+    s._cfg["reranker"] = {"provider": "bge"} if use_bge else {"provider": "local"}
+    s._cfg["retrieval"]["llm_refine"] = False    # deterministic routing for A/B
+    print(f"[eval] config={label} | graph_retriever="
+          f"{s._cfg['retrieval']['graph_retriever']} | reranker="
+          f"{s._cfg['reranker']['provider']}", flush=True)
+    eng = Engine(s)
     r = Retriever(eng)
 
     rows = []
@@ -157,20 +170,26 @@ def main():
                 except Exception:   # noqa: BLE001
                     faith = None
 
+        tr = res.get("trace", {}) or {}
+        gmode = (tr.get("3_retrieval", {}) or {}).get("graph_mode", "none")
+        rer = (tr.get("5_reranking", {}) or {}).get("reranker", "linear")
         rows.append({
             "id": item["id"], "intent": item["intent"],
             "expect_refusal": item["refuse"],
             "answered": answered, "refused": refused,
             "keyword_hit": kw_hit, "correct": bool(correct),
             "faithfulness": faith, "n_citations": len(cites),
+            "mode": res.get("mode", tr.get("mode", "")),
+            "graph_mode": gmode, "reranker": rer,
             "secs": round(time.time() - qt0, 1),
             "answer_preview": ans[:160],
             "top_source": (cites[0].get("source") if cites else None),
         })
         flag = "OK " if correct else "XX "
         print(f"{flag}{item['id']} [{item['intent']:>12}] "
-              f"ans={int(answered)} ref={int(refused)} "
-              f"kw={kw_hit} faith={faith} ({rows[-1]['secs']}s)", flush=True)
+              f"ans={int(answered)} ref={int(refused)} kw={kw_hit} "
+              f"faith={faith} mode={rows[-1]['mode']} g={gmode} rr={rer} "
+              f"({rows[-1]['secs']}s)", flush=True)
 
     # ---- summary ----------------------------------------------------------
     ans_qs = [r_ for r_ in rows if not r_["expect_refusal"]]
@@ -180,6 +199,9 @@ def main():
     faiths = [r_["faithfulness"] for r_ in ans_qs
               if isinstance(r_["faithfulness"], (int, float))]
     summary = {
+        "config": label,
+        "graph_retriever": s._cfg["retrieval"]["graph_retriever"],
+        "reranker": s._cfg["reranker"]["provider"],
         "n_questions": len(rows),
         "n_answerable": len(ans_qs),
         "n_refusal_expected": len(ref_qs),
@@ -189,10 +211,14 @@ def main():
             (hits + ref_ok) / len(rows), 4),
         "mean_faithfulness": round(sum(faiths) / len(faiths), 4) if faiths else None,
         "faithfulness_judged": len(faiths),
+        "ppr_engaged": sum(1 for r_ in rows if r_.get("graph_mode") == "ppr"),
+        "bge_engaged": sum(1 for r_ in rows if r_.get("reranker") == "bedrock"
+                           or r_.get("reranker") == "bge"),
         "elapsed_s": round(time.time() - t0, 1),
     }
     out = {"summary": summary, "per_question": rows}
-    path = os.path.join(os.path.dirname(__file__), "eval_atf_report.json")
+    path = os.path.join(os.path.dirname(__file__),
+                        f"eval_atf_{label}.json")
     with open(path, "w") as f:
         json.dump(out, f, indent=2)
 
