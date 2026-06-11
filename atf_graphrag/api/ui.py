@@ -938,7 +938,14 @@ function renderAnswer(res){
   if(res.intent)html+='<span class="chip">intent: '+esc(res.intent)+'</span>';
   if(conf)html+='<span class="chip">confidence '+conf+'</span>';
   if(tm)html+='<span class="chip">'+Math.round(tm)+' ms</span>';
-  html+='<span class="chip">'+cites.length+' sources</span></div>';
+  html+='<span class="chip">'+cites.length+' sources</span>';
+  const wr=res.web_research||{};
+  if(wr.triggered){
+    const added=wr.added||0;
+    html+='<span class="chip" style="background:#ecfeff;color:#0e7490" title="'+
+      esc(wr.reason||'')+'">&#127760; web research'+(added?': +'+added+' new':' (no new)')+'</span>';
+  }
+  html+='</div>';
   const paths=(res.graph_paths||[]);
   if(paths.length){html+='<div class="paths">&#128279; '+paths.slice(0,4).map(p=>'<code>'+esc(p)+'</code>').join(' &nbsp; ')+'</div>';}
   if(cites.length){

@@ -496,9 +496,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/", "/index.html", "/ui"):
             return self._send_html(INDEX_HTML)
         if self.path == "/api/status":
+            _ws = _engine.settings.get("web_search", {}) or {}
             return self._send(200, {
                 "key_set": bool(Settings.openrouter_key()),
                 "llm_extraction": getattr(_indexer, "_extract_mode", "auto"),
+                "web_search": {"enabled": bool(_ws.get("enabled")),
+                               "provider": _ws.get("provider", "offline"),
+                               "available": getattr(_engine.web_search, "available", False)},
                 **_engine.stats()})
         if self.path == "/health":
             return self._send(200, {"status": "ok"})

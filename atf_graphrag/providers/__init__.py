@@ -147,6 +147,21 @@ def make_guardrail(settings: Settings):
     return Guardrail()                # no-op pass-through
 
 
+def make_web_search(settings: Settings):
+    """On-demand web search for corpus augmentation. Default 'offline' (no-op);
+    'tavily' = Tavily Search API (needs TAVILY_API_KEY)."""
+    cfg = settings.get("web_search", {}) or {}
+    prov = cfg.get("provider", "offline")
+    if prov == "tavily":
+        try:
+            from .web_search import TavilySearch
+            return TavilySearch(cfg)
+        except Exception as e:  # noqa: BLE001
+            _warn_fallback("web_search", "tavily", e)
+    from .web_search import OfflineWebSearch
+    return OfflineWebSearch(cfg)
+
+
 def make_entity_extractor(settings: Settings):
     """AWS-native entity/PII extractor. Returns None unless explicitly enabled
     (extraction.provider='comprehend'); callers fall back to LLM extraction."""

@@ -13,6 +13,7 @@ from ..models import Answer
 from .agents import (QueryUnderstandingAgent, CorpusSelectionAgent,
                      RetrievalAgent, EvaluationAgent, RerankingAgent,
                      GenerationAgent, GlobalAnswerAgent)
+from .web_research import WebResearchAgent
 
 
 def _unique(seq):
@@ -50,6 +51,7 @@ class Retriever:
         self.rerank = RerankingAgent()
         self.generate = GenerationAgent()
         self.global_agent = GlobalAnswerAgent()
+        self.web_research = WebResearchAgent()
         # Community summaries for the global query mode (empty if not built).
         from ..graph.communities import CommunityStore
         gpath = engine.settings["graph_store"]["path"]
@@ -134,6 +136,25 @@ class Retriever:
                           lambda: self.evaluate.evaluate(plan, hits, self.e))
         steps["4_evaluation"] = {"kept": len(hits)}
 
+        # ── Agentic web-research augmentation (on-demand, only-if-needed) ─────
+        # When the question is event/news-oriented and local evidence is thin,
+        # search the web, judge each result (relevant? novel? worth?), ingest
+        # only worthy content into the 'news' corpus, then retrieve it and merge.
+        do_aug, why = self.web_research.should_augment(plan, hits, self.e)
+        steps["4b_web_research"] = {"triggered": do_aug, "reason": why}
+        if do_aug:
+            web_rec = _timed("web_research",
+                             lambda: self.web_research.research(plan, hits, self.e))
+            steps["4b_web_research"].update(web_rec)
+            if web_rec.get("added"):
+                corpus = self.e.settings["web_search"].get("corpus", "news")
+                news_hits = self.retrieve_agent.retrieve(plan, [corpus], self.e)
+                if cfg.get("evaluate", True):
+                    news_hits = self.evaluate.evaluate(plan, news_hits, self.e)
+                seen = {h.chunk.chunk_id for h in hits}
+                hits.extend(h for h in news_hits
+                            if h.chunk.chunk_id not in seen)
+
         if cfg.get("rerank", True):
             hits = _timed("rerank",
                           lambda: self.rerank.rerank(plan, hits, self.e))
@@ -163,6 +184,7 @@ class Retriever:
             "evidence_count": ans.evidence_count,
             "intent": plan.intent,
             "mode": plan.mode,
+            "web_research": steps.get("4b_web_research", {"triggered": False}),
         }
         if trace:
             result["trace"] = steps

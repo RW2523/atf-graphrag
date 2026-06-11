@@ -30,6 +30,8 @@ class BM25:
         return math.log(1 + (self.N - n + 0.5) / (n + 0.5))
 
     def search(self, query: str, top_k: int = 6) -> List[Tuple[ChunkRecord, float]]:
+        if not self.docs:               # empty corpus -> nothing to score
+            return []
         q = content_tokens(query)
         scores = [0.0] * len(self.docs)
         for term in q:

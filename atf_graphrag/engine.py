@@ -12,7 +12,7 @@ from .config import get_settings, Settings
 from .providers import (make_llm, make_embedder, make_vision, make_reranker,
                         make_parser, make_vector_store, make_graph_store,
                         make_blob_store, make_ocr, make_guardrail,
-                        make_entity_extractor)
+                        make_entity_extractor, make_web_search)
 
 
 class Engine:
@@ -40,6 +40,8 @@ class Engine:
         self.parser = make_parser(self.settings)
         # Optional AWS-native entity/PII extractor (None unless comprehend).
         self.entity_extractor = make_entity_extractor(self.settings)
+        # On-demand web search for corpus augmentation (offline no-op default).
+        self.web_search = make_web_search(self.settings)
         # Storage layer
         self._vstores: Dict[str, "object"] = {}
         self.graph = make_graph_store(self.settings)

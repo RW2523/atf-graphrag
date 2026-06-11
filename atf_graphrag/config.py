@@ -148,7 +148,27 @@ DEFAULTS: Dict[str, Any] = {
     },
 
     # ---- Corpuses ---------------------------------------------------------
-    "corpora": ["pdf", "web", "connected", "visual"],
+    "corpora": ["pdf", "web", "connected", "visual", "news"],
+
+    # ---- On-demand web research (Tavily) ---------------------------------
+    # Agentic augmentation: when a question is about current events/cases that
+    # may live in news/articles/blogs/releases AND the local corpus is thin, the
+    # web-research agent searches, judges each result for relevance + novelty +
+    # worth, and ingests only worthy content into the 'news' corpus. Off by
+    # default (needs TAVILY_API_KEY); never fires unless enabled + needed.
+    "web_search": {
+        "provider": "offline",       # offline | tavily
+        "enabled": False,            # master switch
+        "auto": True,                # only augment when needed (not every query)
+        "corpus": "news",
+        "max_results": 5,
+        "min_relevance": 0.30,       # keyword/score floor to consider a result
+        "novelty_threshold": 0.88,   # skip if too similar to existing corpus
+        "min_content_chars": 200,    # ignore thin snippets
+        "max_ingest_per_query": 3,   # cap worthy docs added per question
+        "judge_with_llm": True,      # LLM worthiness judge when a key is set
+        "insufficient_conf": 0.45,   # local 'thin evidence' threshold
+    },
 
     # ---- API server -------------------------------------------------------
     # auth_token: empty = open (local dev). Set it (or env ATF_API_TOKEN) to
