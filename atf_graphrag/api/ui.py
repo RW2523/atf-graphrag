@@ -474,7 +474,41 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
     </div>
 
     <div class="card">
-      <h3 style="margin:0 0 4px">3 &middot; Provision / tear down the AWS-native stack</h3>
+      <h3 style="margin:0 0 4px">3 &middot; Advanced Bedrock (BDA &middot; Guardrails+Automated Reasoning &middot; RAG Eval)</h3>
+      <p style="color:var(--muted);margin:0 0 10px;font-size:13px">The managed Bedrock capabilities. All optional &mdash; leave blank to skip.</p>
+      <div class="awsgrid">
+        <label>Document parser
+          <select id="aws-parser">
+            <option value="bedrock">Bedrock FM (Claude)</option>
+            <option value="bda">Bedrock Data Automation (BDA)</option>
+            <option value="textract">Textract (structured)</option>
+            <option value="docling">Docling (local)</option>
+          </select></label>
+        <label>BDA project ARN<input id="aws-bda-arn" placeholder="arn:aws:bedrock:...:data-automation-project/..."/></label>
+        <label>BDA working bucket<input id="aws-bda-bucket" placeholder="my-bda-bucket"/></label>
+      </div>
+      <div class="awsgrid" style="margin-top:6px">
+        <label>Guardrail<select id="aws-gr-en"><option value="0">disabled</option><option value="1">enabled</option></select></label>
+        <label>Guardrail ID<input id="aws-gr-id" placeholder="abcd1234"/></label>
+        <label>Guardrail version<input id="aws-gr-ver" value="DRAFT"/></label>
+        <label>Automated Reasoning policy ARN<input id="aws-ar-arn" placeholder="arn:aws:bedrock:...:automated-reasoning-policy/..."/></label>
+      </div>
+      <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+        <h4 style="margin:0 0 6px">Managed RAG Evaluation</h4>
+        <div class="awsgrid">
+          <label>Eval service role ARN<input id="aws-ev-role" placeholder="arn:aws:iam::...:role/bedrock-eval"/></label>
+          <label>Dataset (S3 JSONL)<input id="aws-ev-data" placeholder="s3://bucket/qa.jsonl"/></label>
+          <label>Output (S3)<input id="aws-ev-out" placeholder="s3://bucket/eval-out/"/></label>
+        </div>
+        <div class="actions" style="justify-content:flex-start;margin-top:8px">
+          <button class="btn ghost" onclick="awsRagEval(this)">&#128202; Submit RAG evaluation job</button>
+        </div>
+        <div id="aws-ev-res" class="s" style="margin-top:6px"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 4px">4 &middot; Provision / tear down the AWS-native stack</h3>
       <p style="color:var(--muted);margin:0 0 10px;font-size:13px">Create the managed resources (S3, DynamoDB, SSM, Bedrock Guardrail, OpenSearch Serverless, Neptune Analytics) from here — or <b>delete everything</b> in one click to stop paying when you're done. Resources are tagged <code>Project=atf-graphrag</code>. Run <b>Plan</b> first.</p>
       <div class="awsgrid" style="margin-bottom:8px">
         <label>Stack project tag<input id="aws-proj" value="atf-graphrag"/></label>
@@ -490,7 +524,7 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
     </div>
 
     <div class="card">
-      <h3 style="margin:0 0 10px">4 &middot; Validate &amp; activate</h3>
+      <h3 style="margin:0 0 10px">5 &middot; Validate &amp; activate</h3>
       <div class="actions" style="justify-content:flex-start;flex-wrap:wrap">
         <button class="btn" onclick="awsValidate()">&#128268; Validate connectivity</button>
         <button class="btn" onclick="awsApply()">&#9889; Apply &amp; switch engine</button>
@@ -1319,7 +1353,22 @@ function awsForm(){
       prefix:$('#aws-vs-prefix').value.trim(),dim:$('#aws-embdim').value.trim()},
     graph_store:{provider:$('#aws-gs').value,endpoint:$('#aws-gs-ep').value.trim(),
       port:$('#aws-gs-port').value.trim(),uri:$('#aws-gs-uri').value.trim()},
-    blob_store:{bucket:$('#aws-s3').value.trim(),prefix:$('#aws-s3prefix').value.trim()}};
+    blob_store:{bucket:$('#aws-s3').value.trim(),prefix:$('#aws-s3prefix').value.trim()},
+    parser:{provider:$('#aws-parser').value},
+    bda:{project_arn:$('#aws-bda-arn').value.trim(),bucket:$('#aws-bda-bucket').value.trim()},
+    guardrails:{enabled:$('#aws-gr-en').value==='1',guardrail_id:$('#aws-gr-id').value.trim(),
+      guardrail_version:$('#aws-gr-ver').value.trim(),
+      automated_reasoning_policy:$('#aws-ar-arn').value.trim()}};
+}
+async function awsRagEval(btn){
+  const body={role_arn:$('#aws-ev-role').value.trim(),dataset_s3:$('#aws-ev-data').value.trim(),
+    output_s3:$('#aws-ev-out').value.trim(),region:$('#aws-region').value.trim()||'us-east-1'};
+  if(!body.role_arn||!body.dataset_s3||!body.output_s3){toast('Fill role ARN, dataset and output S3');return;}
+  const o=btn.innerHTML;btn.disabled=true;btn.innerHTML='Submitting&hellip;';
+  try{const r=await fetch('/api/aws/rag-eval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+    $('#aws-ev-res').innerHTML=r.ok?('&#9989; Submitted: '+esc(r.jobArn||'job created')):('&#10060; '+esc(r.error||'failed'));
+  }catch(e){$('#aws-ev-res').textContent='Submit failed';}
+  btn.disabled=false;btn.innerHTML=o;
 }
 function awsRenderWiring(w){
   const aws=/Bedrock|Qdrant|OpenSearch|Neptune|Neo4j|Textract|S3/;

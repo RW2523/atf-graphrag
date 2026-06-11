@@ -131,6 +131,24 @@ def build_aws_settings(form: Dict[str, Any]) -> Settings:
     cfg["ingestion"]["ocr"].update({
         "provider": ("textract" if ocr.get("enabled", True) else "auto"),
         "region": region})
+
+    # --- Advanced Bedrock: parser (incl. BDA), guardrails + automated reasoning -
+    par = f.get("parser") or {}
+    if par.get("provider"):
+        cfg["ingestion"]["parser"] = {"provider": par["provider"]}
+    bda = f.get("bda") or {}
+    if bda.get("project_arn") or bda.get("bucket"):
+        cfg["ingestion"]["bda"] = {
+            "region": region, "bucket": bda.get("bucket", ""),
+            "project_arn": bda.get("project_arn", ""),
+            "profile_arn": bda.get("profile_arn", "")}
+    gr = f.get("guardrails") or {}
+    if gr.get("enabled") or gr.get("guardrail_id"):
+        cfg["guardrails"] = {
+            "provider": "bedrock", "enabled": bool(gr.get("enabled")),
+            "guardrail_id": gr.get("guardrail_id", ""),
+            "guardrail_version": gr.get("guardrail_version", "DRAFT"),
+            "automated_reasoning_policy": gr.get("automated_reasoning_policy", "")}
     return s
 
 

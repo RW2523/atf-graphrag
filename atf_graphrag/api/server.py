@@ -737,6 +737,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, _aws_smoke())
             if self.path == "/api/aws/revert":
                 return self._send(200, _revert_local())
+            if self.path == "/api/aws/rag-eval":
+                try:
+                    from eval.bedrock_eval import submit_rag_evaluation
+                    out = submit_rag_evaluation(
+                        region=data.get("region", "us-east-1"),
+                        role_arn=data["role_arn"], output_s3=data["output_s3"],
+                        dataset_s3=data["dataset_s3"])
+                    return self._send(200, {"ok": True,
+                                            "jobArn": out.get("jobArn", "")})
+                except Exception as e:  # noqa: BLE001
+                    return self._send(200, {"ok": False, "error": str(e)})
             if self.path == "/api/config/apply":
                 return self._send(200, _config_apply(data))
             if self.path in ("/api/aws/plan", "/api/aws/provision",
