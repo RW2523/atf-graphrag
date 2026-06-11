@@ -113,6 +113,94 @@ def _is_refusal(ans: str) -> bool:
     return (not a.strip()) or any(c in a for c in cues)
 
 
+# ── Additional 25 (q26-q50): harder — specific table values (rerank headroom),
+#    multi-hop relationship/pattern (PPR headroom), visual, timeline, refusals ──
+QUESTIONS_EXTRA = [
+    # specific table / numeric
+    {"id": "q26", "intent": "table", "refuse": False,
+     "q": "How many pistols were manufactured in the United States in the most recent AFMER report year?",
+     "anchors": ["pistol", "manufactur"]},
+    {"id": "q27", "intent": "table", "refuse": False,
+     "q": "How many firearms were reported lost or stolen from Federal Firearms Licensees in transit?",
+     "anchors": ["transit", "lost", "stolen"]},
+    {"id": "q28", "intent": "table", "refuse": False,
+     "q": "How many bombing incidents versus accidental explosions were reported in the Explosives Incident Report?",
+     "anchors": ["bombing", "explos", "incident"]},
+    {"id": "q29", "intent": "table", "refuse": False,
+     "q": "How many firearms manufacturers held a Type 07 Federal Firearms License?",
+     "anchors": ["type 07", "manufactur", "license"]},
+    {"id": "q30", "intent": "table", "refuse": False,
+     "q": "What share of traced firearms were privately made firearms (PMFs)?",
+     "anchors": ["privately made", "pmf", "trace"]},
+    # definitions / procedural (harder)
+    {"id": "q31", "intent": "fact", "refuse": False,
+     "q": "What is the difference between a Type 01 dealer and a Type 07 manufacturer FFL?",
+     "anchors": ["type 01", "type 07", "license"]},
+    {"id": "q32", "intent": "fact", "refuse": False,
+     "q": "What is a multiple sales report and when must a dealer file one?",
+     "anchors": ["multiple sale", "report", "dealer"]},
+    {"id": "q33", "intent": "fact", "refuse": False,
+     "q": "What is 'time-to-crime' in the context of firearm tracing?",
+     "anchors": ["time-to-crime", "time to crime", "trace"]},
+    {"id": "q34", "intent": "fact", "refuse": False,
+     "q": "How are suppressors and short-barreled rifles regulated under the National Firearms Act?",
+     "anchors": ["national firearms act", "nfa"]},
+    {"id": "q35", "intent": "fact", "refuse": False,
+     "q": "What is a straw purchase of a firearm?",
+     "anchors": ["straw", "purchas"]},
+    # relationship / pattern (multi-hop — PPR headroom)
+    {"id": "q36", "intent": "relationship", "refuse": False,
+     "q": "How are privately made firearms connected to the rise in untraceable firearms recovered at crime scenes?",
+     "anchors": ["privately made", "pmf", "recover"]},
+    {"id": "q37", "intent": "relationship", "refuse": False,
+     "q": "What is the connection between licensed manufacturers and the firearms export process?",
+     "anchors": ["manufactur", "export"]},
+    {"id": "q38", "intent": "pattern", "refuse": False,
+     "q": "How do straw purchases relate to broader firearms trafficking patterns?",
+     "anchors": ["straw", "traffick"]},
+    {"id": "q39", "intent": "pattern", "refuse": False,
+     "q": "What patterns emerge across the states with the highest firearm recoveries and traces?",
+     "anchors": ["state", "recover", "trace"]},
+    {"id": "q40", "intent": "relationship", "refuse": False,
+     "q": "How are FFL inventory losses connected to firearms later recovered in criminal investigations?",
+     "anchors": ["ffl", "inventory", "loss"]},
+    # timeline
+    {"id": "q41", "intent": "timeline", "refuse": False,
+     "q": "How has the number of privately made firearms recovered and traced changed over recent years?",
+     "anchors": ["privately made", "pmf", "year"]},
+    {"id": "q42", "intent": "timeline", "refuse": False,
+     "q": "What is the trend in total US firearms manufacturing over the last decade?",
+     "anchors": ["manufactur", "trend", "year"]},
+    # visual (chart / table / exhibit)
+    {"id": "q43", "intent": "visual", "refuse": False,
+     "q": "What does the AFMER exhibit on firearms manufactured by type and year show?",
+     "anchors": ["manufactur", "type"]},
+    {"id": "q44", "intent": "table", "refuse": False,
+     "q": "Summarize what the firearms commerce report tables show about firearm imports by country.",
+     "anchors": ["import", "country"]},
+    # multi-corpus / synthesis
+    {"id": "q45", "intent": "multi", "refuse": False,
+     "q": "Combining manufacturing, trafficking and tracing data, describe the lifecycle of a firearm from production to crime-scene recovery.",
+     "anchors": ["manufactur", "trace", "recover"]},
+    {"id": "q46", "intent": "multi", "refuse": False,
+     "q": "What enforcement and regulatory functions does ATF perform across both firearms and explosives?",
+     "anchors": ["regulat", "explos"]},
+    {"id": "q47", "intent": "fact", "refuse": False,
+     "q": "What does eTrace provide to law enforcement that a manual paper trace does not?",
+     "anchors": ["etrace", "law enforcement"]},
+    {"id": "q48", "intent": "pattern", "refuse": False,
+     "q": "What categories of explosives incidents does the EIR track, such as bombings, recoveries and threats?",
+     "anchors": ["explos", "incident"]},
+    # out-of-corpus (SHOULD refuse)
+    {"id": "q49", "intent": "refusal", "refuse": True,
+     "q": "What was the GDP of France in 2024?",
+     "anchors": []},
+    {"id": "q50", "intent": "refusal", "refuse": True,
+     "q": "Write a short poem about the ocean at sunset.",
+     "anchors": []},
+]
+
+
 def main():
     os.environ.setdefault("ATF_PROFILE", "local")
     from atf_graphrag.config import Settings
@@ -135,9 +223,13 @@ def main():
     eng = Engine(s)
     r = Retriever(eng)
 
+    questions = QUESTIONS + (QUESTIONS_EXTRA
+                             if os.environ.get("ATF_EVAL_50") == "1" else [])
+    print(f"[eval] questions={len(questions)}", flush=True)
+
     rows = []
     t0 = time.time()
-    for item in QUESTIONS:
+    for item in questions:
         qt0 = time.time()
         try:
             res = r.answer(item["q"], trace=True)
