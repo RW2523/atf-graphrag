@@ -34,6 +34,15 @@ _INSUFFICIENT_MARKERS = (
 )
 
 
+def _safe_sql(get_store, question: str, engine):
+    """Run the SQL lane defensively — any exception means fallback to RAG."""
+    try:
+        return get_store(engine).query(question, engine)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[sql-lane] {exc}")
+        return None
+
+
 def _insufficient(answer: str) -> bool:
     """True when an answer is effectively a refusal — used to trigger the
     global→local fallback so a community miss doesn't surface as 'no answer'."""
@@ -171,6 +180,41 @@ class Retriever:
             hits = _timed("evaluate",
                           lambda: self.evaluate.evaluate(plan, hits, self.e))
         steps["4_evaluation"] = {"kept": len(hits)}
+
+        # ── SQL lane (Stage-1 table layer): tabular/aggregate questions are
+        # answered by SQL over the structured table store — computed over ALL
+        # rows with provenance — and the result is injected as top evidence.
+        # Any failure (no candidates, bad SQL, empty result) means nothing is
+        # added: the RAG lane proceeds unchanged (automatic fallback).
+        import re as _re
+        if cfg.get("sql_lane", True) and (
+                plan.intent == "table" or
+                _re.search(r"\b(how many|highest|most|least|total|count|compare"
+                           r"|average|rank|which state|sum)\b", question, _re.I)):
+            from ..indexing.table_store import get_store
+            sql_res = _timed("sql_lane",
+                             lambda: _safe_sql(get_store, plan.question, self.e))
+            if sql_res:
+                steps["3d_sql"] = {"sql": sql_res["sql"],
+                                   "rows": len(sql_res["result_rows"]),
+                                   "tables": [t["doc"][:60] for t in sql_res["tables"]]}
+                from ..models import ChunkRecord, RetrievalHit
+                hdr = " | ".join(sql_res["result_columns"])
+                body = "\n".join(" | ".join(str(c) for c in r)
+                                 for r in sql_res["result_rows"][:20])
+                prov = "; ".join(f"{t['doc']} p.{t['page']}"
+                                 for t in sql_res["tables"][:3])
+                rec = ChunkRecord(
+                    text=(f"[SQL RESULT] computed from {prov}\n"
+                          f"query: {sql_res['sql']}\n{hdr}\n{body}"),
+                    chunk_id="sql:" + str(abs(hash(sql_res["sql"])) % 10**10),
+                    corpus="pdf", content_type="table",
+                    source_name=sql_res["tables"][0]["doc"] if sql_res["tables"] else "table_store",
+                    page_number=sql_res["tables"][0]["page"] if sql_res["tables"] else None,
+                    extraction_method="sql", extraction_summary=hdr + "\n" + body[:280])
+                h = RetrievalHit(chunk=rec, score=0.97, source="sql")
+                h.eval_score = 0.95
+                hits.insert(0, h)
 
         # ── Corrective retrieval: evidence evaluated as weak → reformulate the
         # query and request again, merge what's gained, re-evaluate. ──────────
