@@ -881,6 +881,18 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/reclassify":
                 from ..indexing.reclassify import reclassify_all
                 return self._send(200, reclassify_all(_engine))
+            if self.path == "/api/graph/enrich":
+                from ..graph import enrich as _enrich
+                if data.get("stop"):
+                    return self._send(200, _enrich.stop())
+                out = _enrich.start_background(
+                    _engine, _indexer,
+                    workers=int(data.get("workers", 12)),
+                    max_chunks=int(data.get("max_chunks", 0)))
+                return self._send(200, out)
+            if self.path == "/api/graph/enrich/status":
+                from ..graph import enrich as _enrich
+                return self._send(200, _enrich.status())
             if self.path == "/api/graph/verify":
                 from ..graph.verify import verify_and_prune
                 use_llm = bool(data.get("use_llm", True))
