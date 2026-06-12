@@ -884,6 +884,19 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/reclassify":
                 from ..indexing.reclassify import reclassify_all
                 return self._send(200, reclassify_all(_engine))
+            if self.path == "/api/tables/build":
+                from ..indexing.table_store import get_store
+                st = get_store(_engine)
+                out = {"tables": st.count(),
+                       "categories": len(st.categories())}
+                if data.get("summarize", True):
+                    out["summarized"] = st.summarize_categories(
+                        _engine, top=int(data.get("top", 40)))
+                return self._send(200, out)
+            if self.path == "/api/tables/categories":
+                from ..indexing.table_store import get_store
+                return self._send(200, {"categories":
+                                        get_store(_engine).categories()[:200]})
             if self.path == "/api/graph/enrich":
                 from ..graph import enrich as _enrich
                 if data.get("stop"):

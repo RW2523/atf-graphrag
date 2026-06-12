@@ -54,6 +54,17 @@ class TableStore:
             "CREATE TABLE IF NOT EXISTS rows ("
             "table_id INTEGER, idx INTEGER, cells TEXT)")
         self.db.execute("CREATE INDEX IF NOT EXISTS rows_tid ON rows(table_id)")
+        # Stage 2/3: category consolidation + enrichment.
+        for ddl in ("ALTER TABLE tables ADD COLUMN category TEXT",
+                    "ALTER TABLE tables ADD COLUMN cat_conf REAL"):
+            try:
+                self.db.execute(ddl)
+            except Exception:  # noqa: BLE001  column already exists
+                pass
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS categories ("
+            "category TEXT PRIMARY KEY, n_tables INTEGER, years TEXT, "
+            "confidence REAL, name TEXT, reason TEXT, summary TEXT)")
         self.db.commit()
 
     # ── build ────────────────────────────────────────────────────────────────
@@ -96,7 +107,118 @@ class TableStore:
                 n_tables += 1
                 n_rows += len(rows)
         self.db.commit()
-        return {"tables": n_tables, "rows": n_rows}
+        cons = self.consolidate()          # Stage 2 runs on every (re)build
+        return {"tables": n_tables, "rows": n_rows, **cons}
+
+    # ── Stage 2: confidence-gated category consolidation ─────────────────────
+    @staticmethod
+    def _signature(title: str, doc: str, columns: List[str], width: int) -> set:
+        """Tokens describing what KIND of table this is (year/numbers removed,
+        so the 2025 and 2026 editions of the same table share a signature)."""
+        base = " ".join([title or "", os.path.basename(doc or "")] +
+                        [c for c in columns if not c.startswith("col")])
+        toks = {t for t in _TOKEN.findall(base.lower())
+                if t not in _STOP and not t.isdigit() and not _YEAR.match(t)}
+        toks.add(f"w{width}")          # same family ⇒ same column count
+        return toks
+
+    def consolidate(self) -> Dict[str, Any]:
+        """Group same-category tables across documents/years. CONFIDENCE-GATED:
+        a table joins a category only when its signature overlaps the category
+        seed >= 0.55 (Jaccard) AND the column count matches — below that it
+        stays standalone. No rows are ever physically merged; the category is a
+        label that lets retrieval pull ALL years of a family and lets SQL
+        GROUP BY year across them."""
+        rows = self.db.execute(
+            "SELECT id,doc,title,columns,n_rows,year FROM tables").fetchall()
+        cats: List[Dict[str, Any]] = []    # {key, sig, members, years, confs}
+        for tid, doc, title, cols_json, n, year in rows:
+            cols = json.loads(cols_json)
+            width = len(cols) if cols else 0
+            sig = self._signature(title, doc, cols, width)
+            best, best_j = None, 0.0
+            for c in cats:
+                if f"w{width}" not in c["sig"]:
+                    continue
+                j = len(sig & c["sig"]) / max(len(sig | c["sig"]), 1)
+                if j > best_j:
+                    best, best_j = c, j
+            if best is not None and best_j >= 0.55:
+                best["members"].append(tid)
+                best["years"].add(year or "")
+                best["confs"].append(best_j)
+                best["sig"] |= sig
+            else:
+                key = "cat_" + "_".join(sorted(sig - {f'w{width}'}))[:60] \
+                    + f"_w{width}"
+                cats.append({"key": key, "sig": set(sig), "members": [tid],
+                             "years": {year or ""}, "confs": [1.0]})
+        merged = skipped = 0
+        self.db.execute("DELETE FROM categories")
+        for c in cats:
+            conf = round(sum(c["confs"]) / len(c["confs"]), 3)
+            if len(c["members"]) >= 2:
+                merged += 1
+            else:
+                skipped += 1
+            for tid in c["members"]:
+                self.db.execute(
+                    "UPDATE tables SET category=?, cat_conf=? WHERE id=?",
+                    (c["key"], conf, tid))
+            self.db.execute(
+                "INSERT OR REPLACE INTO categories (category,n_tables,years,"
+                "confidence) VALUES (?,?,?,?)",
+                (c["key"], len(c["members"]),
+                 ",".join(sorted(y for y in c["years"] if y)), conf))
+        self.db.commit()
+        return {"categories": len(cats), "multi_table": merged,
+                "standalone": skipped}
+
+    # ── Stage 3: meta + reason + summary per category ─────────────────────────
+    def summarize_categories(self, engine, top: int = 40) -> int:
+        """LLM name/purpose/summary for the biggest categories (skips ones
+        already summarized; offline → no-op). Summaries feed the SQL prompt
+        and the /api/tables/categories inspection endpoint."""
+        llm = getattr(engine, "llm", None)
+        if llm is None or getattr(llm, "name", "offline") == "offline":
+            return 0
+        done = 0
+        for cat, n, years, conf in self.db.execute(
+                "SELECT category,n_tables,years,confidence FROM categories "
+                "WHERE name IS NULL ORDER BY n_tables DESC LIMIT ?", (top,)):
+            t = self.db.execute(
+                "SELECT id,doc,title,columns FROM tables WHERE category=? "
+                "LIMIT 1", (cat,)).fetchone()
+            if not t:
+                continue
+            sample = self.rows_for(t[0], limit=3)
+            try:
+                out = llm.complete(
+                    f"Table family: title={t[2]!r} doc={t[1]!r} "
+                    f"columns={t[3]} years=[{years}] sample={sample}",
+                    system=('Describe this table family for a data catalog. '
+                            'Respond ONLY JSON: {"name": "<short name>", '
+                            '"reason": "<what it is used for, <=15 words>", '
+                            '"summary": "<what the data contains, <=30 words>"}'),
+                    temperature=0.0, max_tokens=140)
+                m = re.search(r"\{.*\}", out or "", re.S)
+                j = json.loads(m.group(0)) if m else {}
+            except Exception:  # noqa: BLE001
+                continue
+            self.db.execute(
+                "UPDATE categories SET name=?, reason=?, summary=? WHERE category=?",
+                (j.get("name", "")[:80], j.get("reason", "")[:160],
+                 j.get("summary", "")[:300], cat))
+            done += 1
+        self.db.commit()
+        return done
+
+    def categories(self) -> List[Dict[str, Any]]:
+        return [{"category": c, "n_tables": n, "years": y, "confidence": f,
+                 "name": nm or "", "reason": r or "", "summary": s or ""}
+                for c, n, y, f, nm, r, s in self.db.execute(
+                    "SELECT category,n_tables,years,confidence,name,reason,"
+                    "summary FROM categories ORDER BY n_tables DESC")]
 
     # ── candidate selection ──────────────────────────────────────────────────
     def find_tables(self, question: str, limit: int = 4) -> List[Dict[str, Any]]:
@@ -122,7 +244,31 @@ class TableStore:
                                    "columns": json.loads(cols), "n_rows": n,
                                    "chunk_id": cid}))
         scored.sort(key=lambda x: -x[0])
-        return [t for _, t in scored[:limit]]
+        out = [t for _, t in scored[:limit]]
+        # Stage-2 expansion: when the best match belongs to a multi-year
+        # category, pull its siblings from OTHER years so cross-year questions
+        # ("compare 2025 vs 2026") see every edition of the family.
+        if out:
+            row = self.db.execute("SELECT category FROM tables WHERE id=?",
+                                  (out[0]["id"],)).fetchone()
+            cat = row[0] if row else None
+            if cat:
+                have = {t["id"] for t in out}
+                years_have = {t["year"] for t in out}
+                for (tid, doc, page, year, title, cols, n, cid) in self.db.execute(
+                        "SELECT id,doc,page,year,title,columns,n_rows,chunk_id "
+                        "FROM tables WHERE category=? AND id NOT IN "
+                        f"({','.join('?' * len(have))}) ORDER BY n_rows DESC "
+                        "LIMIT 6", (cat, *have)):
+                    if year and year not in years_have:
+                        years_have.add(year)
+                        out.append({"id": tid, "doc": doc, "page": page,
+                                    "year": year, "title": title,
+                                    "columns": json.loads(cols), "n_rows": n,
+                                    "chunk_id": cid})
+                    if len(out) >= limit + 3:
+                        break
+        return out
 
     def rows_for(self, table_id: int, limit: int = 100000) -> List[List[str]]:
         return [json.loads(c) for (c,) in self.db.execute(
@@ -156,10 +302,18 @@ class TableStore:
                  for r in rows])
             head = " | ".join(t["columns"][:width]) if t["columns"] else ""
             sample = "; ".join(" , ".join(r[:6]) for r in rows[:3])
+            # Stage-3 enrichment: the category's catalog summary helps the LLM
+            # pick the right table and columns.
+            csum = ""
+            crow = self.db.execute(
+                "SELECT c.name, c.summary FROM tables t JOIN categories c "
+                "ON t.category=c.category WHERE t.id=?", (t["id"],)).fetchone()
+            if crow and (crow[0] or crow[1]):
+                csum = f" catalog:[{(crow[0] or '')} — {(crow[1] or '')[:120]}]"
             schema_desc.append(
                 f"t{i} (cols c1..c{width} + doc,page,year) — doc:{t['doc'][:60]} "
                 f"p{t['page']} year:{t['year']} title:{t['title'][:60]} "
-                f"headers:[{head[:120]}] sample rows: {sample[:300]}")
+                f"headers:[{head[:120]}]{csum} sample rows: {sample[:300]}")
         if not schema_desc:
             return None
         mem.commit()
