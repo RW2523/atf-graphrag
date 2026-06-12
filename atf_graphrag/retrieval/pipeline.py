@@ -112,9 +112,29 @@ class Retriever:
         corpora = _timed("select", lambda: self.select.select(plan, self.e))
         steps["2_corpus_selection"] = corpora
 
+        # ── Multi-hop: bridge/comparison questions retrieve intermediate facts
+        # first, then chain them ("find X, then use X to find Y"). LLM-gated.
+        hop_hits, hop_chain = [], []
+        if cfg.get("multi_hop", True) and \
+                len(question.split()) >= int(cfg.get("multi_hop_min_words", 10)):
+            from .adaptive import MultiHopPlanner
+            mh = MultiHopPlanner()
+            hops = _timed("multihop_plan", lambda: mh.decompose(question, self.e))
+            if hops:
+                hop_hits, hop_chain, mh_rep = _timed(
+                    "multihop_run",
+                    lambda: mh.run(plan, hops, corpora, self.e,
+                                   self.retrieve_agent.retrieve,
+                                   self.evaluate.evaluate))
+                steps["2b_multihop"] = mh_rep
+
         hits = _timed("retrieve",
                       lambda: self.retrieve_agent.retrieve(plan, corpora, self.e))
         graph_paths = list(getattr(self.retrieve_agent, "last_graph_paths", []))
+        if hop_hits:
+            seen_h = {h.chunk.chunk_id for h in hits}
+            hits.extend(h for h in hop_hits if h.chunk.chunk_id not in seen_h)
+            graph_paths.extend(hop_chain)   # hop chain shown to the generator
 
         # ── Comparison fan-out (generic): "compare A and B" needs BOTH sides ──
         from .structured import (is_comparison, comparison_targets,
@@ -151,6 +171,15 @@ class Retriever:
             hits = _timed("evaluate",
                           lambda: self.evaluate.evaluate(plan, hits, self.e))
         steps["4_evaluation"] = {"kept": len(hits)}
+
+        # ── Corrective retrieval: evidence evaluated as weak → reformulate the
+        # query and request again, merge what's gained, re-evaluate. ──────────
+        if cfg.get("corrective", True):
+            from .adaptive import CorrectiveRetriever
+            hits, corr = _timed("corrective", lambda: CorrectiveRetriever().improve(
+                plan, hits, corpora, self.e,
+                self.retrieve_agent.retrieve, self.evaluate.evaluate))
+            steps["4b_corrective"] = corr
 
         # ── Agentic web-research augmentation (on-demand, only-if-needed) ─────
         # When the question is event/news-oriented and local evidence is thin,
@@ -195,6 +224,31 @@ class Retriever:
             lambda: self.generate.generate(plan, hits, graph_paths, self.e))
         steps["6_generation"] = {"confidence": ans.confidence,
                                  "citations": len(ans.citations)}
+
+        # ── Post-generation retry: the answer itself says the context was
+        # insufficient → one full second request with a reformulated query
+        # (new retrieval + regenerate); keep whichever answer actually answers.
+        if cfg.get("corrective", True) and _insufficient(ans.answer):
+            from .adaptive import reformulate
+            import copy as _copy
+            new_q = reformulate(plan.question, self.e)
+            if new_q:
+                p2 = _copy.copy(plan)
+                p2.question = new_q
+                extra = self.retrieve_agent.retrieve(p2, corpora, self.e)
+                seen2 = {h.chunk.chunk_id for h in hits}
+                merged = hits + [h for h in extra
+                                 if h.chunk.chunk_id not in seen2]
+                if cfg.get("evaluate", True):
+                    merged = self.evaluate.evaluate(plan, merged, self.e)
+                merged = self.rerank.rerank(plan, merged, self.e) \
+                    if cfg.get("rerank", True) else merged[:plan.top_k]
+                ans2 = _timed("retry_generate", lambda: self.generate.generate(
+                    plan, merged, graph_paths, self.e))
+                steps["6b_retry"] = {"reformulated": new_q[:120],
+                                     "improved": not _insufficient(ans2.answer)}
+                if not _insufficient(ans2.answer):
+                    ans, hits = ans2, merged
 
         # Subagent gate (generate→answer): every number in the answer must
         # appear in the cited context; one strict regenerate on violation,

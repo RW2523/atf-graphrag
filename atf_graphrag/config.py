@@ -144,6 +144,11 @@ DEFAULTS: Dict[str, Any] = {
         "rerank": True,
         "llm_refine": True,                # LLM query-plan refinement (eval pins off for determinism)
         "graph_retriever": "bfs",          # bfs | ppr (personalized PageRank for relationship/pattern)
+        "corrective": True,                # weak/insufficient evidence -> reformulate + retry
+        "corrective_max_retries": 1,
+        "weak_top": 0.45,                  # evidence considered weak below this top score
+        "multi_hop": True,                 # LLM decomposition for bridge/comparison questions
+        "multi_hop_min_words": 10,         # only decompose long/complex questions
         "visual_boost": 1.05,              # score boost for table/chart/figure on table/visual intent
         "min_confidence": 0.10,            # lowered to let more evidence reach LLM
     },
