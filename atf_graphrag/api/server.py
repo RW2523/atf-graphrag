@@ -769,6 +769,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, _engine.stats())
         if self.path == "/api/documents":
             return self._send(200, _documents())
+        if self.path == "/api/subagents/reports":
+            from ..subagents import REPORTS
+            return self._send(200, {"reports": list(REPORTS)[::-1][:100]})
         if self.path.split("?")[0] == "/api/document":
             q = self._query()
             detail = _document_detail(q.get("corpus", "pdf"),

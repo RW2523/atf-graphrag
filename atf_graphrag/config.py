@@ -104,6 +104,16 @@ DEFAULTS: Dict[str, Any] = {
         "extraction": {"provider": "llm"},  # llm | comprehend (AWS-native NER+PII)
     },
 
+    # ---- Layer-boundary subagents (quality gates between stages) ----------
+    "subagents": {
+        "parse_quality": True,     # parse→chunk: re-parse w/ fallback when bad
+        "chunk_gate": True,        # chunk→index: junk never enters the index
+        "metadata_audit": True,    # enrich→index: per-doc coverage report
+        "index_audit": True,       # index→store: round-trip retrieval probe
+        "graph_quality": True,     # graph→community: junk-rate + typed stats
+        "grounding_verify": True,  # generate→answer: numbers must match sources
+    },
+
     # ---- Guardrails (content safety over LLM I/O) -------------------------
     "guardrails": {
         "provider": "none",        # none | local | bedrock

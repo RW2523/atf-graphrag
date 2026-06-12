@@ -195,6 +195,17 @@ class Retriever:
             lambda: self.generate.generate(plan, hits, graph_paths, self.e))
         steps["6_generation"] = {"confidence": ans.confidence,
                                  "citations": len(ans.citations)}
+
+        # Subagent gate (generate→answer): every number in the answer must
+        # appear in the cited context; one strict regenerate on violation,
+        # then an explicit caveat + confidence cut if any remain.
+        if (self.e.settings.get("subagents", {}) or {}).get("grounding_verify", True):
+            from ..subagents import GroundingVerifierAgent
+            ans, grep = _timed("grounding", lambda: GroundingVerifierAgent().verify(
+                plan, hits, ans, self.e,
+                lambda p, h: self.generate.generate(p, h, graph_paths, self.e)))
+            steps["7_grounding"] = {k: v for k, v in grep.items()
+                                    if k not in ("ts",)}
         timings["total"] = round(sum(timings.values()), 1)
         steps["timings_ms"] = timings
 

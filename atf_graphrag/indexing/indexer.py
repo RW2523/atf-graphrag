@@ -99,6 +99,11 @@ class Indexer:
             pages = parser.load(path, vision_provider=vision)
         else:
             pages = load_file(path, vision_provider=vision)
+        # Subagent gate (parse→chunk): silently-bad parser output (empty/garbled
+        # pages without an exception) is detected and re-parsed via the fallback.
+        if (self.e.settings.get("subagents", {}) or {}).get("parse_quality", True):
+            from ..subagents import ParseQualityAgent
+            pages, _prep = ParseQualityAgent().review(pages, path, self.e, vision)
         st = source_type or ("pdf" if ext == ".pdf" else
                              "website" if ext in (".html", ".htm") else "document")
         # Extract year from filename so date-filtered queries route correctly
@@ -151,6 +156,27 @@ class Indexer:
         # Persist after every file so chunks survive across sessions.
         self.e.vstore(corpus).commit()
         self.e.graph.commit()
+        # Subagent audits (enrich→index, index→store, graph→community): verify
+        # the document is well-labelled, actually findable, and the graph clean.
+        sub = self.e.settings.get("subagents", {}) or {}
+        try:
+            doc_id = _doc_id(name)
+            vs = self.e.vstore(corpus)
+            if sub.get("metadata_audit", True):
+                from ..subagents import MetadataAuditAgent
+                sample = [vs.get(cid) for cid, p in
+                          list(getattr(vs, "_payloads", {}).items())[:5000]
+                          if p.get("document_id") == doc_id][:200]
+                if sample:
+                    MetadataAuditAgent().audit([c for c in sample if c])
+            if sub.get("index_audit", True):
+                from ..subagents import IndexAuditAgent
+                IndexAuditAgent().audit(self.e, corpus, doc_id, n)
+            if sub.get("graph_quality", True):
+                from ..subagents import GraphQualityAgent
+                GraphQualityAgent().audit(self.e)
+        except Exception:  # noqa: BLE001  audits must never break ingestion
+            pass
         return n
 
     def index_directory(self, path: str, corpus: str = "pdf") -> Dict[str, int]:
@@ -263,6 +289,13 @@ class Indexer:
                     rec.table_data = td
                 rec.table_title = table_title_from(heading, piece)
             rec = enrich_metadata(rec)
+            # Subagent gate (chunk→index): junk (URL-only / nav timestamps /
+            # TOC listings) never enters the index. Tables, VLM output and the
+            # doc-summary anchor are protected inside the gate.
+            if (self.e.settings.get("subagents", {}) or {}).get("chunk_gate", True):
+                from ..subagents import ChunkGateAgent
+                if not ChunkGateAgent().allow(rec):
+                    continue
             if self.use_llm:
                 self._llm_augment(rec)
             chunks.append(rec)
