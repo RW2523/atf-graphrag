@@ -272,19 +272,36 @@ def chunk_text(text: str, size: int = 900, overlap: int = 150
         for sub_text, ctype in _split_content_blocks(block):
             if ctype == "table":
                 raw = _format_table(heading, sub_text)
-                for chunk in _split_table_into_chunks(heading, sub_text, size):
+                tchunks = _split_table_into_chunks(heading, sub_text, size)
+                for chunk in tchunks:
                     out.append((heading, chunk, "table"))
-                # If _split_table_into_chunks returned nothing fallback
-                if not _split_table_into_chunks(heading, sub_text, size):
+                if not tchunks:                      # fallback: whole table
                     out.append((heading, raw, "table"))
 
             elif ctype in ("chart", "figure"):
                 formatted = _format_figure(heading, sub_text, ctype)
-                # Charts/figures are usually short; keep whole unless huge
                 if len(formatted) <= size:
                     out.append((heading, formatted, ctype))
                 else:
-                    out.append((heading, formatted[:size], ctype))
+                    # NEVER truncate a chart/figure description — its tail holds
+                    # the data values. Split at sentence boundaries into
+                    # continuation chunks, each keeping the [CHART]/[FIGURE]
+                    # prefix line so downstream typing stays correct.
+                    first_nl = formatted.find("\n")
+                    prefix = formatted[:first_nl] if 0 < first_nl < 120 \
+                        else f"[{ctype.upper()}]"
+                    body = formatted[first_nl + 1:] if 0 < first_nl < 120 else formatted
+                    sents = re.split(r"(?<=[\.\!\?])\s+", body)
+                    buf = ""
+                    for s in sents:
+                        cand = (buf + " " + s).strip() if buf else s.strip()
+                        if len(cand) > size - len(prefix) and buf:
+                            out.append((heading, f"{prefix}\n{buf}".strip(), ctype))
+                            buf = s.strip()
+                        else:
+                            buf = cand
+                    if buf:
+                        out.append((heading, f"{prefix}\n{buf}".strip(), ctype))
 
             elif ctype == "list":
                 # Keep list items together; split at blank lines if too large
