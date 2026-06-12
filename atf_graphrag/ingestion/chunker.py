@@ -301,7 +301,15 @@ def chunk_text(text: str, size: int = 900, overlap: int = 150
                         else:
                             buf = cand
                     if buf:
-                        out.append((heading, f"{prefix}\n{buf}".strip(), ctype))
+                        piece = f"{prefix}\n{buf}".strip()
+                        # A tiny final remainder would be dropped by the
+                        # min-length filter — merge it into the previous chunk
+                        # (slightly exceeding `size` is better than losing data).
+                        if len(piece) < 60 and out and out[-1][2] == ctype:
+                            h0, c0, t0 = out[-1]
+                            out[-1] = (h0, c0 + " " + buf, t0)
+                        else:
+                            out.append((heading, piece, ctype))
 
             elif ctype == "list":
                 # Keep list items together; split at blank lines if too large
