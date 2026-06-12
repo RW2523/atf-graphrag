@@ -358,6 +358,29 @@ class RetrievalAgent:
                     boost = content_boost if chunk.content_type in ("table", "chart", "figure") else 1.0
                     add(chunk, s * boost, "vector")
 
+        # Deterministic table-row lookup ("any cell in any row"): when the
+        # question names a specific entity whose row lives inside a table,
+        # exact-match over structured table_data finds it — embeddings/BM25
+        # cannot be trusted to surface one row among thousands of table chunks.
+        # The matched row is pinned into extraction_summary so generation
+        # quotes the exact cell evidence.
+        from .table_lookup import find_rows
+        self.last_row_matches = 0
+        for chunk, row_text, score in find_rows(plan.question, engine, corpora):
+            note = f"MATCHED TABLE ROW: {row_text}"
+            ex = merged.get(chunk.chunk_id)
+            if ex is not None:
+                if note not in (ex.chunk.extraction_summary or ""):
+                    ex.chunk.extraction_summary = (
+                        note + "\n" + (ex.chunk.extraction_summary or ""))[:900]
+                ex.score = max(ex.score, score)
+                ex.source = "table_row"
+            else:
+                chunk.extraction_summary = (
+                    note + "\n" + (chunk.extraction_summary or ""))[:900]
+                add(chunk, score, "table_row")
+            self.last_row_matches += 1
+
         graph_paths: List[str] = []
         self.last_graph_mode = "none"
         if plan.use_graph:
@@ -375,7 +398,11 @@ class RetrievalAgent:
 
         # Chunk quality filter: penalise navigation/TOC/URL/summary garbage so
         # that high-BM25-scoring but low-content chunks don't crowd out real data.
+        # Deterministic table-row matches are exempt: a numeric row reads as
+        # "low quality" text to the heuristic, but it IS the asked-about cell.
         for h in hits:
+            if h.source == "table_row":
+                continue
             q = _chunk_quality(h.chunk)
             if q < 1.0:
                 h.score *= q
@@ -448,6 +475,14 @@ class RetrievalAgent:
 
         # Apply source diversity to prevent any single large document dominating
         hits = _apply_source_diversity(hits, max_per_source=per_src)
+
+        # Re-inject any deterministic table-row matches culled by the pool cut /
+        # diversity cap: an exact row match is the answer's evidence by
+        # construction and must always reach evaluation.
+        present = {h.chunk.chunk_id for h in hits}
+        for h in merged.values():
+            if h.source == "table_row" and h.chunk.chunk_id not in present:
+                hits.append(h)
 
         self.last_graph_paths = graph_paths
         return hits
@@ -580,9 +615,16 @@ class EvaluationAgent:
             ctype_bonus = 0.0
             if plan.intent in ("table", "visual") and h.chunk.content_type in ("table", "chart", "figure"):
                 ctype_bonus = 0.12
-            src_q = {"vector": 1.0, "graph": 0.95, "bm25": 0.85}.get(h.source, 0.8)
+            src_q = {"vector": 1.0, "graph": 0.95, "bm25": 0.85,
+                     "table_row": 1.0}.get(h.source, 0.8)
             score = (0.45 * sim + 0.30 * overlap + 0.15 * completeness +
                      meta_bonus + ctype_bonus) * src_q * float(h.chunk.confidence or 1.0)
+            # A deterministic exact row match IS high-confidence evidence by
+            # construction — a numeric row scores ~0 on sim/overlap, so floor it
+            # rather than let the heuristic blend drop the one chunk that holds
+            # the asked-about cell.
+            if h.source == "table_row":
+                score = max(score, 0.72)
             h.eval_score = round(score, 4)
             h.eval_notes = (f"sim={sim:.2f} overlap={overlap:.2f} "
                             f"src={h.source} ctype={h.chunk.content_type}")

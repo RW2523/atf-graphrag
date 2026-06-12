@@ -142,6 +142,7 @@ class Retriever:
             "candidates": len(hits),
             "graph_paths": len(graph_paths),
             "graph_mode": getattr(self.retrieve_agent, "last_graph_mode", "none"),
+            "table_row_matches": getattr(self.retrieve_agent, "last_row_matches", 0),
             "retrieved_chunk_ids": [h.chunk.chunk_id for h in hits],
             "retrieved_doc_ids": _unique([h.chunk.document_id for h in hits]),
         }
