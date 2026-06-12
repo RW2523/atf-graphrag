@@ -39,6 +39,23 @@ def _toks(text: str) -> set:
     return {t for t in _TOKEN.findall((text or "").lower()) if t not in _STOP}
 
 
+def _domain_tier(url: str) -> float:
+    """Source credibility tier: official/wire services outrank random blogs.
+    Used to weight worthiness — a .gov release and a blogspot post should not
+    carry equal weight in an investigative corpus."""
+    host = re.sub(r"^https?://(www\.)?", "", (url or "").lower()).split("/")[0]
+    if host.endswith((".gov", ".mil")):
+        return 1.0
+    if host.endswith(".edu") or any(w in host for w in (
+            "reuters.", "apnews.", "npr.org", "bbc.", "courthousenews",
+            "justice.gov", "atf.gov")):
+        return 0.9
+    if any(w in host for w in ("blogspot", "medium.com", "substack",
+                               "wordpress", "tumblr")):
+        return 0.4
+    return 0.65                                  # unknown outlet
+
+
 class WebResearchAgent:
     def __init__(self):
         self._indexer = None      # lazily built (avoids import cycle at module load)
@@ -112,10 +129,15 @@ class WebResearchAgent:
         # relevance: keyword overlap OR strong provider score
         rtok = _toks(title + " " + content[:1200])
         overlap = len(qtok & rtok) / (len(qtok) or 1)
-        relevant = overlap >= float(cfg.get("min_relevance", 0.30)) \
-            or r.get("score", 0) >= 0.6
+        tier = _domain_tier(url)
+        d["tier"] = tier
+        # Credibility-weighted relevance: low-tier sources (blogs) must clear a
+        # 1.5x higher relevance bar; provider score is tier-discounted.
+        floor = float(cfg.get("min_relevance", 0.30)) * (1.5 if tier < 0.5 else 1.0)
+        relevant = overlap >= floor or (r.get("score", 0) * tier) >= 0.55
         if not relevant:
-            return {**d, "verdict": "skip", "reason": f"low relevance ({overlap:.2f})"}
+            return {**d, "verdict": "skip",
+                    "reason": f"low relevance ({overlap:.2f}, tier {tier})"}
         # novelty: is this already covered by the existing corpus?
         sim = self._max_similarity(content[:1500], engine)
         if sim >= float(cfg.get("novelty_threshold", 0.88)):

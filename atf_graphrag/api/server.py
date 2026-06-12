@@ -312,12 +312,32 @@ def _clear_all() -> dict:
             shutil.rmtree(path, ignore_errors=True)
             os.makedirs(path, exist_ok=True)
             cleared.append(name)
-    # Reset singletons so the next request boots a fresh, empty engine.
+    # Invalidate stale writers + purge job queue, then boot a fresh engine.
+    _invalidate_writers_and_jobs()
     global _jobs
     _engine = _indexer = _retriever = _orch = _jobs = None
     _boot()
     return {"ok": True, "cleared": cleared,
             "documents": _documents()["total_documents"]}
+
+
+def _invalidate_writers_and_jobs() -> None:
+    """After restore/clear the on-disk truth changed: (1) bump the storage
+    epochs so ANY stale writer (resumed job thread, lingering engine reference)
+    is refused at commit instead of clobbering the new state; (2) purge queued
+    jobs + staged uploads — they reference pre-restore reality and must not
+    resume over it. (Root cause of the third data-loss incident.)"""
+    import shutil
+    from ..storage_epoch import bump_epoch
+    root = _storage_root()
+    bump_epoch(root)
+    if _engine is not None:
+        bump_epoch(_engine.settings["graph_store"]["path"])
+    for sub in ("jobs", "uploads"):
+        d = os.path.join(root, sub)
+        if os.path.isdir(d):
+            shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d, exist_ok=True)
 
 
 def _restore_all(name: str) -> bool:
@@ -327,6 +347,7 @@ def _restore_all(name: str) -> bool:
     global _engine, _indexer, _retriever, _orch, _jobs
     ok = restore_backup(_storage_root(), name)
     if ok:
+        _invalidate_writers_and_jobs()
         _engine = _indexer = _retriever = _orch = _jobs = None
         _boot()
     return ok
@@ -344,7 +365,21 @@ def _rebind(settings) -> None:
         jobs_dir=os.path.join(_storage_root(), "jobs"),
         ingest_fn=lambda path, corpus, on_stage: _orch.ingest(
             path, corpus=corpus, on_stage=on_stage),
-        commit_fn=_engine.commit, lock=_INGEST_LOCK)
+        commit_fn=_engine.commit, lock=_INGEST_LOCK,
+        on_complete=lambda jid: _auto_enrich())
+
+
+def _auto_enrich() -> None:
+    """Post-ingest hook: typed-graph enrichment of NEW chunks only (the journal
+    skips everything already processed). Config-gated; offline no-op; runs in a
+    background thread so ingestion latency is unaffected."""
+    try:
+        if not (_engine.settings.get("ingestion", {}) or {}).get("auto_enrich", True):
+            return
+        from ..graph import enrich as _enrich
+        _enrich.start_background(_engine, _indexer, workers=8)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _apply_aws(form: dict) -> dict:
@@ -692,7 +727,8 @@ def _boot() -> None:
             jobs_dir=os.path.join(_storage_root(), "jobs"),
             ingest_fn=lambda path, corpus, on_stage: _orch.ingest(
                 path, corpus=corpus, on_stage=on_stage),
-            commit_fn=_engine.commit, lock=_INGEST_LOCK)
+            commit_fn=_engine.commit, lock=_INGEST_LOCK,
+            on_complete=lambda jid: _auto_enrich())
 
 
 def _storage_root() -> str:
@@ -756,8 +792,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_html(INDEX_HTML)
         if self.path == "/api/status":
             _ws = _engine.settings.get("web_search", {}) or {}
+            # Community freshness: stale when the graph changed after the last
+            # community build (surfaced so the UI can prompt a rebuild).
+            _gd = _engine.settings["graph_store"]["path"]
+            try:
+                _stale = (os.path.getmtime(os.path.join(_gd, "graph.json")) >
+                          os.path.getmtime(os.path.join(_gd, "communities.json")) + 60)
+            except OSError:
+                _stale = None
             return self._send(200, {
                 "key_set": bool(Settings.openrouter_key()),
+                "communities_stale": _stale,
                 "llm_extraction": getattr(_indexer, "_extract_mode", "auto"),
                 "web_search": {"enabled": bool(_ws.get("enabled")),
                                "provider": _ws.get("provider", "offline"),

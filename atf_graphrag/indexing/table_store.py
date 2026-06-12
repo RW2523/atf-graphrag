@@ -285,6 +285,20 @@ class TableStore:
         cands = self.find_tables(question)
         if not cands:
             return None
+        # Lazy Stage-3 catalog fill: if a candidate's category has no catalog
+        # entry yet, summarize the biggest uncataloged families now (<=3 LLM
+        # calls, idempotent) so the SQL prompt gets the catalog context.
+        try:
+            ids = ",".join("?" * len(cands))
+            missing = self.db.execute(
+                f"SELECT COUNT(*) FROM tables t LEFT JOIN categories c ON "
+                f"t.category=c.category WHERE t.id IN ({ids}) AND "
+                "(c.name IS NULL OR c.name='')",
+                [t["id"] for t in cands]).fetchone()[0]
+            if missing:
+                self.summarize_categories(engine, top=3)
+        except Exception:  # noqa: BLE001
+            pass
         # Materialize candidates as temp tables t1..tN with c1..cM (+meta cols).
         mem = sqlite3.connect(":memory:")
         schema_desc = []

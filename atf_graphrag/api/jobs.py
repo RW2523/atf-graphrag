@@ -37,11 +37,13 @@ class JobCancelled(Exception):
 
 class JobManager:
     def __init__(self, jobs_dir: str, ingest_fn: Callable[[str, str], dict],
-                 commit_fn: Callable[[], None], lock: threading.Lock):
+                 commit_fn: Callable[[], None], lock: threading.Lock,
+                 on_complete: Callable[[str], None] = None):
         self.dir = jobs_dir
         os.makedirs(jobs_dir, exist_ok=True)
         self._ingest = ingest_fn
         self._commit = commit_fn
+        self._on_complete = on_complete    # post-ingest hook (auto-enrich etc.)
         self._lock = lock                  # serialises all store writes
         self.jobs: Dict[str, dict] = {}
         self._q: "queue.Queue[Tuple[str, str, str]]" = queue.Queue()
@@ -258,9 +260,17 @@ class JobManager:
         # A cancelled job completes as soon as its known queue is drained (even
         # if not finalized); a normal job needs the finalize signal.
         if drained and (j["finalized"] or j.get("cancelled")):
+            was_running = j["status"] not in ("completed", "cancelled")
             j["status"] = "cancelled" if j.get("cancelled") else "completed"
             if not j["finished"]:
                 j["finished"] = time.time()
+            # Post-ingest hook (e.g. typed-graph auto-enrichment of the new
+            # chunks). Fired once, only on a real completion; never breaks jobs.
+            if was_running and j["status"] == "completed" and self._on_complete:
+                try:
+                    self._on_complete(j.get("id", ""))
+                except Exception:  # noqa: BLE001
+                    pass
 
     # ---- persistence --------------------------------------------------------
     def _persist(self, jid: str) -> None:

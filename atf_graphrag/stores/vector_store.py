@@ -20,6 +20,7 @@ if HAVE_NUMPY:
 class LocalVectorStore:
     def __init__(self, path: str, corpus: str):
         self.corpus = corpus
+        self.root = path
         self.dir = os.path.join(path, corpus)
         os.makedirs(self.dir, exist_ok=True)
         self.file = os.path.join(self.dir, "index.json")
@@ -27,6 +28,11 @@ class LocalVectorStore:
         self._vecs: List[List[float]] = []
         self._payloads: Dict[str, Dict[str, Any]] = {}
         self._mat = None
+        # Epoch guard: remember the storage generation we loaded under so a
+        # stale writer (resumed job thread / old engine reference) can never
+        # commit pre-restore state over newer data.
+        from ..storage_epoch import read_epoch
+        self._epoch = read_epoch(path)
         self._load()
 
     # ---- persistence ----
@@ -39,6 +45,8 @@ class LocalVectorStore:
             self._rebuild()
 
     def _save(self) -> None:
+        from ..storage_epoch import check_epoch
+        check_epoch(self.root, self._epoch, f"vector[{self.corpus}]")
         tmp = self.file + ".tmp"
         with open(tmp, "w") as f:
             json.dump({"ids": self._ids, "vecs": self._vecs,

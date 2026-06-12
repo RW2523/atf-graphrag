@@ -101,6 +101,8 @@ DEFAULTS: Dict[str, Any] = {
         "llm_extraction": "auto",           # off | auto | on  (per-chunk LLM
                                             # entity/relation extraction)
         "llm_extraction_auto_max_pages": 40,  # 'auto' extracts docs up to this size
+        "auto_enrich": True,                # post-ingest typed-graph enrichment
+                                            # of NEW chunks (journaled, background)
         "extraction": {"provider": "llm"},  # llm | comprehend (AWS-native NER+PII)
     },
 

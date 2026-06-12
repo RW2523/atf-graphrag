@@ -17,6 +17,9 @@ from typing import Dict, List, Optional, Set, Tuple
 class LocalGraphStore:
     def __init__(self, path: str):
         os.makedirs(path, exist_ok=True)
+        self.dir = path
+        from ..storage_epoch import read_epoch
+        self._epoch = read_epoch(path)      # stale-writer guard (see _save)
         self.file = os.path.join(path, "graph.json")
         # node -> {type, count, chunks:set, corpus:set}
         self.nodes: Dict[str, Dict] = {}
@@ -56,6 +59,8 @@ class LocalGraphStore:
                 self.adj_typed[e["dst"]].add(e["src"])
 
     def commit(self) -> None:
+        from ..storage_epoch import check_epoch
+        check_epoch(self.dir, self._epoch, "graph")
         data = {
             "nodes": [{"id": k, "type": v["type"], "count": v["count"],
                        "label": v.get("label", k),
