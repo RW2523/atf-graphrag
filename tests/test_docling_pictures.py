@@ -53,7 +53,7 @@ def test_picture_blocks_filters_and_describes(tmp_path, monkeypatch):
     p = DoclingParser({})
     calls = []
     monkeypatch.setattr(p, "_describe_region",
-                        lambda path, pno, bbox, vision:
+                        lambda path, pno, bbox, vision, context='':
                         calls.append(pno) or "Bar chart: arson incidents by year, 2015: 312")
     big = _item(2, _bbox(50, 600, 400, 300))            # real chart
     tiny = _item(2, _bbox(0, 30, 40, 0))                # logo -> filtered
@@ -77,7 +77,7 @@ def test_picture_blocks_skips_offline_vision(tmp_path, monkeypatch):
 def test_picture_blocks_caps_per_page(tmp_path, monkeypatch):
     monkeypatch.setattr("atf_graphrag.config.DATA_DIR", tmp_path)
     p = DoclingParser({})
-    monkeypatch.setattr(p, "_describe_region", lambda *a: "chart data values")
+    monkeypatch.setattr(p, "_describe_region", lambda *a, **k: "chart data values")
     pics = [_item(1, _bbox(0, 700 - i * 10, 200, 500 - i * 10)) for i in range(8)]
     vision = types.SimpleNamespace(name="openrouter")
     blocks = p._picture_blocks(_fake_doc(pics), "/tmp/f.pdf", vision)

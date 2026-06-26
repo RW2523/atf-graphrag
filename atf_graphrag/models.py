@@ -55,6 +55,11 @@ class ChunkRecord:
     extraction_method: str = "text"   # text|ocr|vision|table|web
     vision_model: str = ""
     confidence: float = 1.0
+    # embed_text: optional context-enriched text used for EMBEDDING ONLY
+    # (document title + year + section prepended), so near-identical cross-year
+    # table rows ("Pistols ... 217,691") separate in vector space. Display,
+    # citations and BM25 still use the raw `text`. Empty -> embed `text`.
+    embed_text: str = ""
     # --- bookkeeping ---
     relationships: List[Dict[str, str]] = field(default_factory=list)
     access_level: str = "public"

@@ -260,10 +260,15 @@ class Indexer:
     def _index_text(self, text: str, corpus: str, **meta) -> int:
         vs = self.e.vstore(corpus)
         chunks: List[ChunkRecord] = []
+        # Dedup is scoped to (document, corpus): repeated pages WITHIN a doc are
+        # dropped, but identical text across DIFFERENT documents (e.g. the same
+        # table row in the 2024 and 2025 editions) is kept — each carries its
+        # own provenance and both must be retrievable/queryable.
+        doc_scope = f"{corpus}:{meta.get('document_id', '')}:"
         for heading, piece, ctype in chunk_text(text, self.size, self.overlap):
-            h = hashlib.md5(piece.encode()).hexdigest()
+            h = hashlib.md5((doc_scope + piece).encode()).hexdigest()
             if h in self._seen_hashes:
-                continue   # dedup repeated pages/blocks
+                continue   # dedup repeated pages/blocks within the same document
             self._seen_hashes.add(h)
             rec = ChunkRecord(text=piece, corpus=corpus, section_heading=heading,
                               content_type=ctype,
@@ -301,7 +306,18 @@ class Indexer:
             chunks.append(rec)
         if not chunks:
             return 0
-        vectors = self.e.embedder.embed([c.text for c in chunks])
+        # Context-prepended embedding for table/chart/figure chunks: a bare row
+        # like "Pistols | 217,691" is near-identical across years/documents and
+        # collapses to the same vector. Prepending doc title + year + section
+        # (embedding only — raw text kept for display + BM25) separates them.
+        for c in chunks:
+            if c.content_type in ("table", "chart", "figure"):
+                ctx = " ".join(x for x in (
+                    c.document_title or c.source_name, c.document_date,
+                    c.table_title or c.section_heading) if x).strip()
+                if ctx:
+                    c.embed_text = f"[{ctx}]\n{c.text}"
+        vectors = self.e.embedder.embed([c.embed_text or c.text for c in chunks])
         for rec, vec in zip(chunks, vectors):
             vs.upsert(rec, vec)
             self._build_graph(rec)

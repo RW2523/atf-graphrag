@@ -92,15 +92,21 @@ class DoclingParser(Parser):
                 blocks.append((_item_page(table), _sort_key(table),
                                "[EXTRACTED TABLE]\n" + md))
 
+        page_text: Dict[int, List[str]] = {}
         for item in getattr(doc, "texts", []) or []:
             txt = (getattr(item, "text", "") or "").strip()
             if txt:
-                blocks.append((_item_page(item), _sort_key(item), txt))
+                pno = _item_page(item)
+                blocks.append((pno, _sort_key(item), txt))
+                page_text.setdefault(pno, []).append(txt)
 
         # Pictures (charts / figures / images): docling detects them but does
         # not keep the pixels by default — render each picture's bbox region
         # straight from the PDF page and describe it with the vision model.
-        blocks.extend(self._picture_blocks(doc, path, vision_provider))
+        # Delta-context: each picture is captioned WITH its page's surrounding
+        # prose so the VLM grounds the chart in its real caption/labels/units.
+        ctx = {p: " ".join(t)[:800] for p, t in page_text.items()}
+        blocks.extend(self._picture_blocks(doc, path, vision_provider, ctx))
 
         pages: Dict[int, List[Tuple[Tuple[float, float], str]]] = {}
         for pno, key, text in blocks:
@@ -115,9 +121,13 @@ class DoclingParser(Parser):
                 out.append((pno, "\n\n".join(ordered)))
         return out
 
-    def _picture_blocks(self, doc, path: str, vision) -> List[Tuple[int, Tuple[float, float], str]]:
+    def _picture_blocks(self, doc, path: str, vision,
+                        page_ctx: Optional[Dict[int, str]] = None
+                        ) -> List[Tuple[int, Tuple[float, float], str]]:
         """Render each detected picture's region from the PDF and VLM-describe
-        it. Cached per (file, page, index) so re-ingest never re-pays the VLM."""
+        it. Cached per (file, page, index) so re-ingest never re-pays the VLM.
+        page_ctx maps page_no -> surrounding prose fed into the caption prompt."""
+        page_ctx = page_ctx or {}
         pics = getattr(doc, "pictures", []) or []
         if not pics or vision is None or \
                 getattr(vision, "name", "offline") == "offline":
@@ -140,7 +150,8 @@ class DoclingParser(Parser):
             label = f"p{pno}_img{i}"
             desc = cache.get(label)
             if desc is None:
-                desc = self._describe_region(path, pno, bbox, vision)
+                desc = self._describe_region(path, pno, bbox, vision,
+                                             context=page_ctx.get(pno, ""))
                 if desc:
                     cache.put(label, desc)
             if not desc:
@@ -152,8 +163,10 @@ class DoclingParser(Parser):
         cache.save()
         return out
 
-    def _describe_region(self, path: str, pno: int, bbox, vision) -> str:
-        """Render the bbox region of a PDF page to PNG and VLM-describe it."""
+    def _describe_region(self, path: str, pno: int, bbox, vision,
+                         context: str = "") -> str:
+        """Render the bbox region of a PDF page to PNG and VLM-describe it,
+        grounded in the page's surrounding prose (context) when available."""
         import tempfile
         try:
             import fitz  # type: ignore
@@ -170,7 +183,12 @@ class DoclingParser(Parser):
                 pix.save(tmp)
             finally:
                 mu.close()
-            res = vision.describe_rich(tmp, prompt=_PROMPTS["chart"])
+            prompt = _PROMPTS["chart"]
+            if context:
+                prompt = (prompt + "\n\nSURROUNDING PAGE TEXT (use it to resolve "
+                          "this figure's title, axis labels, units and the entity "
+                          "it describes — do not copy it verbatim):\n" + context)
+            res = vision.describe_rich(tmp, prompt=prompt)
             os.unlink(tmp)
             desc = (res or {}).get("summary", "") or ""
             return "" if _is_vlm_refusal(desc) else desc.strip()
