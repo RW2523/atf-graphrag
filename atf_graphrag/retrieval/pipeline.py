@@ -216,6 +216,33 @@ class Retriever:
                 h.eval_score = 0.95
                 hits.insert(0, h)
 
+        # ── Numeric-fact lane: headline totals living in number-dense TEXT
+        # (e.g. "3,939,517 TOTAL") embed poorly and are quality-penalised, so
+        # they get buried. For numeric/aggregate questions where the SQL lane
+        # added nothing, scan for the number-bearing chunk that best matches the
+        # query and inject it as top evidence. Adds nothing on no match.
+        if cfg.get("numeric_lane", True) and "3d_sql" not in steps and (
+                plan.intent in ("table", "fact") or
+                _re.search(r"\b(how many|how much|total|number of|count|highest"
+                           r"|most|compare|average|sum)\b", question, _re.I)):
+            from .numeric_lookup import find_numeric
+            nfacts = _timed("numeric_lane",
+                            lambda: find_numeric(question, self.e, corpora))
+            if nfacts:
+                steps["3e_numeric"] = {"injected": len(nfacts),
+                                       "top": nfacts[0][0].source_name[:50]}
+                present = {h.chunk.chunk_id for h in hits}
+                from ..models import RetrievalHit as _RH
+                for ch, sc in nfacts:
+                    if ch.chunk_id in present:
+                        for h in hits:
+                            if h.chunk.chunk_id == ch.chunk_id:
+                                h.eval_score = max(h.eval_score or 0, sc)
+                    else:
+                        nh = _RH(chunk=ch, score=sc, source="numeric")
+                        nh.eval_score = sc
+                        hits.insert(0, nh)
+
         # ── Corrective retrieval: evidence evaluated as weak → reformulate the
         # query and request again, merge what's gained, re-evaluate. ──────────
         if cfg.get("corrective", True):

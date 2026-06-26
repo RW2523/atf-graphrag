@@ -310,8 +310,16 @@ class Indexer:
         # like "Pistols | 217,691" is near-identical across years/documents and
         # collapses to the same vector. Prepending doc title + year + section
         # (embedding only — raw text kept for display + BM25) separates them.
+        import re as _re2
         for c in chunks:
-            if c.content_type in ("table", "chart", "figure"):
+            # tables/charts/figures always; PLUS number-dense text chunks (a
+            # grand total like "3,939,517 TOTAL" carries no query keywords, so
+            # prepending doc title + year + section lets a "firearms 2023 afmer"
+            # query reach it instead of it staying an un-findable number blob).
+            number_dense = (c.content_type == "text" and
+                            len(_re2.findall(r"\d", c.text)) > 0.20 * max(len(c.text), 1)
+                            and _re2.search(r"\d{3,}", c.text))
+            if c.content_type in ("table", "chart", "figure") or number_dense:
                 ctx = " ".join(x for x in (
                     c.document_title or c.source_name, c.document_date,
                     c.table_title or c.section_heading) if x).strip()

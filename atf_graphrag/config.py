@@ -147,6 +147,7 @@ DEFAULTS: Dict[str, Any] = {
         "llm_refine": True,                # LLM query-plan refinement (eval pins off for determinism)
         "graph_retriever": "bfs",          # bfs | ppr (personalized PageRank for relationship/pattern)
         "sql_lane": True,                  # tabular questions -> SQL over the table store
+        "numeric_lane": True,              # rescue headline totals buried in number-dense text
         "corrective": True,                # weak/insufficient evidence -> reformulate + retry
         "corrective_max_retries": 1,
         "weak_top": 0.45,                  # evidence considered weak below this top score
