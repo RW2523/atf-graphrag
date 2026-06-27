@@ -135,6 +135,16 @@ DEFAULTS: Dict[str, Any] = {
         "respect_robots": True,    # honour robots.txt
         "ingest_linked_pdfs": True,  # queue linked PDFs into the pdf corpus
         "pdf_corpus": "pdf",
+        "corpus": "web",           # corpus that crawled pages land in
+        # Headless-browser rendering (Playwright) for JS/bot-protected sites:
+        #   auto   -> static fetch, render only when the page looks JS-shelled
+        #   always -> always render (slow; fully client-rendered sites)
+        #   never  -> static fetch only
+        "render": "auto",
+        "render_wait_ms": 0,       # extra settle time after networkidle
+        "render_timeout_ms": 30000,
+        "min_static_words": 80,    # below this visible-word count -> render
+        "user_agent": "ATF-GraphRAG-Crawler/1.0",
     },
 
     # ---- Retrieval --------------------------------------------------------
