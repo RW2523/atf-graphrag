@@ -2,10 +2,10 @@
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing.indexer import Indexer
-from atf_graphrag.stores.graph_store import LocalGraphStore
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.indexing.indexer import Indexer
+from intelligraphrag.stores.graph_store import LocalGraphStore
 
 
 def _graph_tmp():

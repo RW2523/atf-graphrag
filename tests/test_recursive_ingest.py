@@ -3,10 +3,10 @@ and keep same-named files in different folders distinct."""
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing.indexer import Indexer, _walk_supported
-from atf_graphrag.ingestion.orchestrator import IngestionOrchestrator
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.indexing.indexer import Indexer, _walk_supported
+from intelligraphrag.ingestion.orchestrator import IngestionOrchestrator
 
 
 def _tree(root: Path):

@@ -14,19 +14,19 @@ import types
 
 import pytest
 
-from atf_graphrag.config import Settings
+from intelligraphrag.config import Settings
 
 
 # ── parser factory selection (aws profile) ───────────────────────────────────
 
 def test_aws_profile_selects_bedrock_fm_parser():
-    from atf_graphrag.providers import make_parser
+    from intelligraphrag.providers import make_parser
     p = make_parser(Settings(profile="aws"))
     assert type(p).__name__ == "BedrockDocumentParser"
 
 
 def test_textract_parser_selected_by_config():
-    from atf_graphrag.providers import make_parser
+    from intelligraphrag.providers import make_parser
     s = Settings(profile="aws")
     s._cfg["ingestion"]["parser"] = {"provider": "textract"}
     assert type(make_parser(s)).__name__ == "TextractParser"
@@ -60,7 +60,7 @@ def test_textract_parser_builds_text_and_table(monkeypatch, tmp_path):
     import boto3
     fake = types.SimpleNamespace(analyze_document=lambda **k: _textract_resp())
     monkeypatch.setattr(boto3, "client", lambda *a, **k: fake)
-    from atf_graphrag.providers.aws_parsers import TextractParser
+    from intelligraphrag.providers.aws_parsers import TextractParser
     img = tmp_path / "page.png"
     img.write_bytes(b"\x89PNG\r\n")           # non-pdf path -> single analyze call
     pages = TextractParser({}).load(str(img))
@@ -84,7 +84,7 @@ def test_bedrock_fm_parser_transcribes_page(monkeypatch, tmp_path):
             return {"output": {"message": {"content": [
                 {"text": "# Firearms Report\n\n| Year | Count |\n|---|---|\n| 2023 | 3939517 |"}]}}}
     monkeypatch.setattr(boto3, "client", lambda *a, **k: _RT())
-    from atf_graphrag.providers.aws_parsers import BedrockDocumentParser
+    from intelligraphrag.providers.aws_parsers import BedrockDocumentParser
     img = tmp_path / "page.png"
     img.write_bytes(b"\x89PNG\r\n")
     pages = BedrockDocumentParser({"model": "m1"}).load(str(img))
@@ -98,7 +98,7 @@ def test_bedrock_fm_parser_transcribes_page(monkeypatch, tmp_path):
 # ── LocalGuardrail (offline) ─────────────────────────────────────────────────
 
 def test_local_guardrail_redacts_pii_when_enabled():
-    from atf_graphrag.providers.guardrail import LocalGuardrail
+    from intelligraphrag.providers.guardrail import LocalGuardrail
     g = LocalGuardrail({"enabled": True, "redact_pii": True})
     out = g.filter_output("Contact John at john@x.com or 555-123-4567, SSN 123-45-6789.")
     assert "[REDACTED-EMAIL]" in out["text"]
@@ -108,7 +108,7 @@ def test_local_guardrail_redacts_pii_when_enabled():
 
 
 def test_local_guardrail_blocks_denied_terms():
-    from atf_graphrag.providers.guardrail import LocalGuardrail
+    from intelligraphrag.providers.guardrail import LocalGuardrail
     g = LocalGuardrail({"enabled": True, "denied_terms": ["build a bomb"]})
     out = g.filter_output("Here is how to build a bomb.")
     assert out["blocked"] is True
@@ -116,7 +116,7 @@ def test_local_guardrail_blocks_denied_terms():
 
 
 def test_local_guardrail_passthrough_when_disabled():
-    from atf_graphrag.providers.guardrail import LocalGuardrail
+    from intelligraphrag.providers.guardrail import LocalGuardrail
     g = LocalGuardrail({"enabled": False})
     txt = "SSN 123-45-6789"
     assert g.filter_output(txt)["text"] == txt    # untouched when off
@@ -133,7 +133,7 @@ def test_bedrock_guardrail_redacts_via_apply(monkeypatch):
                     "outputs": [{"text": "Contact [REDACTED]."}],
                     "assessments": [{"sensitiveInformationPolicy": {}}]}
     monkeypatch.setattr(boto3, "client", lambda *a, **k: _RT())
-    from atf_graphrag.providers.bedrock import BedrockGuardrail
+    from intelligraphrag.providers.bedrock import BedrockGuardrail
     g = BedrockGuardrail({"enabled": True, "guardrail_id": "gid", "guardrail_version": "1"})
     out = g.filter_output("Contact john@x.com.")
     assert out["text"] == "Contact [REDACTED]."
@@ -147,14 +147,14 @@ def test_bedrock_guardrail_degrades_on_error(monkeypatch):
         def apply_guardrail(self, **k):
             raise RuntimeError("throttled")
     monkeypatch.setattr(boto3, "client", lambda *a, **k: _RT())
-    from atf_graphrag.providers.bedrock import BedrockGuardrail
+    from intelligraphrag.providers.bedrock import BedrockGuardrail
     g = BedrockGuardrail({"enabled": True, "guardrail_id": "gid"})
     out = g.filter_output("hello")
     assert out["text"] == "hello" and out["blocked"] is False   # pass-through
 
 
 def test_bedrock_guardrail_disabled_is_noop():
-    from atf_graphrag.providers.bedrock import BedrockGuardrail
+    from intelligraphrag.providers.bedrock import BedrockGuardrail
     g = BedrockGuardrail({"enabled": False})       # no client constructed
     assert g.filter_output("anything")["text"] == "anything"
 
@@ -170,7 +170,7 @@ def test_bedrock_llm_applies_guardrail_config(monkeypatch):
             captured.update(k)
             return {"output": {"message": {"content": [{"text": "ok"}]}}}
     monkeypatch.setattr(boto3, "client", lambda *a, **k: _RT())
-    from atf_graphrag.providers.bedrock import BedrockLLM
+    from intelligraphrag.providers.bedrock import BedrockLLM
     llm = BedrockLLM({"model": "m1", "guardrails": {
         "enabled": True, "guardrail_id": "gid", "guardrail_version": "2"}})
     llm.complete("hi", system="sys")
@@ -188,7 +188,7 @@ def test_bedrock_llm_no_guardrail_config_when_absent(monkeypatch):
             return {"output": {"message": {"content": [{"text": "ok"}]}}}
     rt = _RT()
     monkeypatch.setattr(boto3, "client", lambda *a, **k: rt)
-    from atf_graphrag.providers.bedrock import BedrockLLM
+    from intelligraphrag.providers.bedrock import BedrockLLM
     BedrockLLM({"model": "m1"}).complete("hi")
     assert "guardrailConfig" not in rt.seen
 
@@ -206,7 +206,7 @@ def test_comprehend_entities_maps_ner_and_pii(monkeypatch):
         def detect_pii_entities(self, **k):
             return {"Entities": [{"Type": "SSN", "Score": 0.95}]}
     monkeypatch.setattr(boto3, "client", lambda *a, **k: _CW())
-    from atf_graphrag.providers.bedrock import ComprehendEntities
+    from intelligraphrag.providers.bedrock import ComprehendEntities
     out = ComprehendEntities({}).extract("Smith & Wesson in Houston, SSN 123-45-6789")
     types_ = {e["type"] for e in out["entities"]}
     assert "organization" in types_ and "location" in types_
@@ -218,9 +218,9 @@ def test_comprehend_entities_maps_ner_and_pii(monkeypatch):
 def test_engine_wires_guardrail_and_parser_from_aws_profile(monkeypatch):
     import boto3
     monkeypatch.setattr(boto3, "client", lambda *a, **k: types.SimpleNamespace())
-    from atf_graphrag.config import set_runtime_key
+    from intelligraphrag.config import set_runtime_key
     set_runtime_key("")                       # force bedrock path, not openrouter
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     e = Engine(Settings(profile="aws"))
     assert type(e.guardrail).__name__ == "BedrockGuardrail"
     assert type(e.parser).__name__ == "BedrockDocumentParser"

@@ -17,23 +17,23 @@ def log(m):
 
 
 def _make_engine():
-    """Engine with the parser chosen by ATF_PARSER (default config; we use
+    """Engine with the parser chosen by IGR_PARSER (default config; we use
     'advanced' for the full rebuild — Docling-on-CPU is too slow at corpus scale,
     while the advanced PyMuPDF+pdfplumber+VLM path does tables + charts in ~hrs)."""
-    from atf_graphrag.config import Settings
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.config import Settings
+    from intelligraphrag.engine import Engine
     s = Settings()
-    parser = os.environ.get("ATF_PARSER", "")
+    parser = os.environ.get("IGR_PARSER", "")
     if parser:
         s._cfg.setdefault("ingestion", {})["parser"] = {"provider": parser}
     return Engine(s)
 
 
 def main():
-    os.environ.setdefault("ATF_PROFILE", "local")
-    from atf_graphrag.indexing.indexer import Indexer
-    from atf_graphrag.storage_lock import acquire_storage_lock, release_storage_lock
-    from atf_graphrag.storage_epoch import bump_epoch
+    os.environ.setdefault("IGR_PROFILE", "local")
+    from intelligraphrag.indexing.indexer import Indexer
+    from intelligraphrag.storage_lock import acquire_storage_lock, release_storage_lock
+    from intelligraphrag.storage_epoch import bump_epoch
 
     eng = _make_engine()
     root = os.path.dirname(eng.settings["vector_store"]["path"])
@@ -61,7 +61,7 @@ def main():
     bump_epoch(eng.settings["graph_store"]["path"])
     log("cleared vectors/graph/blobs (vlm_cache preserved)")
 
-    # ── 2. ingest (fresh engine on empty stores) — parser per ATF_PARSER, VLM
+    # ── 2. ingest (fresh engine on empty stores) — parser per IGR_PARSER, VLM
     #       on, context-prepend embedding, per-chunk LLM extraction OFF (we
     #       enrich the graph in parallel afterward — far faster than inline).
     eng = _make_engine()
@@ -76,7 +76,7 @@ def main():
         f"{round(time.time()-t0)}s")
 
     # ── 3. typed-graph enrichment (parallel, journaled)
-    from atf_graphrag.graph.enrich import GraphEnricher
+    from intelligraphrag.graph.enrich import GraphEnricher
     log("enriching typed graph (parallel extraction over prose chunks)...")
     t1 = time.time()
     enr = GraphEnricher(eng, idx, workers=12).run()
@@ -84,26 +84,26 @@ def main():
         f"{round(time.time()-t1)}s")
 
     # ── 4. node verify (rule + LLM) prune junk
-    from atf_graphrag.graph.verify import verify_and_prune
+    from intelligraphrag.graph.verify import verify_and_prune
     gpath = eng.settings["graph_store"]["path"]
     rep = verify_and_prune(eng.graph, llm=eng.llm, use_llm=True, cache_dir=gpath)
     log(f"node verify: {rep['nodes_before']}->{rep['nodes_after']} "
         f"(rule {rep['rule_dropped']} + llm {rep['llm_dropped']})")
 
     # ── 5. Leiden communities + summaries
-    from atf_graphrag.ingestion.orchestrator import IngestionOrchestrator
+    from intelligraphrag.ingestion.orchestrator import IngestionOrchestrator
     orch = IngestionOrchestrator(eng, idx)
     comms = orch.build_communities(force=True)
     log(f"communities: {len(comms)} (Leiden)")
 
     # ── 6. table store + catalog
-    from atf_graphrag.indexing.table_store import get_store
+    from intelligraphrag.indexing.table_store import get_store
     st = get_store(eng)
     st.summarize_categories(eng, top=40)
     log(f"table store: {st.count()} tables, {len(st.categories())} categories")
 
     # ── 7. save as the 'new' seed
-    from atf_graphrag.api.seeds import save_seed
+    from intelligraphrag.api.seeds import save_seed
     g = eng.graph.stats()
     info = save_seed(root, "new", {
         "documents": len({p.get("document_id") for c in eng.corpora

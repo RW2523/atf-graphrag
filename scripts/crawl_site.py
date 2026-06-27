@@ -35,11 +35,11 @@ def main() -> int:
     ap.add_argument("--save", action="store_true", help="commit + save updated seed after crawl")
     args = ap.parse_args()
 
-    os.environ.setdefault("ATF_PROFILE", "local")
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.indexing.indexer import Indexer
-    from atf_graphrag.ingestion import crawler as C
-    from atf_graphrag.ingestion import browser as B
+    os.environ.setdefault("IGR_PROFILE", "local")
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.indexing.indexer import Indexer
+    from intelligraphrag.ingestion import crawler as C
+    from intelligraphrag.ingestion import browser as B
 
     eng = Engine()
     idx = Indexer(eng, use_llm_extraction=False)
@@ -78,11 +78,11 @@ def main() -> int:
     if args.save:
         eng.commit()
         try:
-            from atf_graphrag.indexing.table_store import get_store
+            from intelligraphrag.indexing.table_store import get_store
             get_store(eng).build(eng)        # fold crawled tables into the store
         except Exception as ex:              # noqa: BLE001
             print(f"[crawl_site] table-store rebuild skipped: {ex}")
-        from atf_graphrag.api.seeds import save_seed
+        from intelligraphrag.api.seeds import save_seed
         root = os.path.dirname(eng.settings["vector_store"]["path"])
         info = save_seed(root, "new", {"note": f"web crawl: {args.url}"})
         print(f"[crawl_site] committed + saved seed ({round(info['bytes']/1048576)} MB)")

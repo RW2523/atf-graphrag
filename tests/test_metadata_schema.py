@@ -5,8 +5,8 @@ payload, round-trips via from_dict, and is usable as a retrieval filter.
 """
 import tempfile
 
-from atf_graphrag.models import ChunkRecord
-from atf_graphrag.stores.vector_store import LocalVectorStore
+from intelligraphrag.models import ChunkRecord
+from intelligraphrag.stores.vector_store import LocalVectorStore
 
 # Client §5 required metadata fields (the full enumerated set).
 REQUIRED_FIELDS = [

@@ -23,7 +23,7 @@ provide a remediation timeline after triage.
   entry (Configuration tab → `POST /api/key`, kept in memory only).
 - `.env`, `storage/`, and local data directories are git-ignored.
 - In non-local profiles (`hybrid`, `aws`) the HTTP API **requires** a bearer
-  token (`ATF_API_TOKEN`); the server refuses to start without it when CORS is
+  token (`IGR_API_TOKEN`); the server refuses to start without it when CORS is
   open.
 
 ## Data handling

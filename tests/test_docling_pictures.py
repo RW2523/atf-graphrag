@@ -1,7 +1,7 @@
 """Docling element mapping: pictures→VLM, reading order, caching (no network)."""
 import types
 
-from atf_graphrag.providers.docling_parser import (DoclingParser, _bbox_key,
+from intelligraphrag.providers.docling_parser import (DoclingParser, _bbox_key,
                                                    _sort_key, _caption_text,
                                                    _PicCache)
 
@@ -35,8 +35,8 @@ def test_caption_text_best_effort():
 
 
 def test_pic_cache_roundtrip(tmp_path, monkeypatch):
-    import atf_graphrag.providers.docling_parser as dp
-    monkeypatch.setattr("atf_graphrag.config.DATA_DIR", tmp_path)
+    import intelligraphrag.providers.docling_parser as dp
+    monkeypatch.setattr("intelligraphrag.config.DATA_DIR", tmp_path)
     c = _PicCache("/x/y.pdf")
     assert c.get("p1_img1") is None
     c.put("p1_img1", "a chart"); c.save()
@@ -49,7 +49,7 @@ def _fake_doc(pics):
 
 
 def test_picture_blocks_filters_and_describes(tmp_path, monkeypatch):
-    monkeypatch.setattr("atf_graphrag.config.DATA_DIR", tmp_path)
+    monkeypatch.setattr("intelligraphrag.config.DATA_DIR", tmp_path)
     p = DoclingParser({})
     calls = []
     monkeypatch.setattr(p, "_describe_region",
@@ -66,7 +66,7 @@ def test_picture_blocks_filters_and_describes(tmp_path, monkeypatch):
 
 
 def test_picture_blocks_skips_offline_vision(tmp_path, monkeypatch):
-    monkeypatch.setattr("atf_graphrag.config.DATA_DIR", tmp_path)
+    monkeypatch.setattr("intelligraphrag.config.DATA_DIR", tmp_path)
     p = DoclingParser({})
     big = _item(1, _bbox(50, 600, 400, 300))
     off = types.SimpleNamespace(name="offline")
@@ -75,7 +75,7 @@ def test_picture_blocks_skips_offline_vision(tmp_path, monkeypatch):
 
 
 def test_picture_blocks_caps_per_page(tmp_path, monkeypatch):
-    monkeypatch.setattr("atf_graphrag.config.DATA_DIR", tmp_path)
+    monkeypatch.setattr("intelligraphrag.config.DATA_DIR", tmp_path)
     p = DoclingParser({})
     monkeypatch.setattr(p, "_describe_region", lambda *a, **k: "chart data values")
     pics = [_item(1, _bbox(0, 700 - i * 10, 200, 500 - i * 10)) for i in range(8)]
@@ -85,7 +85,7 @@ def test_picture_blocks_caps_per_page(tmp_path, monkeypatch):
 
 
 def test_chunker_maps_vlm_chart_block_to_chart_type():
-    from atf_graphrag.ingestion.chunker import chunk_text
+    from intelligraphrag.ingestion.chunker import chunk_text
     text = ("Intro paragraph about incidents in the reporting year.\n\n"
             "[VLM CHART (p4_img2)] 1. Chart Title: Fire Types in BATS. "
             "Values: Incendiary 312, Accidental 95, Undetermined 41.")

@@ -15,7 +15,7 @@ you through a 5-minute "ingest the bundled demo and ask a question" tour.
 > ```bash
 > pip install -r requirements.txt
 > export OPENROUTER_API_KEY=sk-or-...
-> python -m atf_graphrag serve   # http://localhost:8077
+> python -m intelligraphrag serve   # http://localhost:8077
 > ```
 >
 > The repository lives at **<https://github.com/RW2523/intelligraphrag>**.
@@ -38,7 +38,7 @@ you through a 5-minute "ingest the bundled demo and ask a question" tour.
 IntelliGraphRAG's core runtime has **no hard dependencies**. The HTTP API is built on
 Python's standard-library `http.server`, outbound calls use `urllib`, and every store
 (vector, graph, blob) has a local, file-backed implementation. You can clone the repo
-and run `python -m atf_graphrag serve` with **nothing installed but Python**.
+and run `python -m intelligraphrag serve` with **nothing installed but Python**.
 
 Everything in `requirements.txt` is an **optional accelerator** or a provider unlock.
 When a library is missing the platform degrades gracefully rather than crashing — for
@@ -120,7 +120,7 @@ cd intelligraphrag
 No `pip install` needed — the core runs on pure Python:
 
 ```bash
-python -m atf_graphrag serve     # runs on the stdlib alone
+python -m intelligraphrag serve     # runs on the stdlib alone
 ```
 
 ### Recommended (local profile)
@@ -156,14 +156,14 @@ pip install playwright && playwright install chromium   # only for JS / bot-prot
 
 ## Configuration & the OpenRouter key
 
-Configuration is layered (see [`atf_graphrag/config.py`](../../atf_graphrag/config.py)).
+Configuration is layered (see [`intelligraphrag/config.py`](../../intelligraphrag/config.py)).
 Each layer overrides the previous one:
 
 ```text
 DEFAULTS  →  config/settings.json  →  config/settings.<profile>.json  →  environment
 ```
 
-Profiles are selected with `ATF_PROFILE`; the default is `local`, which uses OpenRouter
+Profiles are selected with `IGR_PROFILE`; the default is `local`, which uses OpenRouter
 for generation and local file-backed vector / graph / blob stores. The shipped profiles
 are `local`, `oss`, `hybrid`, `bedrock-hybrid`, `aws`, `aws-ingest`, and `ec2`.
 
@@ -181,14 +181,14 @@ These are read at runtime; see [`.env.example`](../../.env.example) for the full
 | Variable | Purpose |
 | --- | --- |
 | `OPENROUTER_API_KEY` | LLM access for answer generation (`local` / `hybrid` profiles). |
-| `ATF_PROFILE` | `local` (default), `oss`, `hybrid`, `aws`, … |
-| `ATF_PORT` | Override the listen port (default `8077`). |
-| `ATF_DATA_DIR` | Where local stores and indexes live (default `./storage`). |
-| `ATF_LLM_MODEL` / `ATF_VISION_MODEL` | Override the generation / vision model id. |
-| `ATF_EMBED_PROVIDER` | `local` \| `openrouter` \| `bedrock`. |
-| `ATF_PARSER` | Override the document parser (`docling` \| `advanced` \| `textract` \| `bedrock` \| `bda`). |
-| `ATF_API_TOKEN` | Bearer token required for the API on any non-`local` profile. |
-| `PREVIEW_ROOTS` | `:`-separated roots for original-file preview (legacy alias `ATF_PREVIEW_ROOTS`). |
+| `IGR_PROFILE` | `local` (default), `oss`, `hybrid`, `aws`, … |
+| `IGR_PORT` | Override the listen port (default `8077`). |
+| `IGR_DATA_DIR` | Where local stores and indexes live (default `./storage`). |
+| `IGR_LLM_MODEL` / `IGR_VISION_MODEL` | Override the generation / vision model id. |
+| `IGR_EMBED_PROVIDER` | `local` \| `openrouter` \| `bedrock`. |
+| `IGR_PARSER` | Override the document parser (`docling` \| `advanced` \| `textract` \| `bedrock` \| `bda`). |
+| `IGR_API_TOKEN` | Bearer token required for the API on any non-`local` profile. |
+| `PREVIEW_ROOTS` | `:`-separated roots for original-file preview (legacy alias `IGR_PREVIEW_ROOTS`). |
 | `TAVILY_API_KEY` | Enables web-research augmentation. |
 | `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | Only when `graph_store.provider = neo4j`. |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | Only for the `aws` profile. |
@@ -211,7 +211,7 @@ These are read at runtime; see [`.env.example`](../../.env.example) for the full
    ```bash
    # .env
    OPENROUTER_API_KEY=sk-or-...
-   ATF_PROFILE=local
+   IGR_PROFILE=local
    ```
 
 3. **From the browser UI** — open the running app and paste the key into the key field,
@@ -229,7 +229,7 @@ Get a key at <https://openrouter.ai/keys>.
 Start the server with the module CLI:
 
 ```bash
-python -m atf_graphrag serve
+python -m intelligraphrag serve
 ```
 
 …or use the convenience launcher, which loads `.env` first
@@ -258,7 +258,7 @@ set a key yet, paste it into the key field (this calls `POST /api/key`).
 
 > **Auth note** — On the `local` profile the API is open for convenience (the server logs
 > a warning). On **any other profile the server refuses to start without a token** — set
-> `ATF_API_TOKEN` (or `server.auth_token`), and send `Authorization: Bearer <token>` on
+> `IGR_API_TOKEN` (or `server.auth_token`), and send `Authorization: Bearer <token>` on
 > every `POST`.
 
 > **Single-writer guard** — Only one server may run against a given data directory at a
@@ -274,7 +274,7 @@ A `Dockerfile` and `docker-compose.yml` ship in the repository.
 ### Single container
 
 The image is based on `python:3.11-slim`, installs `requirements.txt`, defaults to the
-`local` profile and port `8077`, and runs `python -m atf_graphrag serve`
+`local` profile and port `8077`, and runs `python -m intelligraphrag serve`
 ([`Dockerfile`](../../Dockerfile)):
 
 ```bash
@@ -294,7 +294,7 @@ Neo4j 5 graph database. The `local` profile needs none of this; plain `serve` is
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
-export ATF_PROFILE=hybrid          # optional; defaults to local
+export IGR_PROFILE=hybrid          # optional; defaults to local
 docker compose up --build
 ```
 
@@ -322,7 +322,7 @@ then runs representative fact, relationship, pattern, and timeline queries.
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
-python -m atf_graphrag demo
+python -m intelligraphrag demo
 ```
 
 This ingests the sample documents and prints answers — with intent, confidence, evidence
@@ -335,17 +335,17 @@ Prefer to do it yourself? Ingest a file or directory, then ask from the CLI:
 
 ```bash
 # Index the bundled sample directory into the "pdf" corpus
-python -m atf_graphrag ingest data/sample pdf
+python -m intelligraphrag ingest data/sample pdf
 
 # Ask a question (add --trace to see which lanes fired)
-python -m atf_graphrag query "Which manufacturers appear across multiple documents?" --trace
+python -m intelligraphrag query "Which manufacturers appear across multiple documents?" --trace
 
 # Engine stats
-python -m atf_graphrag stats
+python -m intelligraphrag stats
 ```
 
 The CLI commands map 1:1 to the module entry points in
-[`atf_graphrag/__main__.py`](../../atf_graphrag/__main__.py):
+[`intelligraphrag/__main__.py`](../../intelligraphrag/__main__.py):
 
 | Command | What it does |
 | --- | --- |
@@ -358,7 +358,7 @@ The CLI commands map 1:1 to the module entry points in
 
 ### Step 3 — Ask from the UI
 
-Prefer the browser? Run `python -m atf_graphrag serve`, open `http://localhost:8077`,
+Prefer the browser? Run `python -m intelligraphrag serve`, open `http://localhost:8077`,
 ingest from the upload panel (or just run the demo first), and type a question into the
 ask box. Every answer comes back with **citations**, the selected **mode**, and an
 optional **trace**.
@@ -385,7 +385,7 @@ Response shape:
 ```
 
 Other handy endpoints exposed by the stdlib server
-([`atf_graphrag/api/server.py`](../../atf_graphrag/api/server.py)):
+([`intelligraphrag/api/server.py`](../../intelligraphrag/api/server.py)):
 
 ```bash
 curl -s http://localhost:8077/health      # {"status":"ok"}
@@ -393,8 +393,8 @@ curl -s http://localhost:8077/stats       # corpora counts, graph size, provider
 curl -s http://localhost:8077/graph/top   # most-connected entities
 ```
 
-> **Off-local reminder** — When `ATF_PROFILE` is not `local`, every `POST` must carry
-> `-H "Authorization: Bearer $ATF_API_TOKEN"`.
+> **Off-local reminder** — When `IGR_PROFILE` is not `local`, every `POST` must carry
+> `-H "Authorization: Bearer $IGR_API_TOKEN"`.
 
 ---
 

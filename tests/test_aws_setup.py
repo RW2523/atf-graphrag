@@ -5,7 +5,7 @@ import types
 
 import pytest
 
-from atf_graphrag.api import aws_setup as aws
+from intelligraphrag.api import aws_setup as aws
 
 
 # --- a boto3 fake that dispatches by service name --------------------------
@@ -152,7 +152,7 @@ def test_validate_no_credentials_fails_cleanly(monkeypatch):
 # --- server routes registered ----------------------------------------------
 def test_server_aws_routes_registered():
     import inspect
-    from atf_graphrag.api import server
+    from intelligraphrag.api import server
     post = inspect.getsource(server.Handler.do_POST)
     for r in ("/api/aws/credentials", "/api/aws/validate", "/api/aws/apply",
               "/api/aws/smoke", "/api/aws/revert"):
@@ -167,9 +167,9 @@ def test_server_aws_routes_registered():
 def test_wiring_reports_local_classes():
     # A local engine reports the local concrete classes (proves wiring() works).
     import tempfile
-    from atf_graphrag.config import Settings
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.api.aws_setup import wiring
+    from intelligraphrag.config import Settings
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.api.aws_setup import wiring
     s = Settings(profile="local")
     tmp = tempfile.mkdtemp()
     s._cfg["vector_store"]["path"] = tmp + "/v"

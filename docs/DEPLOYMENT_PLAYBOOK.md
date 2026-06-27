@@ -42,7 +42,7 @@ lives, so the corpus must be **re-ingested or imported** after changing them.
 
 Switch profile in one command:
 ```bash
-ATF_PROFILE=ec2 python -m atf_graphrag serve
+IGR_PROFILE=ec2 python -m intelligraphrag serve
 ```
 …or live in the UI: **Configuration → Preset → Load**.
 
@@ -67,13 +67,13 @@ Neptune ≈ $350/mo) running — use them only if you truly need managed scale.
 **Even cheaper — parse on AWS, export, serve anywhere:**
 ```bash
 # 1) parse once with the best parser (AWS BDA or Docling)
-ATF_PROFILE=aws-ingest python scripts/reload_corpus.py     # or ATF_PARSER=docling
+IGR_PROFILE=aws-ingest python scripts/reload_corpus.py     # or IGR_PARSER=docling
 
 # 2) export the PARSED corpus (the expensive-to-produce part) to one portable file
 python scripts/export_corpus.py corpus_export.jsonl
 
 # 3) import into ANY cheap deployment — re-embeds locally (free), rebuilds the graph
-ATF_PROFILE=local python scripts/import_corpus.py corpus_export.jsonl
+IGR_PROFILE=local python scripts/import_corpus.py corpus_export.jsonl
 ```
 You pay to parse once; everything downstream (embed, store, serve) can be free.
 `export_corpus.py` dumps clean chunks + ~30 metadata fields + structured
@@ -95,7 +95,7 @@ EC2 instance (GPU recommended for BGE + embeddings):
 - **Docling** (parsing), **BGE** cross-encoder (reranking), **sentence-transformers**
   (embeddings), optional **vLLM** (a local LLM behind an OpenAI-compatible endpoint).
 - Stores: local on the box, or **Qdrant** + **Neo4j** running alongside in Docker.
-- Config: `config/settings.ec2.json` (`ATF_PROFILE=ec2`).
+- Config: `config/settings.ec2.json` (`IGR_PROFILE=ec2`).
 - You pay only for the instance — no per-page / per-call charges.
 
 ---

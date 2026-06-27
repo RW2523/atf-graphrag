@@ -76,17 +76,17 @@ the model happened to know the fact.
 ## Running the harness
 
 The harness constructs a real `Engine` and `Retriever`
-(`atf_graphrag.engine.Engine` / `atf_graphrag.retrieval.pipeline.Retriever`) and
+(`intelligraphrag.engine.Engine` / `intelligraphrag.retrieval.pipeline.Retriever`) and
 runs every question through the production answer path. That means you need a
 **populated knowledge base** and a **configured LLM provider**. With the default
 `local` profile, that is an OpenRouter key.
 
 ```bash
 # 1. Make sure a corpus is indexed (see the Quickstart / ingestion docs)
-python -m atf_graphrag ingest ./your-docs
+python -m intelligraphrag ingest ./your-docs
 
 # 2. Configure the environment
-export ATF_PROFILE=local              # local | hybrid | aws | oss
+export IGR_PROFILE=local              # local | hybrid | aws | oss
 export OPENROUTER_API_KEY=sk-or-...   # required for the local profile's LLM
 
 # 3. Run the 50-question harness
@@ -97,8 +97,8 @@ python scripts/eval_full.py
 ```
 
 > [!IMPORTANT]
-> Both scripts call `os.environ.setdefault("ATF_PROFILE", "local")` at startup,
-> so if you do not set `ATF_PROFILE` they default to the `local` profile. Set it
+> Both scripts call `os.environ.setdefault("IGR_PROFILE", "local")` at startup,
+> so if you do not set `IGR_PROFILE` they default to the `local` profile. Set it
 > explicitly to evaluate against `hybrid`, `aws`, or `oss`. Profile selection
 > determines which embedding, vector store, table store, and LLM backends are
 > wired up — see the Configuration Reference for what each profile binds.
@@ -334,7 +334,7 @@ validate the platform on **your** corpus is to write a question set in the same
 5. Run it exactly like the built-in harness:
 
    ```bash
-   export ATF_PROFILE=local
+   export IGR_PROFILE=local
    export OPENROUTER_API_KEY=sk-or-...
    python scripts/eval_mydomain.py
    ```

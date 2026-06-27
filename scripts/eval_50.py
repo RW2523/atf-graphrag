@@ -97,9 +97,9 @@ def _is_refusal(a):
 
 
 def main():
-    os.environ.setdefault("ATF_PROFILE", "local")
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.retrieval.pipeline import Retriever
+    os.environ.setdefault("IGR_PROFILE", "local")
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.retrieval.pipeline import Retriever
     e = Engine(); r = Retriever(e)
     rows = []
     lanes = {}

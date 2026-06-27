@@ -2,9 +2,9 @@
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing.indexer import Indexer
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.indexing.indexer import Indexer
 
 
 class _LLM:
@@ -61,8 +61,8 @@ def test_explicit_bool_overrides_config():
 
 
 def test_live_toggle_endpoint(monkeypatch):
-    import atf_graphrag.api.server as srv
-    from atf_graphrag import config as _cfg
+    import intelligraphrag.api.server as srv
+    from intelligraphrag import config as _cfg
     _cfg._settings = None
     srv._engine = srv._indexer = srv._retriever = srv._orch = srv._jobs = None
     srv._boot()

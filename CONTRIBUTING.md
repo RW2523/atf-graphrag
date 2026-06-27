@@ -13,10 +13,10 @@ Repository: <https://github.com/RW2523/intelligraphrag>
 
 ## Project layout
 
-The platform is one Python package, `atf_graphrag/`, organized by pipeline stage. Every swappable component lives behind a provider factory.
+The platform is one Python package, `intelligraphrag/`, organized by pipeline stage. Every swappable component lives behind a provider factory.
 
 ```text
-atf_graphrag/
+intelligraphrag/
 ├── __main__.py          # module CLI: serve | ingest | visual | query | stats | demo
 ├── __init__.py          # __version__
 ├── config.py            # layered DEFAULTS → settings.json → settings.<profile>.json → env
@@ -60,7 +60,7 @@ requirements-aws.txt     # AWS-only deps (boto3, etc.)
 run.sh                   # loads .env, then `serve`
 ```
 
-> The package directory and CLI module are named `atf_graphrag` for historical reasons and cannot be renamed without breaking imports. Treat that identifier — and the `ATF_*` environment variables and `Official_ATF_Masterdata/...` data paths described below — as literal code, never as prose.
+> The package directory and CLI module are named `intelligraphrag` for historical reasons and cannot be renamed without breaking imports. Treat that identifier — and the `IGR_*` environment variables and `Official_ATF_Masterdata/...` data paths described below — as literal code, never as prose.
 
 ---
 
@@ -84,12 +84,12 @@ cp .env.example .env
 Run the app to confirm your environment works:
 
 ```bash
-python -m atf_graphrag serve             # HTTP API + web UI on http://localhost:8077
-python -m atf_graphrag demo              # ingest the bundled sample and run sample queries
+python -m intelligraphrag serve             # HTTP API + web UI on http://localhost:8077
+python -m intelligraphrag demo              # ingest the bundled sample and run sample queries
 ./run.sh                                 # convenience launcher (loads .env, then serve)
 ```
 
-The full CLI surface (`python -m atf_graphrag <command>`):
+The full CLI surface (`python -m intelligraphrag <command>`):
 
 | Command | Purpose |
 |---|---|
@@ -117,7 +117,7 @@ python -m pytest tests/test_table_lookup.py::test_name_phrase_locality -q    # a
 A few things to know about the tests:
 
 - **They are hermetic.** Tests stub `sentence_transformers`, mock `boto3.client`, and set a fake runtime key so nothing hits the network or downloads a model. New tests must follow the same pattern — never reach out to a live service. See `tests/test_profiles.py` for the canonical fixture.
-- **There is no `conftest.py` or `pytest.ini`.** Tests import `atf_graphrag` directly and run from the repo root; keep them self-contained.
+- **There is no `conftest.py` or `pytest.ini`.** Tests import `intelligraphrag` directly and run from the repo root; keep them self-contained.
 - **Graceful degradation is itself tested.** `tests/test_profiles.py` boots every profile and asserts that missing cloud deps (`neo4j`, `opensearch-py`, `boto3`) fall back to local stores without crashing. If you add a provider, add it to this matrix.
 
 When you add a feature or fix a bug, add or extend a test in the matching `tests/test_*.py`. PRs that change behavior without a test will be asked to add one.
@@ -130,14 +130,14 @@ The whole platform is designed to be extended by **configuration, not core edits
 
 ### 1. Add a provider via the factory
 
-Every backend — LLM, vision, embeddings, reranker, parser, guardrail, web search, entity extractor, and vector/graph/blob store — is constructed in `atf_graphrag/providers/__init__.py` by a `make_<component>()` factory. To add one:
+Every backend — LLM, vision, embeddings, reranker, parser, guardrail, web search, entity extractor, and vector/graph/blob store — is constructed in `intelligraphrag/providers/__init__.py` by a `make_<component>()` factory. To add one:
 
-1. Implement the class in a new or existing module under `atf_graphrag/providers/` (or `atf_graphrag/stores/` for stores), conforming to the same interface as the existing backends (e.g. `LLMProvider`, `EmbeddingProvider`, `Parser`).
+1. Implement the class in a new or existing module under `intelligraphrag/providers/` (or `intelligraphrag/stores/` for stores), conforming to the same interface as the existing backends (e.g. `LLMProvider`, `EmbeddingProvider`, `Parser`).
 2. Wire it into the matching `make_*` factory behind a new `provider` value, importing it **lazily** inside the branch so its dependency stays optional.
 3. **Fall back gracefully.** On any construction error, call `_warn_fallback(...)` and return the local/offline default — the factory must never raise. This is the core promise: no key / no network still runs.
 
 ```python
-# atf_graphrag/providers/__init__.py
+# intelligraphrag/providers/__init__.py
 def make_llm(settings: Settings) -> LLMProvider:
     cfg = settings["llm"]
     if cfg["provider"] == "my_backend":
@@ -150,13 +150,13 @@ def make_llm(settings: Settings) -> LLMProvider:
     return OfflineLLM(cfg)                    # always have a local default
 ```
 
-Add a default config block for the new provider in the `DEFAULTS` dict in `atf_graphrag/config.py`, and add a profile/factory assertion to `tests/test_profiles.py`.
+Add a default config block for the new provider in the `DEFAULTS` dict in `intelligraphrag/config.py`, and add a profile/factory assertion to `tests/test_profiles.py`.
 
 ### 2. Add a retrieval lane
 
-Lanes live in `atf_graphrag/retrieval/` and are orchestrated by `pipeline.py` through the agents in `agents.py` (`RetrievalAgent`, `EvaluationAgent`, `RerankingAgent`, `GenerationAgent`). Existing lanes — vector + BM25 (`bm25.py`), graph (`graph_retriever.py`), table-row (`table_lookup.py`), text-to-SQL (`structured.py`), numeric rescue (`numeric_lookup.py`), and web research (`web_research.py`) — are a good template. To add one:
+Lanes live in `intelligraphrag/retrieval/` and are orchestrated by `pipeline.py` through the agents in `agents.py` (`RetrievalAgent`, `EvaluationAgent`, `RerankingAgent`, `GenerationAgent`). Existing lanes — vector + BM25 (`bm25.py`), graph (`graph_retriever.py`), table-row (`table_lookup.py`), text-to-SQL (`structured.py`), numeric rescue (`numeric_lookup.py`), and web research (`web_research.py`) — are a good template. To add one:
 
-1. Implement the lane as a function/module in `atf_graphrag/retrieval/` that returns scored chunks with provenance.
+1. Implement the lane as a function/module in `intelligraphrag/retrieval/` that returns scored chunks with provenance.
 2. Gate it behind a new key under the `retrieval` block in `config.py` `DEFAULTS` (mirror `sql_lane`, `numeric_lane`, `multi_hop`) so it can be turned off without code changes.
 3. Hook it into the pipeline's lane selection so it only fires for the question types it serves, and let `EvaluationAgent` score its output.
 4. Add an evaluation case in the harness (`scripts/eval_50.py`) for the question kind your lane targets.
@@ -166,7 +166,7 @@ Lanes live in `atf_graphrag/retrieval/` and are orchestrated by `pipeline.py` th
 Corpora are named buckets listed under `corpora` in `config.py` `DEFAULTS` — by default `["pdf", "web", "connected", "visual", "news"]`. To add one:
 
 1. Append its name to the `corpora` list in `config.py`.
-2. Ingest into it: `python -m atf_graphrag ingest <path> <corpus>`.
+2. Ingest into it: `python -m intelligraphrag ingest <path> <corpus>`.
 
 The vector store, graph, and retrieval pipeline pick it up automatically — each corpus gets its own vector store via `make_vector_store(settings, corpus)`.
 
@@ -178,10 +178,10 @@ The vector store, graph, and retrieval pipeline pick it up automatically — eac
 - **Stdlib-core.** The core path must run on the Python standard library only — the API is `http.server`, HTTP is `urllib`. `numpy`, `pypdf`, `pymupdf`, `sentence-transformers`, `requests`, `bs4`, `networkx`, `boto3`, etc. are **optional accelerators**: import them lazily and fall back when absent. Never add a hard third-party dependency to the core path.
 - **Graceful degradation.** Every optional capability degrades to a working local/offline default with a one-line warning, never a crash. Factories return a fallback; lanes that fail fall back to RAG; the SQL lane falls back on any error.
 - **Config-gated.** New behavior is opt-in or tunable via `config.py` `DEFAULTS`, honoring the layering (`DEFAULTS` → `config/settings.json` → `config/settings.<profile>.json` → environment). Don't hard-code values that belong in config.
-- **No secrets in files.** Keys are read at provider call-time from the environment (`OPENROUTER_API_KEY`, `TAVILY_API_KEY`, `AWS_*`, `ATF_API_TOKEN`) or set at runtime from the browser. Never commit a key, never write one to a config file, and keep `.env` out of git (`.env.example` is the template).
+- **No secrets in files.** Keys are read at provider call-time from the environment (`OPENROUTER_API_KEY`, `TAVILY_API_KEY`, `AWS_*`, `IGR_API_TOKEN`) or set at runtime from the browser. Never commit a key, never write one to a config file, and keep `.env` out of git (`.env.example` is the template).
 - **Provenance and citations.** Retrieval and generation carry source provenance end-to-end; preserve it. Numeric answers must remain grounded (the `grounding_verify` subagent checks numbers against sources).
 
-> **Naming the example dataset.** In prose, comments, docstrings, and docs, refer to the validation data neutrally — "the example U.S. government firearms & explosives dataset" or "the sample government corpus". The letters `ATF` may appear **only** inside literal, fenced or inline code that physically exists in the codebase — the `atf_graphrag` package/CLI, the `ATF_PROFILE` / `ATF_PARSER` / `ATF_API_TOKEN` environment variables, and `Official_ATF_Masterdata/...` data and citation paths — and never as a standalone word in prose. Keep even those mentions to a minimum.
+> **Naming the example dataset.** In prose, comments, docstrings, and docs, refer to the validation data neutrally — "the example U.S. government firearms & explosives dataset" or "the sample government corpus". The letters `ATF` may appear **only** inside literal, fenced or inline code that physically exists in the codebase — the `intelligraphrag` package/CLI, the `IGR_PROFILE` / `IGR_PARSER` / `IGR_API_TOKEN` environment variables, and `Official_ATF_Masterdata/...` data and citation paths — and never as a standalone word in prose. Keep even those mentions to a minimum.
 
 ---
 

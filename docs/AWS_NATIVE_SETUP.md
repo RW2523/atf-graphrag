@@ -57,7 +57,7 @@ All tagged `Project=atf-graphrag` so teardown finds the whole stack.
 
 ```bash
 export OPENROUTER_API_KEY=...        # only for the local engine; not AWS
-python -m atf_graphrag serve         # http://127.0.0.1:8077
+python -m intelligraphrag serve         # http://127.0.0.1:8077
 ```
 
 Go to the **AWS Native** tab. It has four numbered cards:

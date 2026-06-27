@@ -120,7 +120,7 @@ remain). This is what makes the platform's numbers trustworthy.
 
 ## 2. Architecture Overview
 
-The system is a layered stack. The **engine** (`atf_graphrag/engine.py`) is the single
+The system is a layered stack. The **engine** (`intelligraphrag/engine.py`) is the single
 object that the API, indexer, and retriever all share; it constructs every swappable
 component from configuration via **provider factories**. Swapping a profile or a single
 provider changes only what the factories build — nothing downstream changes.
@@ -178,7 +178,7 @@ key and rebuilds the LLM/vision providers so generation switches from offline to
 
 ### The provider factory
 
-`atf_graphrag/providers/__init__.py` holds one `make_<component>()` factory per swappable
+`intelligraphrag/providers/__init__.py` holds one `make_<component>()` factory per swappable
 component. Each returns the configured backend when its dependency and credentials are
 present, and otherwise **degrades gracefully to the local/offline default with a one-line
 warning** — so "no key / no network" still runs. This single pattern is what makes
@@ -218,7 +218,7 @@ clone runs immediately, and you add capability by installing only what you need.
 ```bash
 git clone https://github.com/RW2523/intelligraphrag
 cd intelligraphrag
-python -m atf_graphrag serve        # API + web UI at http://localhost:8077
+python -m intelligraphrag serve        # API + web UI at http://localhost:8077
 ```
 
 Open <http://localhost:8077>, optionally paste an OpenRouter key in the browser, load the
@@ -265,17 +265,17 @@ and pass credentials via environment). See §16 for deployment specifics and
 
 ### The 4-layer precedence
 
-Settings are merged from lowest to highest priority (`atf_graphrag/config.py`):
+Settings are merged from lowest to highest priority (`intelligraphrag/config.py`):
 
 ```
 1. DEFAULTS                        (in config.py — the local/open-source profile)
 2. config/settings.json            (optional, applies to every profile)
 3. config/settings.<profile>.json  (optional, profile = local | hybrid | aws | oss)
-4. environment variables           (ATF_* and OPENROUTER_* / AWS_* / TAVILY_*)
+4. environment variables           (IGR_* and OPENROUTER_* / AWS_* / TAVILY_*)
 ```
 
 Layers 1–3 are deep-merged (nested dicts merge key-by-key); environment variables are
-applied last and win. The active profile comes from `ATF_PROFILE`, else `settings.json`'s
+applied last and win. The active profile comes from `IGR_PROFILE`, else `settings.json`'s
 `profile`, else `local`.
 
 ### Profiles
@@ -295,16 +295,16 @@ application code.
 
 | Variable             | Effect                                                                         |
 |----------------------|--------------------------------------------------------------------------------|
-| `ATF_PROFILE`        | Select the active profile (`local`/`hybrid`/`aws`/`oss`).                        |
-| `ATF_DATA_DIR`       | Storage root for all stores (default `./storage`).                              |
-| `ATF_LLM_MODEL`      | Override the LLM model id.                                                      |
-| `ATF_VISION_MODEL`   | Override the vision model id.                                                   |
-| `ATF_EMBED_PROVIDER` | Override the embeddings provider.                                               |
-| `ATF_PARSER`         | Override the ingestion parser (`docling`/`advanced`/`textract`/`bedrock`/`bda`).|
-| `ATF_PORT`           | API server port (default 8077).                                                |
-| `ATF_API_TOKEN`      | Bearer token required on POST endpoints (see §15).                              |
-| `ATF_PREVIEW_ROOTS`  | Extra directories to resolve original files for KB preview.                     |
-| `ATF_WEB_SEARCH`     | Set to `0` to force-disable web research even when a Tavily key is present.     |
+| `IGR_PROFILE`        | Select the active profile (`local`/`hybrid`/`aws`/`oss`).                        |
+| `IGR_DATA_DIR`       | Storage root for all stores (default `./storage`).                              |
+| `IGR_LLM_MODEL`      | Override the LLM model id.                                                      |
+| `IGR_VISION_MODEL`   | Override the vision model id.                                                   |
+| `IGR_EMBED_PROVIDER` | Override the embeddings provider.                                               |
+| `IGR_PARSER`         | Override the ingestion parser (`docling`/`advanced`/`textract`/`bedrock`/`bda`).|
+| `IGR_PORT`           | API server port (default 8077).                                                |
+| `IGR_API_TOKEN`      | Bearer token required on POST endpoints (see §15).                              |
+| `IGR_PREVIEW_ROOTS`  | Extra directories to resolve original files for KB preview.                     |
+| `IGR_WEB_SEARCH`     | Set to `0` to force-disable web research even when a Tavily key is present.     |
 | `OPENROUTER_API_KEY` | OpenRouter key for LLM/vision/embeddings.                                       |
 | `TAVILY_API_KEY`     | Setting this **auto-enables** on-demand web research (provider → `tavily`).      |
 | `AWS_*`              | Standard AWS credential/region variables, read at provider call-time.          |
@@ -326,7 +326,7 @@ There are two ways to supply the OpenRouter key:
 
 ## 5. The Provider Layer
 
-Every swappable component is constructed in `atf_graphrag/providers/__init__.py`. The
+Every swappable component is constructed in `intelligraphrag/providers/__init__.py`. The
 factory rule is uniform: **try the configured backend; on missing dependency/credentials,
 warn once and fall back to the local default.** Below, each provider with its options.
 
@@ -407,7 +407,7 @@ anywhere."
 
 Pipeline: **parse → structure-aware chunk → metadata enrich → embed → vector upsert +
 graph build + table promote**, with subagent gates between stages. Driven by
-`atf_graphrag/indexing/indexer.py`.
+`intelligraphrag/indexing/indexer.py`.
 
 ### 6.1 Parsing
 
@@ -420,7 +420,7 @@ The configured parser provider returns a uniform `(page_no, text)` contract:
 - **`textract` / `bedrock` / `bda`** — AWS-native parsing (structured/OCR, foundation-model,
   and Bedrock Data Automation respectively).
 
-Override the parser per-run with `ATF_PARSER` (e.g. `ATF_PARSER=advanced`). Pages that are
+Override the parser per-run with `IGR_PARSER` (e.g. `IGR_PARSER=advanced`). Pages that are
 empty or look scanned trigger the **VLM fallback** (`_ocr_or_vision`): the page is rendered
 to a PNG at 150 DPI and sent to the vision model with an instruction to extract all text,
 tables as `| col | col |` rows, and chart data values/labels. The `parse_quality` subagent
@@ -431,7 +431,7 @@ route correctly even when the body lacks an explicit date.
 
 ### 6.2 Structure-aware chunking
 
-`atf_graphrag/ingestion/chunker.py` classifies each block as `text`, `table`, `chart`,
+`intelligraphrag/ingestion/chunker.py` classifies each block as `text`, `table`, `chart`,
 `figure`, or `list`, returning `(section_heading, chunk_text, content_type)` triples:
 
 - **Tables** are kept **row-atomic**: the chunker greedily absorbs the whole contiguous
@@ -512,7 +512,7 @@ Each stored chunk carries its text, `embed_text`, `corpus`, `content_type`,
 
 ### 7.1 The SQLite table store
 
-`atf_graphrag/indexing/table_store.py` promotes every chunk's `table_data` into SQLite with
+`intelligraphrag/indexing/table_store.py` promotes every chunk's `table_data` into SQLite with
 full provenance. Schema:
 
 ```sql
@@ -545,7 +545,7 @@ other years so cross-year questions see every edition. `query` is the text-to-SQ
 
 #### Ontology
 
-`atf_graphrag/extraction/ontology.py` defines a **closed ontology** of 7 entity types
+`intelligraphrag/extraction/ontology.py` defines a **closed ontology** of 7 entity types
 (`person`, `organization`, `location`, `firearm`, `manufacturer`, `incident`, `case`) and 8
 relationship types (`MANUFACTURED_BY`, `SOLD_BY`, `PURCHASED_BY`, `LOCATED_IN`,
 `INVOLVED_IN`, `TRACED_TO`, `OCCURRED_AT`, `ASSOCIATED_WITH`). The extraction prompt
@@ -565,7 +565,7 @@ enriched in parallel via the Graph tab / `POST /api/graph/enrich`.
 
 #### Entity resolution
 
-`atf_graphrag/extraction/entity_resolution.py` collapses surface variants to one canonical
+`intelligraphrag/extraction/entity_resolution.py` collapses surface variants to one canonical
 node so relationships link across documents. Two layers: a **deterministic** `normalise`
 (lowercase, `&`→`and`, strip corporate suffixes, alias table) that yields stable keys
 across runs, and an **incremental fuzzy** resolver (difflib ratio ≥ 0.88, blocked by
@@ -579,7 +579,7 @@ keeping the graph from becoming a dense low-signal clique.
 
 #### Leiden communities + summaries
 
-`atf_graphrag/graph/communities.py` clusters the typed graph into communities (preference
+`intelligraphrag/graph/communities.py` clusters the typed graph into communities (preference
 order: **graspologic hierarchical Leiden → leidenalg/igraph Leiden → networkx Louvain**),
 keeps communities ≥ `min_community_size` (default 3), and writes a short LLM briefing per
 cluster (`{name, summary}`) with member entities, relations, and **source chunk_ids** so
@@ -590,7 +590,7 @@ member set (zero new LLM calls for unchanged clusters). The whole build is gated
 
 #### Node verify / prune
 
-`atf_graphrag/graph/verify.py` and `pruning.py` provide LLM-assisted entity verification
+`intelligraphrag/graph/verify.py` and `pruning.py` provide LLM-assisted entity verification
 and noise pruning to keep the graph clean (junk nodes removed, weak edges dropped),
 reported by the `graph_quality` subagent.
 
@@ -600,7 +600,7 @@ reported by the `graph_quality` subagent.
 
 ## 8. The Retrieval Layer
 
-`atf_graphrag/retrieval/pipeline.py` orchestrates a small state machine. Full flow:
+`intelligraphrag/retrieval/pipeline.py` orchestrates a small state machine. Full flow:
 
 ```
 query understanding → corpus selection → [global short-circuit] → [multi-hop] →
@@ -650,7 +650,7 @@ Activated for relationship/pattern/entity/timeline intents (`plan.use_graph`). T
 
 ### 8.3 Deterministic table-row lane
 
-`atf_graphrag/retrieval/table_lookup.py` answers "any cell in any row" exactly, where
+`intelligraphrag/retrieval/table_lookup.py` answers "any cell in any row" exactly, where
 embeddings/BM25 cannot. It extracts **row keys** from the question (proper-noun runs,
 quoted strings, license-style numbers), uses an inverted **RowIndex** over `table_data`
 string cells to find candidate chunks containing every key token, then scans rows with
@@ -663,7 +663,7 @@ generator quotes the cell.
 
 ### 8.4 Numeric lane
 
-`atf_graphrag/retrieval/numeric_lookup.py` rescues headline totals living in number-dense
+`intelligraphrag/retrieval/numeric_lookup.py` rescues headline totals living in number-dense
 **text** (e.g. `3,939,517 TOTAL`) that embed poorly and get buried. For numeric/aggregate
 questions where the SQL lane produced nothing, it scans for chunks that carry a real big
 number and strongly match the question's stemmed content terms, boosting year-matched and
@@ -737,7 +737,7 @@ unless enabled and needed. See §9 for the related batch web crawler.
 ## 9. Web Ingestion
 
 Structured, polite web ingestion via `sitemap.xml` — never random scraping
-(`atf_graphrag/ingestion/crawler.py`).
+(`intelligraphrag/ingestion/crawler.py`).
 
 ### Sitemap discovery + sitemapindex recursion
 
@@ -754,7 +754,7 @@ fetched/parsed, fetching is allowed, per RFC) and honors crawl-delay. A configur
 
 ### HTML tables → cell-queryable markdown
 
-`atf_graphrag/ingestion/web_extract.py` extracts content with BeautifulSoup when available
+`intelligraphrag/ingestion/web_extract.py` extracts content with BeautifulSoup when available
 (regex fallback otherwise). Every HTML `<table>` is rendered to a GitHub-flavored markdown
 table **with a header separator row** and emitted as an `[EXTRACTED TABLE]` block, so the
 same `parse_markdown_table` path used for PDFs produces `table_data` — making crawled web
@@ -762,7 +762,7 @@ tables **cell-queryable** by the table-row and SQL lanes.
 
 ### Playwright headless render modes
 
-`atf_graphrag/ingestion/browser.py` renders JS/bot-protected pages with headless Chromium.
+`intelligraphrag/ingestion/browser.py` renders JS/bot-protected pages with headless Chromium.
 The fetcher honors `web.render`:
 
 - **`auto`** (default) — static fetch first; render only when the page looks JS-shelled
@@ -794,7 +794,7 @@ Linked PDFs can be queued into the `pdf` corpus (`web.ingest_linked_pdfs`).
 
 ## 10. The Web UI Tour
 
-The single-page UI (`atf_graphrag/api/ui.py`) is served at the API root (default
+The single-page UI (`intelligraphrag/api/ui.py`) is served at the API root (default
 <http://localhost:8077>). Tabs:
 
 - **Chat** — ask questions; answers render with inline `[n]` citations, an expandable
@@ -816,7 +816,7 @@ The single-page UI (`atf_graphrag/api/ui.py`) is served at the API root (default
 
 ### The graph explorer at `/graph/view`
 
-A self-contained D3 force-directed viewer (`atf_graphrag/viz/graph_template.py`), served at
+A self-contained D3 force-directed viewer (`intelligraphrag/viz/graph_template.py`), served at
 `/graph/view` (and `/graph`). It loads the top entities (`/graph/top`) and the full export
 (`/graph/export`) so you can pan/zoom the typed graph, see node types, and follow
 relationships visually.
@@ -830,14 +830,14 @@ relationships visually.
 **Files / folders** — drag into the Upload tab, or:
 
 ```bash
-python -m atf_graphrag ingest /path/to/file.pdf            # → pdf corpus
-python -m atf_graphrag ingest /path/to/folder connected    # recursive, → connected
+python -m intelligraphrag ingest /path/to/file.pdf            # → pdf corpus
+python -m intelligraphrag ingest /path/to/folder connected    # recursive, → connected
 ```
 
 Directory ingest recurses all subfolders, keys each file by its relative path (so same-named
 files in different folders stay distinct), and skips hidden files.
 
-**Images** — `python -m atf_graphrag visual chart.png visual` runs vision extraction into
+**Images** — `python -m intelligraphrag visual chart.png visual` runs vision extraction into
 the `visual` corpus.
 
 **Sites** — `python scripts/crawl_site.py https://example.com/sitemap.xml --save` (§9).
@@ -846,7 +846,7 @@ the `visual` corpus.
 
 - **UI** — type in Chat; toggle the trace to see which lanes fired.
 - **HTTP** — `POST /query` (§12).
-- **CLI** — `python -m atf_graphrag query "your question" --trace`.
+- **CLI** — `python -m intelligraphrag query "your question" --trace`.
 
 ### Table questions IntelliGraph is built for
 
@@ -870,7 +870,7 @@ generation confidence, grounding verification, and per-stage `timings_ms`.
 
 ## 12. The HTTP API
 
-JSON over `http.server` (`atf_graphrag/api/server.py`); the same routes can be served by
+JSON over `http.server` (`intelligraphrag/api/server.py`); the same routes can be served by
 FastAPI in production. POST endpoints require a bearer token in non-local profiles (§15).
 Grouped endpoints:
 
@@ -929,7 +929,7 @@ Response (abridged):
 
 ## 13. CLI & Scripts
 
-### Module CLI (`python -m atf_graphrag <command>`)
+### Module CLI (`python -m intelligraphrag <command>`)
 
 | Command                              | Action                                            |
 |--------------------------------------|---------------------------------------------------|
@@ -954,7 +954,7 @@ Response (abridged):
 | `eval_15_structured.py`, `eval_atf_25.py`, `eval_full.py` | Additional eval harnesses |
 | `backfill_tables.py` | Backfill the table store from existing chunks                       |
 | `publish_wiki.py`    | Publish `docs/` into the GitHub Wiki tab and keep it in sync        |
-| `demo.py`            | The bundled demo used by `python -m atf_graphrag demo`             |
+| `demo.py`            | The bundled demo used by `python -m intelligraphrag demo`             |
 
 > Deep-dive: [CLI & Scripts](wiki/CLI-and-Scripts.md).
 
@@ -971,7 +971,7 @@ zip plus a `.meta.json` sidecar with document/graph stats and a human note, unde
 
 ### Backup / restore
 
-`atf_graphrag/api/backup.py` snapshots the vector index + knowledge graph (+
+`intelligraphrag/api/backup.py` snapshots the vector index + knowledge graph (+
 communities/manifest) into a single zip under `storage/backups/` and restores it
 (`POST /api/backup`, `/api/restore`, `GET /api/backups`). Cloud stores use their own native
 backup; this covers the local/default profile.
@@ -1008,7 +1008,7 @@ Three mechanisms protect against data loss:
 
 ### Bearer auth
 
-`server.auth_token` (or env `ATF_API_TOKEN`) gates POST endpoints with
+`server.auth_token` (or env `IGR_API_TOKEN`) gates POST endpoints with
 `Authorization: Bearer <token>`. Empty = open (local dev only). **Set a token before any
 non-local deployment.** Non-local profiles should always run with auth enabled.
 

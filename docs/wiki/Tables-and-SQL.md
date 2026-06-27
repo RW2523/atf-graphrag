@@ -21,12 +21,12 @@ table.
 
 | Concern | File |
 |---|---|
-| Markdown / columnar text → `{columns, rows}` | `atf_graphrag/indexing/tables.py` |
-| SQLite store + consolidation + LLM catalog + SQL lane | `atf_graphrag/indexing/table_store.py` |
-| Deterministic table-row lookup (`find_rows`) | `atf_graphrag/retrieval/table_lookup.py` |
-| Lane orchestration (SQL lane, RAG fallback) | `atf_graphrag/retrieval/pipeline.py` |
-| Row-hit injection into evidence | `atf_graphrag/retrieval/agents.py` |
-| Inspection endpoints | `atf_graphrag/api/server.py` |
+| Markdown / columnar text → `{columns, rows}` | `intelligraphrag/indexing/tables.py` |
+| SQLite store + consolidation + LLM catalog + SQL lane | `intelligraphrag/indexing/table_store.py` |
+| Deterministic table-row lookup (`find_rows`) | `intelligraphrag/retrieval/table_lookup.py` |
+| Lane orchestration (SQL lane, RAG fallback) | `intelligraphrag/retrieval/pipeline.py` |
+| Row-hit injection into evidence | `intelligraphrag/retrieval/agents.py` |
+| Inspection endpoints | `intelligraphrag/api/server.py` |
 
 ---
 
@@ -71,7 +71,7 @@ the table layer only ever *adds* precision.
 During ingestion, tables are extracted to markdown (pdfplumber / PyMuPDF, or a
 table-aware parser provider). For exact lookup and numeric grounding, that
 markdown is parsed *back* into an addressable structure by
-`atf_graphrag/indexing/tables.py`:
+`intelligraphrag/indexing/tables.py`:
 
 ```python
 {"columns": ["State", "2022", "2023"],
@@ -122,7 +122,7 @@ large chunk from stalling parsing — anything bigger returns `{}`.
 
 ## 2. The SQLite table store
 
-`TableStore` (`atf_graphrag/indexing/table_store.py`) promotes every chunk
+`TableStore` (`intelligraphrag/indexing/table_store.py`) promotes every chunk
 carrying `table_data` into a queryable SQLite database. The store lives next to
 the vector store as `tables.db`, reached through the `get_store(engine)`
 singleton. The schema is three tables:
@@ -268,7 +268,7 @@ hint per table, helping the model pick the right table and columns) and the
 
 ## 5. The table-row lane — exact single-cell lookup
 
-`atf_graphrag/retrieval/table_lookup.py` answers *"ask about any cell in any
+`intelligraphrag/retrieval/table_lookup.py` answers *"ask about any cell in any
 row"* questions — *What city is EMCO INC located in?* — by exact match, not by
 embedding luck. It runs in three stages.
 
@@ -355,7 +355,7 @@ score = min(score, 0.99)
 
 ### 5.4 How row hits become evidence
 
-In `RetrievalAgent.retrieve` (`atf_graphrag/retrieval/agents.py`), each row hit is
+In `RetrievalAgent.retrieve` (`intelligraphrag/retrieval/agents.py`), each row hit is
 injected as a high-score `table_row` evidence item and the matched row is pinned
 into the chunk's `extraction_summary` as a `MATCHED TABLE ROW: …` note, so
 generation quotes the exact cell. Two protections keep that evidence alive:
@@ -433,7 +433,7 @@ result = get_store(engine).query("Which state had the most licenses in 2024?", e
 
 ### 6.3 RAG fallback — fail-safe by construction
 
-In the pipeline (`atf_graphrag/retrieval/pipeline.py`) the call is wrapped so any
+In the pipeline (`intelligraphrag/retrieval/pipeline.py`) the call is wrapped so any
 exception also becomes `None`:
 
 ```python
@@ -561,7 +561,7 @@ number.
 
 ## 9. Configuration
 
-In `atf_graphrag/config.py` under `retrieval`:
+In `intelligraphrag/config.py` under `retrieval`:
 
 | Key | Default | Effect |
 |---|---|---|
@@ -577,8 +577,8 @@ key and is fail-safe by design. The store path (`tables.db`) is derived from
 
 ## 10. Operations & inspection
 
-The endpoints live on the API server (`atf_graphrag/api/server.py`; default port
-`8077`). Off-local deployments require a Bearer token (`ATF_API_TOKEN` or
+The endpoints live on the API server (`intelligraphrag/api/server.py`; default port
+`8077`). Off-local deployments require a Bearer token (`IGR_API_TOKEN` or
 `server.auth_token`).
 
 | Endpoint | Method | Purpose |
@@ -656,9 +656,9 @@ provenance.
 - **[Configuration-Reference](Configuration-Reference.md)** — all `retrieval.*` keys
 - **[API-Reference](API-Reference.md)** — `/api/tables/build` and `/api/tables/categories`
 
-Source: [`indexing/tables.py`](https://github.com/RW2523/intelligraphrag/blob/main/atf_graphrag/indexing/tables.py)
-· [`indexing/table_store.py`](https://github.com/RW2523/intelligraphrag/blob/main/atf_graphrag/indexing/table_store.py)
-· [`retrieval/table_lookup.py`](https://github.com/RW2523/intelligraphrag/blob/main/atf_graphrag/retrieval/table_lookup.py)
+Source: [`indexing/tables.py`](https://github.com/RW2523/intelligraphrag/blob/main/intelligraphrag/indexing/tables.py)
+· [`indexing/table_store.py`](https://github.com/RW2523/intelligraphrag/blob/main/intelligraphrag/indexing/table_store.py)
+· [`retrieval/table_lookup.py`](https://github.com/RW2523/intelligraphrag/blob/main/intelligraphrag/retrieval/table_lookup.py)
 
 ---
 📖 [Docs Home](Home.md) · [User Manual](../USER_MANUAL.md) · [Architecture](Architecture.md) · [Retrieval](Retrieval-Lanes.md)

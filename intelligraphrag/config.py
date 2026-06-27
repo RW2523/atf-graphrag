@@ -5,7 +5,7 @@ Settings are layered (lowest to highest priority):
   1. DEFAULTS (this file)
   2. config/settings.json (optional)
   3. config/settings.<profile>.json (optional, profile = local|hybrid|aws)
-  4. environment variables (ATF_* and the OPENROUTER_* / AWS_* keys)
+  4. environment variables (IGR_* and the OPENROUTER_* / AWS_* keys)
 """
 from __future__ import annotations
 
@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import Any, Dict
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = Path(os.environ.get("ATF_DATA_DIR", ROOT / "storage"))
+# Backward-compatible env aliases: IGR_* is canonical; legacy ATF_* still honored.
+for _k in [k for k in os.environ if k.startswith("ATF_")]:
+    os.environ.setdefault("IGR_" + _k[4:], os.environ[_k])
+
+
+DATA_DIR = Path(os.environ.get("IGR_DATA_DIR", ROOT / "storage"))
 
 # ---------------------------------------------------------------------------
 # Defaults — the "local / open-source" profile. Models go through OpenRouter.
@@ -210,10 +215,10 @@ DEFAULTS: Dict[str, Any] = {
     },
 
     # ---- API server -------------------------------------------------------
-    # auth_token: empty = open (local dev). Set it (or env ATF_API_TOKEN) to
+    # auth_token: empty = open (local dev). Set it (or env IGR_API_TOKEN) to
     # require "Authorization: Bearer <token>" on POST endpoints before deploy.
     # preview_roots: extra directories to resolve original source files for the
-    # KB document preview (also honours env ATF_PREVIEW_ROOTS). Uploads dir is
+    # KB document preview (also honours env IGR_PREVIEW_ROOTS). Uploads dir is
     # always searched. Files are read locally and never copied off-machine.
     "server": {"host": "127.0.0.1", "port": 8077, "auth_token": "",
                "preview_roots": []},
@@ -241,22 +246,22 @@ def _load_json(path: Path) -> Dict[str, Any]:
 
 def _apply_env(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Selected env overrides. Secrets are read at provider call-time."""
-    if os.environ.get("ATF_PROFILE"):
-        cfg["profile"] = os.environ["ATF_PROFILE"]
-    if os.environ.get("ATF_LLM_MODEL"):
-        cfg["llm"]["model"] = os.environ["ATF_LLM_MODEL"]
-    if os.environ.get("ATF_VISION_MODEL"):
-        cfg["vision"]["model"] = os.environ["ATF_VISION_MODEL"]
-    if os.environ.get("ATF_EMBED_PROVIDER"):
-        cfg["embeddings"]["provider"] = os.environ["ATF_EMBED_PROVIDER"]
-    if os.environ.get("ATF_PORT"):
-        cfg["server"]["port"] = int(os.environ["ATF_PORT"])
-    if os.environ.get("ATF_PARSER"):          # advanced | docling | textract | bedrock
+    if os.environ.get("IGR_PROFILE"):
+        cfg["profile"] = os.environ["IGR_PROFILE"]
+    if os.environ.get("IGR_LLM_MODEL"):
+        cfg["llm"]["model"] = os.environ["IGR_LLM_MODEL"]
+    if os.environ.get("IGR_VISION_MODEL"):
+        cfg["vision"]["model"] = os.environ["IGR_VISION_MODEL"]
+    if os.environ.get("IGR_EMBED_PROVIDER"):
+        cfg["embeddings"]["provider"] = os.environ["IGR_EMBED_PROVIDER"]
+    if os.environ.get("IGR_PORT"):
+        cfg["server"]["port"] = int(os.environ["IGR_PORT"])
+    if os.environ.get("IGR_PARSER"):          # advanced | docling | textract | bedrock
         cfg.setdefault("ingestion", {}).setdefault("parser", {})
-        cfg["ingestion"]["parser"] = {"provider": os.environ["ATF_PARSER"]}
+        cfg["ingestion"]["parser"] = {"provider": os.environ["IGR_PARSER"]}
     # Setting TAVILY_API_KEY is enough to turn web research on (auto-enable).
-    # ATF_WEB_SEARCH=0 force-disables even when a key is present.
-    if os.environ.get("TAVILY_API_KEY") and os.environ.get("ATF_WEB_SEARCH") != "0":
+    # IGR_WEB_SEARCH=0 force-disables even when a key is present.
+    if os.environ.get("TAVILY_API_KEY") and os.environ.get("IGR_WEB_SEARCH") != "0":
         cfg.setdefault("web_search", {})
         cfg["web_search"]["provider"] = "tavily"
         cfg["web_search"]["enabled"] = True
@@ -270,7 +275,7 @@ class Settings:
         # never leak back into the module-global DEFAULTS.
         cfg = copy.deepcopy(DEFAULTS)
         cfg = _deep_merge(cfg, _load_json(ROOT / "config" / "settings.json"))
-        prof = profile or os.environ.get("ATF_PROFILE") or cfg.get("profile", "local")
+        prof = profile or os.environ.get("IGR_PROFILE") or cfg.get("profile", "local")
         cfg["profile"] = prof
         cfg = _deep_merge(cfg, _load_json(ROOT / "config" / f"settings.{prof}.json"))
         cfg = _apply_env(cfg)

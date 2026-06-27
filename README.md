@@ -64,7 +64,7 @@ git clone https://github.com/RW2523/intelligraphrag.git
 cd intelligraphrag
 
 pip install -r requirements.txt          # optional accelerators; core runs on stdlib alone
-python -m atf_graphrag serve             # HTTP API + web UI on http://localhost:8077
+python -m intelligraphrag serve             # HTTP API + web UI on http://localhost:8077
 ```
 
 Then open **http://localhost:8077** and:
@@ -78,7 +78,7 @@ Then open **http://localhost:8077** and:
 Prefer a one-liner that loads `.env` first (copy `.env.example` to `.env` and fill it in):
 
 ```bash
-./run.sh                                 # honors ATF_PROFILE (local | hybrid | aws)
+./run.sh                                 # honors IGR_PROFILE (local | hybrid | aws)
 ```
 
 ---
@@ -87,11 +87,11 @@ Prefer a one-liner that loads `.env` first (copy `.env.example` to `.env` and fi
 
 ```bash
 # index a single file or a whole directory into a corpus
-python -m atf_graphrag ingest report.pdf pdf
-python -m atf_graphrag ingest data/sample pdf
+python -m intelligraphrag ingest report.pdf pdf
+python -m intelligraphrag ingest data/sample pdf
 
 # vision (VLM) ingestion of a chart/table image
-python -m atf_graphrag visual chart.png visual
+python -m intelligraphrag visual chart.png visual
 ```
 
 Crawl a website via `sitemap.xml` (robots-aware, rate-limited, with headless-render fallback for JS/bot-protected pages and linked-PDF queueing):
@@ -118,14 +118,14 @@ curl -X POST localhost:8077/query \
 ```
 
 > In non-local profiles (`hybrid` / `aws`) the API requires a Bearer token —
-> add `-H "Authorization: Bearer $ATF_API_TOKEN"` to each request.
+> add `-H "Authorization: Bearer $IGR_API_TOKEN"` to each request.
 
 **From the CLI:**
 
 ```bash
-python -m atf_graphrag query "How is Marcus Webb connected to Eagle Point Firearms?" --trace
-python -m atf_graphrag stats        # engine statistics
-python -m atf_graphrag demo         # ingest the bundled sample and run sample queries
+python -m intelligraphrag query "How is Marcus Webb connected to Eagle Point Firearms?" --trace
+python -m intelligraphrag stats        # engine statistics
+python -m intelligraphrag demo         # ingest the bundled sample and run sample queries
 ```
 
 ---

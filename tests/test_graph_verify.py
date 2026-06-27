@@ -2,8 +2,8 @@
 import tempfile
 import types
 
-from atf_graphrag.stores.graph_store import LocalGraphStore
-from atf_graphrag.graph.verify import verify_and_prune
+from intelligraphrag.stores.graph_store import LocalGraphStore
+from intelligraphrag.graph.verify import verify_and_prune
 
 
 def _graph():

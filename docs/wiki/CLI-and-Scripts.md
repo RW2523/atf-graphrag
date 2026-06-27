@@ -1,7 +1,7 @@
 # CLI & Scripts
 
 This page is the complete reference for everything you run from a terminal in
-IntelliGraphRAG: the **module CLI** (`python -m atf_graphrag …`) for day-to-day
+IntelliGraphRAG: the **module CLI** (`python -m intelligraphrag …`) for day-to-day
 use, and the **operational scripts** under `scripts/` for full knowledge-base
 rebuilds, portable parse-once corpora, web crawling, evaluation, and wiki
 publishing.
@@ -14,9 +14,9 @@ publishing.
 > is shown in `inline code` exactly as it exists in the codebase.
 
 All commands read configuration from the layered config system in
-[`atf_graphrag/config.py`](https://github.com/RW2523/intelligraphrag/blob/main/atf_graphrag/config.py):
+[`intelligraphrag/config.py`](https://github.com/RW2523/intelligraphrag/blob/main/intelligraphrag/config.py):
 `DEFAULTS` → `config/settings.json` → `config/settings.<profile>.json` →
-environment overrides. Select the active profile with `ATF_PROFILE`
+environment overrides. Select the active profile with `IGR_PROFILE`
 (`local` | `hybrid` | `aws`); provider credentials come from the environment
 (`OPENROUTER_API_KEY`, `TAVILY_API_KEY`, `AWS_*`, `NEO4J_*`). Copy
 [`.env.example`](https://github.com/RW2523/intelligraphrag/blob/main/.env.example)
@@ -31,40 +31,40 @@ to `.env` to set these once.
 
 ---
 
-## Module CLI — `python -m atf_graphrag`
+## Module CLI — `python -m intelligraphrag`
 
 The entry point is
-[`atf_graphrag/__main__.py`](https://github.com/RW2523/intelligraphrag/blob/main/atf_graphrag/__main__.py).
+[`intelligraphrag/__main__.py`](https://github.com/RW2523/intelligraphrag/blob/main/intelligraphrag/__main__.py).
 Running it with no command — or an unrecognized one — prints the usage block and
 exits non-zero.
 
 | Command | Usage | What it does |
 | --- | --- | --- |
-| `serve` | `python -m atf_graphrag serve` | Start the HTTP API + web UI. |
-| `ingest` | `python -m atf_graphrag ingest <path\|dir> [corpus]` | Index a single file or a whole directory into a corpus (default `pdf`). |
-| `visual` | `python -m atf_graphrag visual <image> [corpus]` | Vision (VLM) ingestion of an image — chart, table, or scanned page (default corpus `visual`). |
-| `query` | `python -m atf_graphrag query "<question>" [--trace]` | Ask a question from the CLI; prints the JSON answer. |
-| `stats` | `python -m atf_graphrag stats` | Print engine stats (corpora, vector/graph store sizes). |
-| `demo` | `python -m atf_graphrag demo` | Ingest the bundled sample data and run representative queries. |
+| `serve` | `python -m intelligraphrag serve` | Start the HTTP API + web UI. |
+| `ingest` | `python -m intelligraphrag ingest <path\|dir> [corpus]` | Index a single file or a whole directory into a corpus (default `pdf`). |
+| `visual` | `python -m intelligraphrag visual <image> [corpus]` | Vision (VLM) ingestion of an image — chart, table, or scanned page (default corpus `visual`). |
+| `query` | `python -m intelligraphrag query "<question>" [--trace]` | Ask a question from the CLI; prints the JSON answer. |
+| `stats` | `python -m intelligraphrag stats` | Print engine stats (corpora, vector/graph store sizes). |
+| `demo` | `python -m intelligraphrag demo` | Ingest the bundled sample data and run representative queries. |
 
 There is also
 [`./run.sh`](https://github.com/RW2523/intelligraphrag/blob/main/run.sh), a
 convenience launcher that sources `.env` (if present) and then runs
-`python3 -m atf_graphrag serve` — the easiest way to start the server with your
+`python3 -m intelligraphrag serve` — the easiest way to start the server with your
 keys already in the environment.
 
 ### `serve`
 
 ```bash
-python -m atf_graphrag serve
+python -m intelligraphrag serve
 # or, loading .env automatically:
 ./run.sh
 ```
 
 Boots the stdlib threading HTTP API
-([`atf_graphrag/api/server.py`](https://github.com/RW2523/intelligraphrag/blob/main/atf_graphrag/api/server.py))
+([`intelligraphrag/api/server.py`](https://github.com/RW2523/intelligraphrag/blob/main/intelligraphrag/api/server.py))
 and the web UI. The host and port come from config (`server.host` /
-`server.port`); the default port is **8077** (also overridable via `ATF_PORT`).
+`server.port`); the default port is **8077** (also overridable via `IGR_PORT`).
 On startup the banner prints the active profile, the resolved LLM/embedding
 providers, and whether `OPENROUTER_API_KEY` is set.
 
@@ -81,9 +81,9 @@ POST /query
 > - **Single-writer lock** — it refuses to start a second server against the
 >   same storage root (`REFUSING TO START: …`).
 > - **Auth fail-closed** — on any **non-`local`** profile (`hybrid` / `aws`) it
->   *refuses to start* unless an API token is set (`ATF_API_TOKEN` or
+>   *refuses to start* unless an API token is set (`IGR_API_TOKEN` or
 >   `server.auth_token`). On `local`, endpoints are open for convenience and it
->   only warns. Always set `ATF_API_TOKEN` before any non-local deployment.
+>   only warns. Always set `IGR_API_TOKEN` before any non-local deployment.
 
 **When to use:** normal operation — running the API and UI for interactive
 querying, ingestion via the UI, and the debug/visualization tabs.
@@ -92,10 +92,10 @@ querying, ingestion via the UI, and the debug/visualization tabs.
 
 ```bash
 # one file into the default 'pdf' corpus
-python -m atf_graphrag ingest report.pdf
+python -m intelligraphrag ingest report.pdf
 
 # a whole directory into a named corpus
-python -m atf_graphrag ingest ./docs/policies regulations
+python -m intelligraphrag ingest ./docs/policies regulations
 ```
 
 Indexes a single file or recursively indexes a directory (auto-detected via
@@ -112,8 +112,8 @@ For a full from-scratch rebuild of a large corpus, prefer
 ### `visual`
 
 ```bash
-python -m atf_graphrag visual exhibit_chart.png
-python -m atf_graphrag visual scanned_table.jpg charts
+python -m intelligraphrag visual exhibit_chart.png
+python -m intelligraphrag visual scanned_table.jpg charts
 ```
 
 Runs the vision (VLM) ingestion path on a single image — a chart, exhibit,
@@ -127,8 +127,8 @@ the vision pipeline on one figure.
 ### `query`
 
 ```bash
-python -m atf_graphrag query "What does AFMER stand for?"
-python -m atf_graphrag query "Compare imports vs exports" --trace
+python -m intelligraphrag query "What does AFMER stand for?"
+python -m intelligraphrag query "Compare imports vs exports" --trace
 ```
 
 Routes the question through the full retrieval pipeline and prints the answer as
@@ -143,7 +143,7 @@ starting the server; `--trace` is invaluable for debugging routing.
 ### `stats`
 
 ```bash
-python -m atf_graphrag stats
+python -m intelligraphrag stats
 ```
 
 Prints engine statistics as JSON — the list of corpora and the sizes of the
@@ -153,7 +153,7 @@ whether stores are populated.
 ### `demo`
 
 ```bash
-python -m atf_graphrag demo
+python -m intelligraphrag demo
 # equivalent to:
 python scripts/demo.py
 ```
@@ -168,7 +168,7 @@ bundled sample data.
 
 ## Operational scripts — `scripts/`
 
-Run scripts from the repository root. Most default `ATF_PROFILE` to `local` if
+Run scripts from the repository root. Most default `IGR_PROFILE` to `local` if
 unset and read provider keys from the environment — **keys are never
 hardcoded**. The build/import/backfill/reload scripts acquire the single-writer
 storage lock and abort if it's already held.
@@ -204,8 +204,8 @@ python scripts/build_kb.py
 
 | Variable | Effect |
 | --- | --- |
-| `ATF_PROFILE` | Config profile (defaults to `local`). |
-| `ATF_PARSER` | Override the parser provider — `docling` \| `advanced` \| `textract` \| `bedrock` \| `bda`. The script favours `advanced` (PyMuPDF + pdfplumber + VLM) for corpus-scale rebuilds because Docling on CPU is too slow. |
+| `IGR_PROFILE` | Config profile (defaults to `local`). |
+| `IGR_PARSER` | Override the parser provider — `docling` \| `advanced` \| `textract` \| `bedrock` \| `bda`. The script favours `advanced` (PyMuPDF + pdfplumber + VLM) for corpus-scale rebuilds because Docling on CPU is too slow. |
 
 **Stages, in order:**
 
@@ -249,7 +249,7 @@ python scripts/finish_kb.py
 
 **Behavior / guards:**
 
-- Defaults `ATF_PROFILE` to `local`; reads keys from the environment.
+- Defaults `IGR_PROFILE` to `local`; reads keys from the environment.
 - Acquires the storage lock; aborts if held.
 - **Aborts if the LLM is offline** (`ABORT: LLM is offline (no key)`) — the
   enrichment and verification stages need a real model.
@@ -323,7 +323,7 @@ cheaply anywhere.
 python scripts/export_corpus.py [out.jsonl]      # default: corpus_export.jsonl
 ```
 
-**Behavior:** defaults `ATF_PROFILE` to `local`; iterates every corpus and
+**Behavior:** defaults `IGR_PROFILE` to `local`; iterates every corpus and
 writes one JSON object per chunk (tagged with its `corpus`). Prints the chunk
 count and file size.
 
@@ -347,7 +347,7 @@ python scripts/import_corpus.py [corpus_export.jsonl]
 
 **Behavior / guards:**
 
-- Defaults `ATF_PROFILE` to `local`; aborts if the input file is missing.
+- Defaults `IGR_PROFILE` to `local`; aborts if the input file is missing.
 - Holds the single-writer storage lock — safe to run against a stopped server.
 - Prints the active embedding model and dimension, progresses every 2,000
   chunks, commits each corpus's vector store and the graph, and prints final
@@ -374,8 +374,8 @@ python scripts/reload_corpus.py
 
 | Variable | Effect |
 | --- | --- |
-| `ATF_PROFILE` | Config profile (defaults to `local`). |
-| `ATF_EXTRACTION` | Per-chunk LLM extraction mode: `off` (default) \| `auto` \| `on`. `off` loads the full corpus fast with vectors + a co-occurrence graph; enrich the typed graph separately afterward. |
+| `IGR_PROFILE` | Config profile (defaults to `local`). |
+| `IGR_EXTRACTION` | Per-chunk LLM extraction mode: `off` (default) \| `auto` \| `on`. `off` loads the full corpus fast with vectors + a co-occurrence graph; enrich the typed graph separately afterward. |
 
 **Behavior / guards:**
 
@@ -409,7 +409,7 @@ python scripts/backfill_tables.py
 
 **Behavior / guards:**
 
-- Defaults `ATF_PROFILE` to `local`; holds the storage lock so it can't clobber
+- Defaults `IGR_PROFILE` to `local`; holds the storage lock so it can't clobber
   a running server.
 - Scans every corpus's chunk payloads: parses table cells for table chunks that
   lack `table_data`, fills `table_title`, `report_type`, and `us_state`, and
@@ -437,7 +437,7 @@ the per-stage trace, and the answer.
 ```bash
 python scripts/demo.py
 # or via the CLI:
-python -m atf_graphrag demo
+python -m intelligraphrag demo
 ```
 
 **Behavior:** reads sample documents from `data/sample`; enables LLM extraction
@@ -493,7 +493,7 @@ the actual indexed rows of the example government corpus, so they only score
 against that dataset; adapt the question lists to evaluate your own data. See the
 **Evaluation** page for methodology and metric definitions.
 
-All eval scripts default `ATF_PROFILE` to `local` and read keys from the
+All eval scripts default `IGR_PROFILE` to `local` and read keys from the
 environment. Run them against a fully built corpus.
 
 ### `eval_50.py`
@@ -539,14 +539,14 @@ independent question sets** to guard against overfitting.
 
 ```bash
 python scripts/eval_15_structured.py                 # set 1 (default)
-ATF_EVAL_SET=2 python scripts/eval_15_structured.py  # set 2 (different docs/angles)
+IGR_EVAL_SET=2 python scripts/eval_15_structured.py  # set 2 (different docs/angles)
 ```
 
 **Flags / environment:**
 
 | Variable | Effect |
 | --- | --- |
-| `ATF_EVAL_SET` | `1` (default) or `2` — selects which 15-question set to run. |
+| `IGR_EVAL_SET` | `1` (default) or `2` — selects which 15-question set to run. |
 
 **Output:** per-question lines (answered / evidence-quoted / right-doc /
 structured-used / confidence / incomplete) and a JSON report at
@@ -562,18 +562,18 @@ the graph retriever and reranker.
 
 ```bash
 python scripts/eval_atf_25.py                                  # 25 questions, baseline config
-ATF_EVAL_50=1 python scripts/eval_atf_25.py                    # the full 50-question set
-ATF_EVAL_PPR=1 ATF_EVAL_BGE=1 python scripts/eval_atf_25.py    # PPR graph + BGE reranker
+IGR_EVAL_50=1 python scripts/eval_atf_25.py                    # the full 50-question set
+IGR_EVAL_PPR=1 IGR_EVAL_BGE=1 python scripts/eval_atf_25.py    # PPR graph + BGE reranker
 ```
 
 **Flags / environment:**
 
 | Variable | Effect |
 | --- | --- |
-| `ATF_EVAL_50` | `1` adds questions q26–q50 (harder table values, multi-hop, visual, timeline, refusals). |
-| `ATF_EVAL_PPR` | `1` switches the graph retriever to **PPR** (personalized PageRank); default is BFS. |
-| `ATF_EVAL_BGE` | `1` switches the reranker to **BGE**; default is the local reranker. |
-| `ATF_EVAL_LABEL` | Output label (defaults to `enhanced` when PPR/BGE are on, else `baseline`). |
+| `IGR_EVAL_50` | `1` adds questions q26–q50 (harder table values, multi-hop, visual, timeline, refusals). |
+| `IGR_EVAL_PPR` | `1` switches the graph retriever to **PPR** (personalized PageRank); default is BFS. |
+| `IGR_EVAL_BGE` | `1` switches the reranker to **BGE**; default is the local reranker. |
+| `IGR_EVAL_LABEL` | Output label (defaults to `enhanced` when PPR/BGE are on, else `baseline`). |
 
 **Scoring:** per question — *answered* (non-refusal + ≥1 citation),
 *refusal_ok*, *keyword_hit*, and *faithfulness* (LLM judge: is every claim
@@ -596,12 +596,12 @@ comparisons of retrieval configurations, with a faithfulness signal.
 
 ```bash
 # CLI
-python -m atf_graphrag serve                      # start API + UI (port 8077)
-python -m atf_graphrag ingest <path|dir> [corpus] # index file/dir
-python -m atf_graphrag visual <image> [corpus]    # VLM ingest one image
-python -m atf_graphrag query "<q>" [--trace]      # ask from the CLI
-python -m atf_graphrag stats                       # engine stats
-python -m atf_graphrag demo                        # smoke test
+python -m intelligraphrag serve                      # start API + UI (port 8077)
+python -m intelligraphrag ingest <path|dir> [corpus] # index file/dir
+python -m intelligraphrag visual <image> [corpus]    # VLM ingest one image
+python -m intelligraphrag query "<q>" [--trace]      # ask from the CLI
+python -m intelligraphrag stats                       # engine stats
+python -m intelligraphrag demo                        # smoke test
 
 # Build & data movement
 python scripts/build_kb.py                         # full rebuild → 'new' seed
@@ -615,8 +615,8 @@ python scripts/crawl_site.py <url> [--max N] [--render auto] [--save]
 # Eval & publish
 python scripts/eval_50.py
 python scripts/eval_full.py
-python scripts/eval_15_structured.py               # ATF_EVAL_SET=2 for set 2
-python scripts/eval_atf_25.py                      # ATF_EVAL_50/PPR/BGE toggles
+python scripts/eval_15_structured.py               # IGR_EVAL_SET=2 for set 2
+python scripts/eval_atf_25.py                      # IGR_EVAL_50/PPR/BGE toggles
 python scripts/publish_wiki.py                     # push docs/ → Wiki tab
 ```
 
@@ -626,7 +626,7 @@ python scripts/publish_wiki.py                     # push docs/ → Wiki tab
 
 - [Installation & Quickstart](Installation-and-Quickstart) — first-run setup.
 - [Configuration Reference](Configuration-Reference) — profiles, providers, and
-  every config key (including `ATF_PARSER`, `ATF_EXTRACTION`, `ATF_API_TOKEN`).
+  every config key (including `IGR_PARSER`, `IGR_EXTRACTION`, `IGR_API_TOKEN`).
 - [Ingestion & Parsing](Ingestion-and-Parsing) — what `ingest` / `build_kb`
   actually do per stage.
 - [Web Crawling](Web-Crawling) — the full crawler pipeline behind

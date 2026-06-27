@@ -15,9 +15,9 @@ import sys
 
 
 def main():
-    os.environ.setdefault("ATF_PROFILE", "local")
+    os.environ.setdefault("IGR_PROFILE", "local")
     out = sys.argv[1] if len(sys.argv) > 1 else "corpus_export.jsonl"
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     e = Engine()
     n = 0
     with open(out, "w") as f:

@@ -80,7 +80,7 @@ def build_aws_settings(form: Dict[str, Any]) -> Settings:
     """Construct a Settings(profile='aws') with the form's overrides applied.
     The form is shallow per-component; we merge into the aws-profile defaults."""
     s = Settings(profile="aws")
-    s._cfg["profile"] = "aws"          # an ATF_PROFILE env must not relabel this
+    s._cfg["profile"] = "aws"          # an IGR_PROFILE env must not relabel this
     cfg = s._cfg
     region = (form.get("region") or cfg["llm"].get("region") or "us-east-1").strip()
 

@@ -2,10 +2,10 @@
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing.indexer import Indexer
-from atf_graphrag.extraction.entity_resolution import (
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.indexing.indexer import Indexer
+from intelligraphrag.extraction.entity_resolution import (
     normalise, EntityResolver, remap_relationships)
 
 

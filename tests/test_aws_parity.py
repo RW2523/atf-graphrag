@@ -7,8 +7,8 @@ import types
 
 import pytest
 
-from atf_graphrag.config import Settings
-from atf_graphrag import config as cfg_mod
+from intelligraphrag.config import Settings
+from intelligraphrag import config as cfg_mod
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +32,7 @@ def hermetic(monkeypatch):
 
 
 def test_aws_profile_wires_bedrock_llm_and_embedder():
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     e = Engine(Settings(profile="aws"))
     assert type(e.llm).__name__ == "BedrockLLM"
     assert type(e.embedder).__name__ == "BedrockEmbedder"
@@ -41,7 +41,7 @@ def test_aws_profile_wires_bedrock_llm_and_embedder():
 
 
 def test_bedrock_embed_and_generate_roundtrip():
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     e = Engine(Settings(profile="aws"))
     v = e.embedder.embed(["firearms manufactured in 2023"])
     assert v and len(v[0]) == 384                     # Bedrock embedder returns vectors
@@ -52,9 +52,9 @@ def test_bedrock_embed_and_generate_roundtrip():
 def test_aws_query_pipeline_runs_with_bedrock(monkeypatch, tmp_path):
     # End-to-end: index a doc under the aws profile (local vector fallback since
     # opensearch-py is absent), then query through the full pipeline on Bedrock.
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.indexing.indexer import Indexer
-    from atf_graphrag.retrieval.pipeline import Retriever
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.indexing.indexer import Indexer
+    from intelligraphrag.retrieval.pipeline import Retriever
     s = Settings(profile="aws")
     s._cfg["vector_store"]["path"] = str(tmp_path / "v")   # opensearch -> local fallback
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")    # neptune -> local fallback

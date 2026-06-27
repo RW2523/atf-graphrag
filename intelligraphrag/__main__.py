@@ -1,4 +1,4 @@
-"""CLI: python -m atf_graphrag <command>
+"""CLI: python -m intelligraphrag <command>
 
   serve                         start the HTTP API
   ingest <path|dir> [corpus]    index a file or directory

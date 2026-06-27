@@ -2,7 +2,7 @@
 import threading
 import time
 
-from atf_graphrag.api.jobs import JobManager
+from intelligraphrag.api.jobs import JobManager
 
 
 def _mgr(tmp_path, ingest_fn):

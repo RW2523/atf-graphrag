@@ -3,8 +3,8 @@ import json
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.stores.graph_store import LocalGraphStore
-from atf_graphrag.viz.export_graph import export_graph
+from intelligraphrag.stores.graph_store import LocalGraphStore
+from intelligraphrag.viz.export_graph import export_graph
 
 
 def _graph():
@@ -60,7 +60,7 @@ def test_export_truncates_large_graph():
 
 
 def test_viewer_html_is_served():
-    from atf_graphrag.viz.graph_template import GRAPH_VIEW_HTML
+    from intelligraphrag.viz.graph_template import GRAPH_VIEW_HTML
     assert "d3" in GRAPH_VIEW_HTML.lower()
     assert "/graph/export" in GRAPH_VIEW_HTML
 
@@ -68,6 +68,6 @@ def test_viewer_html_is_served():
 def test_server_routes_registered():
     # The GET handler must reference the new routes (smoke check, no socket).
     import inspect
-    from atf_graphrag.api import server
+    from intelligraphrag.api import server
     src = inspect.getsource(server.Handler.do_GET)
     assert "/graph/export" in src and "/graph/view" in src

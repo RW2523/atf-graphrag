@@ -32,9 +32,9 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from atf_graphrag import config as _cfg          # noqa: E402
-from atf_graphrag.engine import Engine            # noqa: E402
-from atf_graphrag.retrieval.pipeline import Retriever  # noqa: E402
+from intelligraphrag import config as _cfg          # noqa: E402
+from intelligraphrag.engine import Engine            # noqa: E402
+from intelligraphrag.retrieval.pipeline import Retriever  # noqa: E402
 from eval.retrieval_metrics import (              # noqa: E402
     recall_at_k, ndcg_at_k, mrr, aggregate, precision_at_k)
 from eval.faithfulness import judge_faithfulness  # noqa: E402

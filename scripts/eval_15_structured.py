@@ -79,12 +79,12 @@ QS2 = [
 
 
 def main():
-    os.environ.setdefault("ATF_PROFILE", "local")
+    os.environ.setdefault("IGR_PROFILE", "local")
     global QS
-    if os.environ.get("ATF_EVAL_SET") == "2":
+    if os.environ.get("IGR_EVAL_SET") == "2":
         QS = QS2
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.retrieval.pipeline import Retriever
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.retrieval.pipeline import Retriever
     e = Engine()
     r = Retriever(e)
     rows = []
@@ -130,7 +130,7 @@ def main():
               f"struct={int(struct_used)} conf={res.get('confidence')} "
               f"inc={res.get('incomplete')} ({rows[-1]['secs']}s)", flush=True)
     out = {"rows": rows}
-    tag = os.environ.get("ATF_EVAL_SET", "1")
+    tag = os.environ.get("IGR_EVAL_SET", "1")
     path = os.path.join(os.path.dirname(__file__), f"eval_15_set{tag}.json")
     json.dump(out, open(path, "w"), indent=2)
     n = len(rows)

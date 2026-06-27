@@ -4,13 +4,13 @@ corpus. Fully hermetic — fetch and render are injected, no network/browser."""
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing.indexer import Indexer
-from atf_graphrag.indexing.tables import parse_table
-from atf_graphrag.ingestion import browser as B
-from atf_graphrag.ingestion import crawler as C
-from atf_graphrag.ingestion.web_extract import extract_content, html_table_to_markdown
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.indexing.indexer import Indexer
+from intelligraphrag.indexing.tables import parse_table
+from intelligraphrag.ingestion import browser as B
+from intelligraphrag.ingestion import crawler as C
+from intelligraphrag.ingestion.web_extract import extract_content, html_table_to_markdown
 
 
 HTML_TABLE = """<html><head><title>AFMER Manufacturers</title>

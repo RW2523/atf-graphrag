@@ -1,6 +1,6 @@
 """Plan #3: true map-reduce global answering + cheap/strong model tiering."""
-from atf_graphrag.models import QueryPlan
-from atf_graphrag.retrieval.agents import GlobalAnswerAgent
+from intelligraphrag.models import QueryPlan
+from intelligraphrag.retrieval.agents import GlobalAnswerAgent
 
 
 class _RecordingLLM:

@@ -12,8 +12,8 @@ import types
 
 import pytest
 
-from atf_graphrag.config import Settings
-from atf_graphrag import config as cfg_mod
+from intelligraphrag.config import Settings
+from intelligraphrag import config as cfg_mod
 
 
 def _engine(tmp_path, results, enabled=True, with_llm=False):
@@ -28,7 +28,7 @@ def _engine(tmp_path, results, enabled=True, with_llm=False):
         "judge_with_llm": with_llm, "insufficient_conf": 0.45,
     }
     s._cfg["retrieval"]["llm_refine"] = False
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     e = Engine(s)
     # inject a fake web-search provider
     e.web_search = types.SimpleNamespace(
@@ -38,7 +38,7 @@ def _engine(tmp_path, results, enabled=True, with_llm=False):
 
 
 def _plan(q):
-    from atf_graphrag.models import QueryPlan
+    from intelligraphrag.models import QueryPlan
     return QueryPlan(question=q, top_k=10)
 
 
@@ -57,7 +57,7 @@ _NEWS = [
 
 def test_should_augment_news_intent_thin_evidence(tmp_path):
     e = _engine(tmp_path, _NEWS)
-    from atf_graphrag.retrieval.web_research import WebResearchAgent
+    from intelligraphrag.retrieval.web_research import WebResearchAgent
     agent = WebResearchAgent()
     do, why = agent.should_augment(_plan("What happened in the recent ATF trafficking case?"),
                                    hits=[], engine=e)
@@ -66,7 +66,7 @@ def test_should_augment_news_intent_thin_evidence(tmp_path):
 
 def test_no_augment_when_disabled(tmp_path):
     e = _engine(tmp_path, _NEWS, enabled=False)
-    from atf_graphrag.retrieval.web_research import WebResearchAgent
+    from intelligraphrag.retrieval.web_research import WebResearchAgent
     do, why = WebResearchAgent().should_augment(
         _plan("recent ATF case news"), hits=[], engine=e)
     assert do is False and "disabled" in why
@@ -74,8 +74,8 @@ def test_no_augment_when_disabled(tmp_path):
 
 def test_no_augment_when_local_sufficient(tmp_path):
     e = _engine(tmp_path, _NEWS)
-    from atf_graphrag.retrieval.web_research import WebResearchAgent
-    from atf_graphrag.models import RetrievalHit, ChunkRecord
+    from intelligraphrag.retrieval.web_research import WebResearchAgent
+    from intelligraphrag.models import RetrievalHit, ChunkRecord
     strong = [RetrievalHit(chunk=ChunkRecord(chunk_id=f"c{i}", text="x"),
                            score=0.9, eval_score=0.9) for i in range(5)]
     # a non-news question with strong local hits -> no augmentation
@@ -86,7 +86,7 @@ def test_no_augment_when_local_sufficient(tmp_path):
 
 def test_research_adds_worthy_skips_spam(tmp_path):
     e = _engine(tmp_path, _NEWS)
-    from atf_graphrag.retrieval.web_research import WebResearchAgent
+    from intelligraphrag.retrieval.web_research import WebResearchAgent
     rec = WebResearchAgent().research(
         _plan("recent ATF firearms trafficking case charges"), hits=[], engine=e)
     assert rec["added"] == 1                 # the real article
@@ -98,7 +98,7 @@ def test_research_adds_worthy_skips_spam(tmp_path):
 
 def test_ingestion_is_idempotent(tmp_path):
     e = _engine(tmp_path, _NEWS)
-    from atf_graphrag.retrieval.web_research import WebResearchAgent
+    from intelligraphrag.retrieval.web_research import WebResearchAgent
     agent = WebResearchAgent()
     q = _plan("recent ATF firearms trafficking case charges")
     agent.research(q, hits=[], engine=e)
@@ -114,7 +114,7 @@ def test_redundant_result_skipped_by_novelty(tmp_path):
     e = _engine(tmp_path, _NEWS)
     e._cfg = e.settings
     e.settings["web_search"]["novelty_threshold"] = 0.5   # easy to trip
-    from atf_graphrag.retrieval.web_research import WebResearchAgent
+    from intelligraphrag.retrieval.web_research import WebResearchAgent
     agent = WebResearchAgent()
     q = _plan("recent ATF firearms trafficking case charges")
     agent.research(q, hits=[], engine=e)                  # seeds the corpus
@@ -126,7 +126,7 @@ def test_redundant_result_skipped_by_novelty(tmp_path):
 
 def test_pipeline_augments_and_cites_web(tmp_path):
     e = _engine(tmp_path, _NEWS)
-    from atf_graphrag.retrieval.pipeline import Retriever
+    from intelligraphrag.retrieval.pipeline import Retriever
     res = Retriever(e).answer(
         "What happened in the recent ATF firearms trafficking case?", trace=True)
     wr = res["web_research"]

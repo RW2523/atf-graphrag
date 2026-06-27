@@ -29,12 +29,12 @@ file ─▶ PARSE     → List[(page_no, rich_text)]      one entry per page
 Entry points:
 
 ```bash
-python -m atf_graphrag ingest <path|dir> [corpus]   # index a file or directory
-python -m atf_graphrag visual <image> [corpus]      # vision ingestion of one image
+python -m intelligraphrag ingest <path|dir> [corpus]   # index a file or directory
+python -m intelligraphrag visual <image> [corpus]      # vision ingestion of one image
 python scripts/crawl_site.py <url|sitemap> [opts]   # crawl & ingest a website
 ```
 
-The orchestration lives in `atf_graphrag/indexing/indexer.py` — `Indexer.index_file`,
+The orchestration lives in `intelligraphrag/indexing/indexer.py` — `Indexer.index_file`,
 `Indexer.index_directory`, `Indexer.index_text`, and `Indexer.index_visual`.
 
 ---
@@ -61,9 +61,9 @@ else:
 
 ### Available providers
 
-Selected via `ingestion.parser.provider` (or the `ATF_PARSER` env var, which
+Selected via `ingestion.parser.provider` (or the `IGR_PARSER` env var, which
 overrides config). The factory is `make_parser()` in
-`atf_graphrag/providers/__init__.py`.
+`intelligraphrag/providers/__init__.py`.
 
 | Provider   | Engine class                    | What it does | Notes |
 | ---------- | ------------------------------- | ------------ | ----- |
@@ -88,7 +88,7 @@ overrides config). The factory is `make_parser()` in
 
 ```bash
 # Env override (highest precedence)
-export ATF_PARSER=advanced
+export IGR_PARSER=advanced
 ```
 
 ### What the base loader supports
@@ -608,8 +608,8 @@ it as a chunk with `source_type="image"`, `visual_content_type="image"`,
 }
 ```
 
-Relevant env overrides: `ATF_PARSER` (parser provider), `ATF_DATA_DIR` (storage
-root — controls where `vlm_cache/` and `tables.db` live), `ATF_PROFILE`
+Relevant env overrides: `IGR_PARSER` (parser provider), `IGR_DATA_DIR` (storage
+root — controls where `vlm_cache/` and `tables.db` live), `IGR_PROFILE`
 (settings file selection).
 
 ---
@@ -618,15 +618,15 @@ root — controls where `vlm_cache/` and `tables.db` live), `ATF_PROFILE`
 
 | Concern | File |
 | ------- | ---- |
-| Orchestration, dedup, embeds, graph build | `atf_graphrag/indexing/indexer.py` |
-| Structure-aware chunking | `atf_graphrag/ingestion/chunker.py` |
-| Multi-stage PDF loader + VLM + cache | `atf_graphrag/ingestion/advanced_loader.py` |
-| Base loaders + supported types | `atf_graphrag/ingestion/loaders.py` |
-| Docling parser + picture VLM cache | `atf_graphrag/providers/docling_parser.py` |
-| Parser base + selection | `atf_graphrag/providers/parser.py`, `atf_graphrag/providers/__init__.py` |
-| `table_data` parsing | `atf_graphrag/indexing/tables.py` |
-| Table store (SQLite + SQL lane) | `atf_graphrag/indexing/table_store.py` |
-| Defaults | `atf_graphrag/config.py` |
+| Orchestration, dedup, embeds, graph build | `intelligraphrag/indexing/indexer.py` |
+| Structure-aware chunking | `intelligraphrag/ingestion/chunker.py` |
+| Multi-stage PDF loader + VLM + cache | `intelligraphrag/ingestion/advanced_loader.py` |
+| Base loaders + supported types | `intelligraphrag/ingestion/loaders.py` |
+| Docling parser + picture VLM cache | `intelligraphrag/providers/docling_parser.py` |
+| Parser base + selection | `intelligraphrag/providers/parser.py`, `intelligraphrag/providers/__init__.py` |
+| `table_data` parsing | `intelligraphrag/indexing/tables.py` |
+| Table store (SQLite + SQL lane) | `intelligraphrag/indexing/table_store.py` |
+| Defaults | `intelligraphrag/config.py` |
 
 ---
 

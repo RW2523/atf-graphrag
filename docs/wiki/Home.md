@@ -44,7 +44,7 @@ guardrail checks.
 
 ```bash
 pip install -r requirements.txt          # optional accelerators; core runs on stdlib alone
-python -m atf_graphrag serve             # HTTP API + web UI at http://localhost:8077
+python -m intelligraphrag serve             # HTTP API + web UI at http://localhost:8077
 ```
 
 Open <http://localhost:8077>, optionally paste an **OpenRouter** key in the
@@ -86,7 +86,7 @@ Concepts**, **Operations**, and **Reference**. Every page is linked below.
 
 | Page | What you'll find |
 |---|---|
-| [CLI & Scripts](CLI-and-Scripts.md) | The `python -m atf_graphrag` commands and the `scripts/` toolkit (build, finish, crawl, export/import, eval). |
+| [CLI & Scripts](CLI-and-Scripts.md) | The `python -m intelligraphrag` commands and the `scripts/` toolkit (build, finish, crawl, export/import, eval). |
 | [Deployment & AWS](Deployment-and-AWS.md) | Local, hybrid, and AWS-native deployments; Docker; the one-click AWS control plane (Plan → Provision → Smoke → Teardown). |
 | [Evaluation](Evaluation.md) | The 50-question end-to-end harness, per-kind scoring, and which lane fired for each question kind. |
 | [Troubleshooting & FAQ](Troubleshooting-and-FAQ.md) | Common issues, offline mode, missing optional dependencies, and frequently asked questions. |
@@ -106,7 +106,7 @@ Concepts**, **Operations**, and **Reference**. Every page is linked below.
 |---|---|
 | **Entry points** | `serve`, `ingest`, `visual`, `query`, `stats`, `demo`, plus `./run.sh` |
 | **Main endpoint** | `POST /query` → `{answer, citations[], mode, trace{...}}` |
-| **Profiles** | `local` · `hybrid` · `aws` · `oss` (set via `ATF_PROFILE`) |
+| **Profiles** | `local` · `hybrid` · `aws` · `oss` (set via `IGR_PROFILE`) |
 | **Retrieval lanes** | vector+BM25, graph BFS/PPR, table-row, SQL, numeric, community, corrective, multi-hop, web |
 | **Swappable providers** | LLM · vision · embeddings · reranker · vector / graph / blob stores · parser — by config |
 | **Governance** | citations everywhere, grounding verification, PII redaction, denied terms, Bedrock Guardrails, Bearer auth off-local |

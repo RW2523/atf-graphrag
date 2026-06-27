@@ -1,11 +1,11 @@
 """Storage epoch guard — the stale-writer data-loss class is dead."""
 import pytest
 
-from atf_graphrag.storage_epoch import (read_epoch, bump_epoch, check_epoch,
+from intelligraphrag.storage_epoch import (read_epoch, bump_epoch, check_epoch,
                                         StaleWriteError)
-from atf_graphrag.models import ChunkRecord
-from atf_graphrag.stores.vector_store import LocalVectorStore
-from atf_graphrag.stores.graph_store import LocalGraphStore
+from intelligraphrag.models import ChunkRecord
+from intelligraphrag.stores.vector_store import LocalVectorStore
+from intelligraphrag.stores.graph_store import LocalGraphStore
 
 
 def test_epoch_roundtrip_and_bump(tmp_path):
@@ -55,13 +55,13 @@ def test_stale_graph_store_cannot_commit(tmp_path):
 def test_restore_invalidates_jobs_and_uploads(tmp_path, monkeypatch):
     """server-level: _invalidate_writers_and_jobs purges queue + bumps epoch."""
     import os
-    from atf_graphrag.config import Settings
+    from intelligraphrag.config import Settings
     s = Settings(profile="local")
     s._cfg["vector_store"]["path"] = str(tmp_path / "vectors")
     s._cfg["graph_store"]["path"] = str(tmp_path / "graph")
     s._cfg["blob_store"]["path"] = str(tmp_path / "blobs")
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.api import server as srv
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.api import server as srv
     monkeypatch.setattr(srv, "_engine", Engine(s))
     root = srv._storage_root()
     # seed a fake queued job + staged upload

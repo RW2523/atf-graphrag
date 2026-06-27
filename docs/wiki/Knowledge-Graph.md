@@ -79,7 +79,7 @@ re-parse, no re-embed) and fills in the high-signal typed layer.
 
 ## The ontology
 
-`atf_graphrag/extraction/ontology.py` defines a **closed** ontology — a fixed set
+`intelligraphrag/extraction/ontology.py` defines a **closed** ontology — a fixed set
 of **7 entity types** and **8 relationship types**. It is embedded in the
 extraction prompt *and* enforced by Pydantic validation, so the model can only
 emit allowed types; anything out-of-ontology is dropped rather than failing the
@@ -136,7 +136,7 @@ robustness.
 
 ## Typed extraction
 
-`atf_graphrag/indexing/extract.py` `llm_extract_entities(engine, rec)` is the
+`intelligraphrag/indexing/extract.py` `llm_extract_entities(engine, rec)` is the
 per-chunk extractor used both inline and during enrichment:
 
 - Calls the LLM with `rec.text[:1800]` and `ontology_prompt()` at
@@ -159,7 +159,7 @@ per-chunk extractor used both inline and during enrichment:
 
 ## Parallel enrichment (journaled & resumable)
 
-`atf_graphrag/graph/enrich.py` is the workhorse that turns a co-occurrence graph
+`intelligraphrag/graph/enrich.py` is the workhorse that turns a co-occurrence graph
 into a typed one **without re-parsing**. It is run **inside the server process**
 (which already holds the single-writer storage lock) via
 `POST /api/graph/enrich`.
@@ -239,7 +239,7 @@ test.
 
 ## Entity resolution
 
-`atf_graphrag/extraction/entity_resolution.py` collapses surface variants of the
+`intelligraphrag/extraction/entity_resolution.py` collapses surface variants of the
 same real-world entity into **one canonical graph node** — the prerequisite for
 relationship and pattern queries to work *across* documents. So `S&W`,
 `Smith & Wesson`, and `Smith and Wesson, Inc.` all become a single node.
@@ -280,7 +280,7 @@ canonical ids and drops self-loops.
 
 ## Edge typing & weighting
 
-The store (`atf_graphrag/stores/graph_store.py`) distinguishes **typed**
+The store (`intelligraphrag/stores/graph_store.py`) distinguishes **typed**
 (evidence-backed) edges from **generic** co-occurrence edges. Two relation labels
 are treated as low-signal:
 
@@ -331,7 +331,7 @@ co-mentions.
 ## Node verify & prune
 
 Graph nodes accumulate non-entities — time expressions, header/table fragments,
-generic words, document titles. `atf_graphrag/graph/verify.py`
+generic words, document titles. `intelligraphrag/graph/verify.py`
 `verify_and_prune(graph_store, llm, use_llm, cache_dir)` runs a **two-stage**
 cleanup. Pruning a node also removes **every incident edge**
 (`graph_store.remove_node`). The pass is **idempotent** and degrades to
@@ -381,7 +381,7 @@ LLM-dropped names) and commits the graph **only when something was removed**.
 
 ## Communities & summaries
 
-`atf_graphrag/graph/communities.py` turns the typed graph into explorable
+`intelligraphrag/graph/communities.py` turns the typed graph into explorable
 knowledge: cluster the resolved, typed graph into communities, then write a short
 LLM briefing per cluster.
 
@@ -445,8 +445,8 @@ The ingestion orchestrator's post-index step
 ## The Graph Explorer
 
 A self-contained D3 viewer is served at **`/graph/view`** (alias **`/graph`**)
-from `atf_graphrag/viz/graph_template.py`. It fetches its data from
-**`/graph/export`** (`atf_graphrag/viz/export_graph.py`).
+from `intelligraphrag/viz/graph_template.py`. It fetches its data from
+**`/graph/export`** (`intelligraphrag/viz/export_graph.py`).
 
 ### `/graph/export` payload
 
@@ -518,7 +518,7 @@ and prune passes.
 
 ## Configuration
 
-Graph behaviour is config-driven (`atf_graphrag/config.py`). Defaults are
+Graph behaviour is config-driven (`intelligraphrag/config.py`). Defaults are
 **conservative** — communities and pruning are off until you opt in.
 
 ```jsonc
@@ -560,8 +560,8 @@ see the identically de-noised graph.
 
 ## API & operations
 
-All graph operations live under the server (`atf_graphrag/api/server.py`). POSTs
-honour the optional bearer-token auth (`ATF_API_TOKEN`) when configured.
+All graph operations live under the server (`intelligraphrag/api/server.py`). POSTs
+honour the optional bearer-token auth (`IGR_API_TOKEN`) when configured.
 
 | Method & path | Action |
 |---------------|--------|
@@ -597,19 +597,19 @@ curl -X POST localhost:8000/api/communities/build
 
 | File | Responsibility |
 |------|----------------|
-| `atf_graphrag/extraction/ontology.py` | closed 7-entity / 8-relation ontology, prompt, Pydantic validation |
-| `atf_graphrag/indexing/extract.py` | per-chunk LLM extraction → typed `ChunkRecord` fields + `_entity_meta` + `relationships` |
-| `atf_graphrag/extraction/entity_resolution.py` | `normalise` + `EntityResolver` (deterministic + fuzzy canonicalisation) |
-| `atf_graphrag/indexing/indexer.py` | inline `_build_graph` (typed + co-occurrence layers) |
-| `atf_graphrag/graph/enrich.py` | parallel, journaled, resumable enrichment over existing chunks |
-| `atf_graphrag/stores/graph_store.py` | `LocalGraphStore`: nodes/edges, typed adjacency, weighting, junk guards, traversal |
-| `atf_graphrag/graph/verify.py` | rule + LLM node verify/prune |
-| `atf_graphrag/graph/pruning.py` | weak/obscure-edge prune + hub removal → NetworkX projection |
-| `atf_graphrag/graph/communities.py` | Leiden clustering + cached LLM briefings + `CommunityStore` |
-| `atf_graphrag/viz/export_graph.py` | `/graph/export` JSON builder |
-| `atf_graphrag/viz/graph_template.py` | `/graph/view` D3 Explorer |
-| `atf_graphrag/ingestion/orchestrator.py` | post-index `build_communities` hook |
-| `atf_graphrag/api/server.py` | graph endpoints |
+| `intelligraphrag/extraction/ontology.py` | closed 7-entity / 8-relation ontology, prompt, Pydantic validation |
+| `intelligraphrag/indexing/extract.py` | per-chunk LLM extraction → typed `ChunkRecord` fields + `_entity_meta` + `relationships` |
+| `intelligraphrag/extraction/entity_resolution.py` | `normalise` + `EntityResolver` (deterministic + fuzzy canonicalisation) |
+| `intelligraphrag/indexing/indexer.py` | inline `_build_graph` (typed + co-occurrence layers) |
+| `intelligraphrag/graph/enrich.py` | parallel, journaled, resumable enrichment over existing chunks |
+| `intelligraphrag/stores/graph_store.py` | `LocalGraphStore`: nodes/edges, typed adjacency, weighting, junk guards, traversal |
+| `intelligraphrag/graph/verify.py` | rule + LLM node verify/prune |
+| `intelligraphrag/graph/pruning.py` | weak/obscure-edge prune + hub removal → NetworkX projection |
+| `intelligraphrag/graph/communities.py` | Leiden clustering + cached LLM briefings + `CommunityStore` |
+| `intelligraphrag/viz/export_graph.py` | `/graph/export` JSON builder |
+| `intelligraphrag/viz/graph_template.py` | `/graph/view` D3 Explorer |
+| `intelligraphrag/ingestion/orchestrator.py` | post-index `build_communities` hook |
+| `intelligraphrag/api/server.py` | graph endpoints |
 
 ---
 

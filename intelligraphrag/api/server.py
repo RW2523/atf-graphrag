@@ -41,10 +41,10 @@ _orch: IngestionOrchestrator | None = None
 
 
 def expected_token() -> str:
-    """Configured API token (env ATF_API_TOKEN or server.auth_token). Empty =
+    """Configured API token (env IGR_API_TOKEN or server.auth_token). Empty =
     auth disabled (open, for local dev)."""
-    if os.environ.get("ATF_API_TOKEN"):
-        return os.environ["ATF_API_TOKEN"]
+    if os.environ.get("IGR_API_TOKEN"):
+        return os.environ["IGR_API_TOKEN"]
     if _engine is not None:
         return _engine.settings["server"].get("auth_token", "") or ""
     return ""
@@ -241,12 +241,12 @@ def _document_detail(corpus: str, doc_id: str, name: str = "",
 
 def _preview_roots() -> list:
     """Directories to resolve original source files for preview: env override
-    (PREVIEW_ROOTS, ':'-separated; legacy ATF_PREVIEW_ROOTS still honoured) +
+    (PREVIEW_ROOTS, ':'-separated; legacy IGR_PREVIEW_ROOTS still honoured) +
     configured server.preview_roots + the uploads dir. Original files never
     leave the user's machine."""
     roots = []
     env = (os.environ.get("PREVIEW_ROOTS")
-           or os.environ.get("ATF_PREVIEW_ROOTS", ""))
+           or os.environ.get("IGR_PREVIEW_ROOTS", ""))
     roots += [r for r in env.split(os.pathsep) if r]
     roots += list(_engine.settings.get("server", {}).get("preview_roots", []) or [])
     roots.append(os.path.join(_storage_root(), "uploads"))
@@ -738,7 +738,7 @@ def _storage_root() -> str:
 
 
 # --- single-writer storage lock (shared with batch write-scripts) ----------
-# Moved to atf_graphrag.storage_lock so reload/extraction scripts acquire the
+# Moved to intelligraphrag.storage_lock so reload/extraction scripts acquire the
 # SAME lock and can never write over a running server (or vice-versa).
 from ..storage_lock import (acquire_storage_lock, release_storage_lock,  # noqa: E402,F401
                             pid_alive as _pid_alive)
@@ -1182,10 +1182,10 @@ def serve():
             release_storage_lock(root)
             raise SystemExit(
                 f"[IntelliGraphRAG] REFUSING to start: profile '{profile}' requires "
-                "auth. Set ATF_API_TOKEN (or server.auth_token) before deploying. "
+                "auth. Set IGR_API_TOKEN (or server.auth_token) before deploying. "
                 "Use profile 'local' for unauthenticated local development.")
         print("[IntelliGraphRAG] WARNING: no API auth token set and CORS is open — "
-              "fine for local dev; set ATF_API_TOKEN before any non-local deploy.")
+              "fine for local dev; set IGR_API_TOKEN before any non-local deploy.")
     print(f"[IntelliGraphRAG] listening on http://{host}:{port}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 

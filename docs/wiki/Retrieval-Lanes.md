@@ -2,7 +2,7 @@
 
 The retrieval layer is the heart of **IntelliGraphRAG** (short: *IntelliGraph*). A single question can fan out across many specialised **lanes** — vector + BM25 hybrid, graph (BFS or Personalized PageRank), deterministic table-row lookup, text-to-SQL, numeric rescue, global/community map-reduce, corrective retry, multi-hop chaining, and on-demand web research — and the merged results are then evaluated, reranked, expanded into whole tables, and turned into a cited answer.
 
-This page walks the full pipeline end to end, then documents each lane individually. Everything described here is implemented under [`atf_graphrag/retrieval/`](https://github.com/RW2523/intelligraphrag/tree/main/atf_graphrag/retrieval):
+This page walks the full pipeline end to end, then documents each lane individually. Everything described here is implemented under [`intelligraphrag/retrieval/`](https://github.com/RW2523/intelligraphrag/tree/main/intelligraphrag/retrieval):
 
 | File | Responsibility |
 | --- | --- |
@@ -282,7 +282,7 @@ A quick reference for which lanes a question is likely to exercise. Multiple lan
 
 ## Configuration
 
-All knobs live under the `retrieval`, `reranker`, `web_search`, and `subagents` blocks. Defaults (from `atf_graphrag/config.py`):
+All knobs live under the `retrieval`, `reranker`, `web_search`, and `subagents` blocks. Defaults (from `intelligraphrag/config.py`):
 
 ```json
 {
@@ -336,7 +336,7 @@ All knobs live under the `retrieval`, `reranker`, `web_search`, and `subagents` 
 | `reranker.provider` | `local` (cross-feature linear), `llm`, or `bedrock` |
 | `web_search.*` | Master switch and judging thresholds for on-demand augmentation |
 
-> Configuration profiles ship under `config/` (`settings.local.json`, `settings.hybrid.json`, `settings.oss.json`, the AWS/Bedrock variants, …). The active profile is selected via the `ATF_PROFILE` environment variable, and any external provider keys are read from env (`ATF_API_TOKEN`, the parser via `ATF_PARSER`, the web-search key, etc.). See the **Configuration Reference** page for the full schema.
+> Configuration profiles ship under `config/` (`settings.local.json`, `settings.hybrid.json`, `settings.oss.json`, the AWS/Bedrock variants, …). The active profile is selected via the `IGR_PROFILE` environment variable, and any external provider keys are read from env (`IGR_API_TOKEN`, the parser via `IGR_PARSER`, the web-search key, etc.). See the **Configuration Reference** page for the full schema.
 
 ---
 
@@ -345,10 +345,10 @@ All knobs live under the `retrieval`, `reranker`, `web_search`, and `subagents` 
 Pass `trace=True` to `Retriever.answer()` to get the full decision record. Each numbered key mirrors a pipeline stage, `timings_ms` holds per-stage wall time, and the retrieval/rerank stages expose ranked `chunk_id`/`doc_id` lists so the evaluation harness can compute recall@k, NDCG, and MRR against a golden set without changing the `Answer` shape used by the UI.
 
 ```python
-from atf_graphrag.engine import Engine
-from atf_graphrag.retrieval.pipeline import Retriever
+from intelligraphrag.engine import Engine
+from intelligraphrag.retrieval.pipeline import Retriever
 
-eng = Engine.load()                 # uses the ATF_PROFILE settings profile
+eng = Engine.load()                 # uses the IGR_PROFILE settings profile
 out = Retriever(eng).answer(
     "Which state reported the highest total in 2023?", trace=True)
 

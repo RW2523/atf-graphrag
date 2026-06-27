@@ -2,11 +2,11 @@
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing.indexer import Indexer
-from atf_graphrag.models import QueryPlan, RetrievalHit, ChunkRecord
-from atf_graphrag.retrieval.agents import (
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.indexing.indexer import Indexer
+from intelligraphrag.models import QueryPlan, RetrievalHit, ChunkRecord
+from intelligraphrag.retrieval.agents import (
     QueryUnderstandingAgent, RetrievalAgent, GenerationAgent)
 
 

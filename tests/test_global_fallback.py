@@ -3,10 +3,10 @@ import json
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing.indexer import Indexer
-from atf_graphrag.retrieval.pipeline import Retriever, _insufficient
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.indexing.indexer import Indexer
+from intelligraphrag.retrieval.pipeline import Retriever, _insufficient
 
 
 def test_insufficient_detector():

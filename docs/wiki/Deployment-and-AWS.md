@@ -27,26 +27,26 @@ This page covers:
 
 Configuration is layered, lowest precedence first:
 
-1. built-in `DEFAULTS` (in `atf_graphrag/config.py`) — the `local` profile,
+1. built-in `DEFAULTS` (in `intelligraphrag/config.py`) — the `local` profile,
 2. `config/settings.json` (optional, applies to every profile),
 3. `config/settings.<profile>.json` (the active profile's overlay),
 4. environment overrides.
 
-The active profile is selected by the `ATF_PROFILE` env var (default `local`).
+The active profile is selected by the `IGR_PROFILE` env var (default `local`).
 Each profile is just a JSON overlay that repoints providers — nothing else
 changes.
 
 ```bash
 # pick one
-export ATF_PROFILE=local     # default, fully offline-capable
-export ATF_PROFILE=hybrid    # OpenRouter models + Neo4j graph
-export ATF_PROFILE=aws       # fully managed AWS-native (Bedrock + OpenSearch + Neptune)
+export IGR_PROFILE=local     # default, fully offline-capable
+export IGR_PROFILE=hybrid    # OpenRouter models + Neo4j graph
+export IGR_PROFILE=aws       # fully managed AWS-native (Bedrock + OpenSearch + Neptune)
 ```
 
 > Additional overlays ship in `config/` for narrower setups, e.g.
 > `settings.oss.json` (open-source models), `settings.bedrock-hybrid.json`,
 > `settings.ec2.json`, and `settings.aws-ingest.json`. They are selected the same
-> way (`ATF_PROFILE=<name>`).
+> way (`IGR_PROFILE=<name>`).
 
 ### What each profile swaps
 
@@ -100,19 +100,19 @@ These are read in `config.py` and applied on top of the active profile:
 
 | Variable | Effect |
 |---|---|
-| `ATF_PROFILE` | select `local` / `hybrid` / `aws` (or another overlay name) |
+| `IGR_PROFILE` | select `local` / `hybrid` / `aws` (or another overlay name) |
 | `OPENROUTER_API_KEY` | API key for the `local` / `hybrid` model engine |
-| `ATF_PORT` | HTTP port the server binds (default `8077`) |
-| `ATF_DATA_DIR` | storage root for local stores |
-| `ATF_EMBED_PROVIDER` | force the embeddings provider (`local` / `openrouter` / `bedrock`) |
-| `ATF_PARSER` | force the document parser (`docling` / `advanced` / `textract` / `bedrock` / `bda`) |
-| `ATF_API_TOKEN` | bearer token for API auth — **required** in non-local profiles |
+| `IGR_PORT` | HTTP port the server binds (default `8077`) |
+| `IGR_DATA_DIR` | storage root for local stores |
+| `IGR_EMBED_PROVIDER` | force the embeddings provider (`local` / `openrouter` / `bedrock`) |
+| `IGR_PARSER` | force the document parser (`docling` / `advanced` / `textract` / `bedrock` / `bda`) |
+| `IGR_API_TOKEN` | bearer token for API auth — **required** in non-local profiles |
 | `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | Neo4j connection (when `graph_store.provider = neo4j`) |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `AWS_SESSION_TOKEN` | standard boto3 credentials for the `aws` profile |
 | `TAVILY_API_KEY` | enable Tavily web-research augmentation |
 
 > **Auth.** In `local` the API is open (dev convenience). In `hybrid` / `aws`,
-> set `ATF_API_TOKEN` — every `POST` then requires a matching
+> set `IGR_API_TOKEN` — every `POST` then requires a matching
 > `Authorization: Bearer <token>` header.
 
 ---
@@ -126,7 +126,7 @@ OpenRouter when a key is present; without one the engine degrades gracefully
 ```bash
 pip install -r requirements.txt          # base install
 export OPENROUTER_API_KEY=...             # optional but recommended
-python -m atf_graphrag serve              # http://127.0.0.1:8077
+python -m intelligraphrag serve              # http://127.0.0.1:8077
 ```
 
 Or use the convenience launcher, which loads `.env` first:
@@ -135,7 +135,7 @@ Or use the convenience launcher, which loads `.env` first:
 ./run.sh
 ```
 
-Copy `.env.example` to `.env` to set `OPENROUTER_API_KEY`, `ATF_PROFILE`, and the
+Copy `.env.example` to `.env` to set `OPENROUTER_API_KEY`, `IGR_PROFILE`, and the
 optional overrides above.
 
 ---
@@ -153,10 +153,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-ENV ATF_PROFILE=local
-ENV ATF_PORT=8077
+ENV IGR_PROFILE=local
+ENV IGR_PORT=8077
 EXPOSE 8077
-CMD ["python", "-m", "atf_graphrag", "serve"]
+CMD ["python", "-m", "intelligraphrag", "serve"]
 ```
 
 ```bash
@@ -169,7 +169,7 @@ docker run --rm -p 8077:8077 \
 ### Compose (hybrid profile: app + Neo4j)
 
 `docker-compose.yml` brings up the app plus a Neo4j graph store for the hybrid
-profile. The local profile needs none of this — `python -m atf_graphrag serve`
+profile. The local profile needs none of this — `python -m intelligraphrag serve`
 is enough.
 
 ```yaml
@@ -179,7 +179,7 @@ services:
     ports:
       - "8077:8077"
     environment:
-      - ATF_PROFILE=${ATF_PROFILE:-local}
+      - IGR_PROFILE=${IGR_PROFILE:-local}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
@@ -203,7 +203,7 @@ volumes:
 
 ```bash
 # hybrid: app uses OpenRouter models + the Compose Neo4j graph
-ATF_PROFILE=hybrid OPENROUTER_API_KEY=$OPENROUTER_API_KEY docker compose up --build
+IGR_PROFILE=hybrid OPENROUTER_API_KEY=$OPENROUTER_API_KEY docker compose up --build
 ```
 
 Neo4j Browser is on <http://localhost:7474>; the app is on
@@ -291,8 +291,8 @@ creates is tagged `Project=<project>` (default `atf-graphrag`) so a single
 teardown can find and remove the whole stack — spin it up to demo or test, then
 tear it down to stop paying for it.
 
-The backend is `atf_graphrag/aws/provision.py` (`ControlPlane` + per-resource
-`Component` objects) and `atf_graphrag/api/aws_setup.py` (credentials, settings
+The backend is `intelligraphrag/aws/provision.py` (`ControlPlane` + per-resource
+`Component` objects) and `intelligraphrag/api/aws_setup.py` (credentials, settings
 build, connectivity probes, engine rebind).
 
 ### 5.1 What gets provisioned
@@ -350,7 +350,7 @@ missing rather than raising.
 ### 5.3 `/api/aws/*` endpoints
 
 Everything the UI does maps to an HTTP endpoint. In non-local profiles these
-require the `Authorization: Bearer <ATF_API_TOKEN>` header.
+require the `Authorization: Bearer <IGR_API_TOKEN>` header.
 
 | Method | Endpoint | Body | Does |
 |---|---|---|---|
@@ -371,7 +371,7 @@ require the `Authorization: Bearer <ATF_API_TOKEN>` header.
 neptune_analytics`.
 
 ```bash
-TOKEN=...   # ATF_API_TOKEN, required in the aws profile
+TOKEN=...   # IGR_API_TOKEN, required in the aws profile
 BASE=http://127.0.0.1:8077
 
 # 1) credentials (env-only)
@@ -556,7 +556,7 @@ S3 buckets are emptied before deletion. Re-run **Inventory** afterward to confir
 
 ```bash
 curl -s -X POST http://127.0.0.1:8077/api/aws/teardown \
-  -H "Authorization: Bearer $ATF_API_TOKEN" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $IGR_API_TOKEN" -H 'Content-Type: application/json' \
   -d '{"project":"atf-graphrag","region":"us-east-1"}'
 ```
 

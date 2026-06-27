@@ -3,8 +3,8 @@ import tempfile
 
 import pytest
 
-from atf_graphrag.stores.graph_store import LocalGraphStore
-from atf_graphrag.graph.communities import (
+from intelligraphrag.stores.graph_store import LocalGraphStore
+from intelligraphrag.graph.communities import (
     CommunityBuilder, CommunityStore, _members_key)
 
 pytest.importorskip("networkx")
@@ -99,9 +99,9 @@ def test_members_key_stable_and_order_independent():
 
 
 def test_orchestrator_build_gated_by_config(tmp_path):
-    from atf_graphrag.config import Settings
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.ingestion.orchestrator import IngestionOrchestrator
+    from intelligraphrag.config import Settings
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.ingestion.orchestrator import IngestionOrchestrator
     s = Settings(profile="oss")
     s._cfg["vector_store"]["path"] = str(tmp_path / "v")
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")

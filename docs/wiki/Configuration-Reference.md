@@ -4,7 +4,7 @@
 > setting in **IntelliGraphRAG** ("IntelliGraph"). It documents the
 > configuration loading model, the four resolution layers, the profile system,
 > every top-level configuration block, and every supported environment variable.
-> Source of truth: [`atf_graphrag/config.py`](https://github.com/RW2523/intelligraphrag/blob/main/atf_graphrag/config.py).
+> Source of truth: [`intelligraphrag/config.py`](https://github.com/RW2523/intelligraphrag/blob/main/intelligraphrag/config.py).
 
 IntelliGraphRAG is designed so that **every component is swappable by
 configuration** — LLM, vision model, embeddings, reranker, vector store, graph
@@ -32,16 +32,16 @@ from the highest-priority layer that sets it.
 
 | Priority | Layer | Location | Notes |
 |---|---|---|---|
-| 1 (lowest) | **Code defaults** | `DEFAULTS` in `atf_graphrag/config.py` | The "local / open-source" profile. Always present. |
+| 1 (lowest) | **Code defaults** | `DEFAULTS` in `intelligraphrag/config.py` | The "local / open-source" profile. Always present. |
 | 2 | **Base JSON file** | `config/settings.json` | Optional. Deep-merged over defaults. Invalid JSON is warned about and ignored. |
 | 3 | **Profile JSON file** | `config/settings.<profile>.json` | Optional. `<profile>` is `local`, `hybrid`, or `aws`. Deep-merged over the base file. |
-| 4 (highest) | **Environment variables** | `ATF_*` plus selected `OPENROUTER_*` / `AWS_*` / `TAVILY_*` keys | Applied last. Only a curated subset of keys can be overridden via env (see [Environment variables](#environment-variables)). |
+| 4 (highest) | **Environment variables** | `IGR_*` plus selected `OPENROUTER_*` / `AWS_*` / `TAVILY_*` keys | Applied last. Only a curated subset of keys can be overridden via env (see [Environment variables](#environment-variables)). |
 
 ```text
 DEFAULTS
   └─ deep-merge ← config/settings.json
        └─ deep-merge ← config/settings.<profile>.json
-            └─ env overrides (ATF_*, OPENROUTER_*, AWS_*, TAVILY_*)
+            └─ env overrides (IGR_*, OPENROUTER_*, AWS_*, TAVILY_*)
                  = effective settings
 ```
 
@@ -57,7 +57,7 @@ The **profile** selects which `config/settings.<profile>.json` file is layered
 on top of the base file. The profile is resolved in this order:
 
 1. An explicit `profile` argument passed to `Settings(...)` in code.
-2. The `ATF_PROFILE` environment variable.
+2. The `IGR_PROFILE` environment variable.
 3. The `profile` key in the merged config (defaults to `"local"`).
 
 Built-in profile names:
@@ -75,11 +75,11 @@ Built-in profile names:
 ### Storage location
 
 By default all local stores live under `storage/` at the repository root. You
-can relocate this with the `ATF_DATA_DIR` environment variable, which is read at
+can relocate this with the `IGR_DATA_DIR` environment variable, which is read at
 import time:
 
 ```bash
-export ATF_DATA_DIR=/var/lib/intelligraph
+export IGR_DATA_DIR=/var/lib/intelligraph
 ```
 
 The directory is created automatically on startup. The default `vector_store`,
@@ -104,7 +104,7 @@ UI via `POST /api/key`; a runtime key takes priority over `OPENROUTER_API_KEY`.
 ```
 
 ```jsonc
-// config/settings.aws.json  (used when ATF_PROFILE=aws)
+// config/settings.aws.json  (used when IGR_PROFILE=aws)
 {
   "llm": { "provider": "bedrock" },
   "vector_store": { "provider": "opensearch" },
@@ -123,7 +123,7 @@ configuration key, its type, its default value, and what it controls.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `profile` | string | `"local"` | Active profile name. Selects `config/settings.<profile>.json`. Overridable via `ATF_PROFILE`. One of `local`, `hybrid`, `aws`. |
+| `profile` | string | `"local"` | Active profile name. Selects `config/settings.<profile>.json`. Overridable via `IGR_PROFILE`. One of `local`, `hybrid`, `aws`. |
 
 ---
 
@@ -135,7 +135,7 @@ query refinement, judging, etc.).
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `provider` | string | `"openrouter"` | LLM backend. One of `openrouter`, `bedrock`, `offline`. |
-| `model` | string | `"openai/gpt-4o-mini"` | Default model id (any OpenRouter model id when provider is `openrouter`). Overridable via `ATF_LLM_MODEL`. |
+| `model` | string | `"openai/gpt-4o-mini"` | Default model id (any OpenRouter model id when provider is `openrouter`). Overridable via `IGR_LLM_MODEL`. |
 | `base_url` | string | `"https://openrouter.ai/api/v1"` | API base URL for OpenAI-compatible providers. |
 | `temperature` | float | `0.1` | Sampling temperature for generation. Low value favors determinism. |
 | `max_tokens` | int | `1024` | Maximum tokens generated per response. |
@@ -157,7 +157,7 @@ Multimodal model for images, charts, and scanned pages.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `provider` | string | `"openrouter"` | Vision backend. One of `openrouter`, `bedrock`, `offline`. |
-| `model` | string | `"openai/gpt-4o-mini"` | A multimodal-capable model id. Overridable via `ATF_VISION_MODEL`. |
+| `model` | string | `"openai/gpt-4o-mini"` | A multimodal-capable model id. Overridable via `IGR_VISION_MODEL`. |
 | `base_url` | string | `"https://openrouter.ai/api/v1"` | API base URL for OpenAI-compatible providers. |
 
 ---
@@ -168,7 +168,7 @@ Text embedding generation for vector indexing and semantic search.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `provider` | string | `"sentence_transformer"` | Embedding backend. One of `sentence_transformer`, `local`, `openrouter`, `bedrock`. Overridable via `ATF_EMBED_PROVIDER`. |
+| `provider` | string | `"sentence_transformer"` | Embedding backend. One of `sentence_transformer`, `local`, `openrouter`, `bedrock`. Overridable via `IGR_EMBED_PROVIDER`. |
 | `model` | string | `"all-MiniLM-L6-v2"` | Embedding model id. The default is a 384-dim, fast, strong-quality local model. |
 | `base_url` | string | `"https://openrouter.ai/api/v1"` | API base URL when using the OpenAI-compatible `/embeddings` endpoint. |
 | `dim` | int | `384` | Embedding dimensionality. Must match the chosen model. |
@@ -200,7 +200,7 @@ Where dense vectors are stored and searched.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `provider` | string | `"local"` | Vector backend. One of `local`, `qdrant`, `opensearch`. |
-| `path` | string | `"<ATF_DATA_DIR>/vectors"` | On-disk path for the local vector store. |
+| `path` | string | `"<IGR_DATA_DIR>/vectors"` | On-disk path for the local vector store. |
 
 ---
 
@@ -211,7 +211,7 @@ Where the knowledge graph (entities + relations) is persisted.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `provider` | string | `"local"` | Graph backend. One of `local`, `neo4j`, `neptune`. |
-| `path` | string | `"<ATF_DATA_DIR>/graph"` | On-disk path for the local graph store. |
+| `path` | string | `"<IGR_DATA_DIR>/graph"` | On-disk path for the local graph store. |
 
 > When `provider` is `neo4j`, the connection `uri`, `user`, and `password` are
 > read from the environment at call-time rather than from this block.
@@ -225,7 +225,7 @@ Stores raw document blobs and ingestion metadata.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `provider` | string | `"local"` | Blob backend. `local` stores files on disk. |
-| `path` | string | `"<ATF_DATA_DIR>/blobs"` | On-disk path for the local blob store. |
+| `path` | string | `"<IGR_DATA_DIR>/blobs"` | On-disk path for the local blob store. |
 
 ---
 
@@ -239,7 +239,7 @@ nested `parser`, `ocr`, `bda`, and `extraction` sub-blocks.
 | `chunk_size` | int | `900` | Target chunk size in characters (roughly tokens × 4). |
 | `chunk_overlap` | int | `150` | Characters of overlap between consecutive chunks. |
 | `ocr` | object | `{ "provider": "auto" }` | OCR configuration. See below. |
-| `parser` | object | `{ "provider": "docling" }` | Document parser configuration. See below. Overridable via `ATF_PARSER`. |
+| `parser` | object | `{ "provider": "docling" }` | Document parser configuration. See below. Overridable via `IGR_PARSER`. |
 | `bda` | object | see [`ingestion.bda`](#ingestionbda) | Bedrock Data Automation working config (used only when `parser.provider` is `bda`). |
 | `orchestrator` | string | `"sequential"` | Ingestion orchestration mode. One of `sequential`, `langgraph`. |
 | `llm_extraction` | string | `"auto"` | Per-chunk LLM entity/relation extraction. One of `off`, `auto`, `on`. |
@@ -436,7 +436,7 @@ corpus.
 | `insufficient_conf` | float | `0.45` | Local "thin evidence" threshold that can trigger web research. |
 
 > **Auto-enable.** Setting `TAVILY_API_KEY` is enough to turn web research on:
-> it flips `provider` to `tavily` and `enabled` to `true`. Set `ATF_WEB_SEARCH=0`
+> it flips `provider` to `tavily` and `enabled` to `true`. Set `IGR_WEB_SEARCH=0`
 > to force web research off even when a key is present. Web research never fires
 > unless it is both enabled and actually needed.
 
@@ -449,12 +449,12 @@ The API/web server.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `host` | string | `"127.0.0.1"` | Bind address. |
-| `port` | int | `8077` | Listen port. Overridable via `ATF_PORT`. |
-| `auth_token` | string | `""` | Bearer token required on `POST` endpoints. Empty means open (local dev only). Overridable via `ATF_API_TOKEN`. |
-| `preview_roots` | list[string] | `[]` | Extra directories to resolve original source files for KB document preview. The uploads directory is always searched. Also honors `ATF_PREVIEW_ROOTS`. |
+| `port` | int | `8077` | Listen port. Overridable via `IGR_PORT`. |
+| `auth_token` | string | `""` | Bearer token required on `POST` endpoints. Empty means open (local dev only). Overridable via `IGR_API_TOKEN`. |
+| `preview_roots` | list[string] | `[]` | Extra directories to resolve original source files for KB document preview. The uploads directory is always searched. Also honors `IGR_PREVIEW_ROOTS`. |
 
 > **Auth.** Leave `auth_token` empty only for local development. Before
-> deploying, set it (or the `ATF_API_TOKEN` env var) so that requests must
+> deploying, set it (or the `IGR_API_TOKEN` env var) so that requests must
 > include `Authorization: Bearer <token>` on `POST` endpoints.
 
 > **Preview safety.** Preview files are read locally and never copied off the
@@ -472,22 +472,22 @@ cloud credentials) are read at provider call-time, not merged into config.
 
 | Variable | Affects | Effect |
 |---|---|---|
-| `ATF_PROFILE` | `profile` | Selects the active profile (`local` / `hybrid` / `aws`) and the corresponding `config/settings.<profile>.json`. |
-| `ATF_DATA_DIR` | storage root | Base directory for local vector/graph/blob stores. Read at import time; defaults to `<repo>/storage`. |
-| `ATF_LLM_MODEL` | `llm.model` | Overrides the default LLM model id. |
-| `ATF_VISION_MODEL` | `vision.model` | Overrides the vision model id. |
-| `ATF_EMBED_PROVIDER` | `embeddings.provider` | Overrides the embeddings provider. |
-| `ATF_PARSER` | `ingestion.parser` | Overrides the document parser provider (`advanced` / `docling` / `textract` / `bedrock`). Replaces the entire `parser` block with `{ "provider": <value> }`. |
-| `ATF_PORT` | `server.port` | Overrides the server port (parsed as an integer). |
-| `ATF_API_TOKEN` | `server.auth_token` | Bearer token required on `POST` endpoints. See [`server`](#server). |
-| `ATF_PREVIEW_ROOTS` | `server.preview_roots` | Extra directories searched for KB document preview source files. |
-| `ATF_WEB_SEARCH` | `web_search.enabled` | Set to `0` to force web research off even when `TAVILY_API_KEY` is present. |
-| `TAVILY_API_KEY` | `web_search` | Presence auto-enables web research: sets `provider="tavily"` and `enabled=true` (unless `ATF_WEB_SEARCH=0`). Also used as the Tavily credential. |
+| `IGR_PROFILE` | `profile` | Selects the active profile (`local` / `hybrid` / `aws`) and the corresponding `config/settings.<profile>.json`. |
+| `IGR_DATA_DIR` | storage root | Base directory for local vector/graph/blob stores. Read at import time; defaults to `<repo>/storage`. |
+| `IGR_LLM_MODEL` | `llm.model` | Overrides the default LLM model id. |
+| `IGR_VISION_MODEL` | `vision.model` | Overrides the vision model id. |
+| `IGR_EMBED_PROVIDER` | `embeddings.provider` | Overrides the embeddings provider. |
+| `IGR_PARSER` | `ingestion.parser` | Overrides the document parser provider (`advanced` / `docling` / `textract` / `bedrock`). Replaces the entire `parser` block with `{ "provider": <value> }`. |
+| `IGR_PORT` | `server.port` | Overrides the server port (parsed as an integer). |
+| `IGR_API_TOKEN` | `server.auth_token` | Bearer token required on `POST` endpoints. See [`server`](#server). |
+| `IGR_PREVIEW_ROOTS` | `server.preview_roots` | Extra directories searched for KB document preview source files. |
+| `IGR_WEB_SEARCH` | `web_search.enabled` | Set to `0` to force web research off even when `TAVILY_API_KEY` is present. |
+| `TAVILY_API_KEY` | `web_search` | Presence auto-enables web research: sets `provider="tavily"` and `enabled=true` (unless `IGR_WEB_SEARCH=0`). Also used as the Tavily credential. |
 
-> The keys directly handled in the env layer of `config.py` are `ATF_PROFILE`,
-> `ATF_LLM_MODEL`, `ATF_VISION_MODEL`, `ATF_EMBED_PROVIDER`, `ATF_PORT`,
-> `ATF_PARSER`, `TAVILY_API_KEY`, and `ATF_WEB_SEARCH`. `ATF_DATA_DIR`,
-> `ATF_API_TOKEN`, and `ATF_PREVIEW_ROOTS` are consumed elsewhere (storage path
+> The keys directly handled in the env layer of `config.py` are `IGR_PROFILE`,
+> `IGR_LLM_MODEL`, `IGR_VISION_MODEL`, `IGR_EMBED_PROVIDER`, `IGR_PORT`,
+> `IGR_PARSER`, `TAVILY_API_KEY`, and `IGR_WEB_SEARCH`. `IGR_DATA_DIR`,
+> `IGR_API_TOKEN`, and `IGR_PREVIEW_ROOTS` are consumed elsewhere (storage path
 > and server, respectively) but are part of the supported configuration surface.
 
 ### Secrets / credentials (read at call-time)
@@ -524,7 +524,7 @@ provider when it makes a request.
 **Switch to AWS-managed services.**
 
 ```bash
-export ATF_PROFILE=aws
+export IGR_PROFILE=aws
 ```
 
 ```jsonc
@@ -555,13 +555,13 @@ export ATF_PROFILE=aws
 **Harden the server for deployment.**
 
 ```bash
-export ATF_API_TOKEN="$(openssl rand -hex 24)"
-export ATF_PORT=8080
+export IGR_API_TOKEN="$(openssl rand -hex 24)"
+export IGR_PORT=8080
 ```
 
 ---
 
 ## See also
 
-- Source: [`atf_graphrag/config.py`](https://github.com/RW2523/intelligraphrag/blob/main/atf_graphrag/config.py)
+- Source: [`intelligraphrag/config.py`](https://github.com/RW2523/intelligraphrag/blob/main/intelligraphrag/config.py)
 - Repository: <https://github.com/RW2523/intelligraphrag>

@@ -38,7 +38,7 @@ def _transform(text: str, repo_url: str) -> str:
     text = re.sub(r'\]\(wiki/Home\.md\)', '](Home)', text)
     text = re.sub(r'\]\(wiki/([A-Za-z0-9_-]+)\.md\)', r'](\1)', text)
     text = re.sub(r'\]\((?:\.\./)*README\.md\)', '](Home)', text)
-    text = re.sub(r'\]\((atf_graphrag/[^)]+|scripts/[^)]+|[A-Za-z_]+\.py)\)',
+    text = re.sub(r'\]\((intelligraphrag/[^)]+|scripts/[^)]+|[A-Za-z_]+\.py)\)',
                   rf']({repo_url}/blob/main/\1)', text)
     text = re.sub(r'\]\(([A-Za-z0-9_-]+)\.md\)', r'](\1)', text)
     return text

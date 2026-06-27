@@ -10,7 +10,7 @@ The server is implemented entirely on the Python standard library
 the contract below is identical either way.
 
 > **Source of truth:** every endpoint, field, and default in this document is
-> taken directly from `atf_graphrag/api/server.py`. If you change a route there,
+> taken directly from `intelligraphrag/api/server.py`. If you change a route there,
 > update this page.
 
 ---
@@ -39,7 +39,7 @@ the contract below is identical either way.
 | Setting | Default | Override |
 |---------|---------|----------|
 | Host | `127.0.0.1` | `server.host` in config |
-| Port | `8077` | `server.port` in config, or env `ATF_PORT` |
+| Port | `8077` | `server.port` in config, or env `IGR_PORT` |
 
 The default base URL for local development is therefore:
 
@@ -50,7 +50,7 @@ http://127.0.0.1:8077
 Start the server with the package entry point:
 
 ```bash
-python -m atf_graphrag serve
+python -m intelligraphrag serve
 # [IntelliGraphRAG] profile=local llm=... embeddings=... OPENROUTER_API_KEY=...
 # [IntelliGraphRAG] listening on http://127.0.0.1:8077
 ```
@@ -69,7 +69,7 @@ endpoints**. `GET` endpoints are never authenticated.
 
 The expected token is resolved in this order:
 
-1. Environment variable `ATF_API_TOKEN` (takes precedence), then
+1. Environment variable `IGR_API_TOKEN` (takes precedence), then
 2. The configured `server.auth_token` value.
 
 If neither is set, the token is empty and **auth is disabled** (open). This is
@@ -83,7 +83,7 @@ unauthenticated, CORS-open API is unacceptable:
 
 ```
 [IntelliGraphRAG] REFUSING to start: profile '<profile>' requires auth.
-Set ATF_API_TOKEN (or server.auth_token) before deploying.
+Set IGR_API_TOKEN (or server.auth_token) before deploying.
 Use profile 'local' for unauthenticated local development.
 ```
 
@@ -95,10 +95,10 @@ When a token is configured, send it as a standard `Bearer` header on every
 `POST`. The check is an exact string match against `Bearer <token>`.
 
 ```bash
-export ATF_API_TOKEN='s3cr3t-deploy-token'
+export IGR_API_TOKEN='s3cr3t-deploy-token'
 
 curl -s http://127.0.0.1:8077/query \
-  -H "Authorization: Bearer $ATF_API_TOKEN" \
+  -H "Authorization: Bearer $IGR_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"question": "What are the firearm manufacturing trends?"}'
 ```
@@ -114,7 +114,7 @@ Content-Type: application/json
 
 > **Tip:** the examples throughout this page omit the `Authorization` header for
 > brevity. On any deployment with a token set, add
-> `-H "Authorization: Bearer $ATF_API_TOKEN"` to every `POST`.
+> `-H "Authorization: Bearer $IGR_API_TOKEN"` to every `POST`.
 
 ---
 
@@ -504,7 +504,7 @@ curl -s "http://127.0.0.1:8077/api/document/file?corpus=pdf&doc_id=abc123" -o re
 ```
 
 > Preview-root directories are configured via `server.preview_roots` and/or env
-> `PREVIEW_ROOTS` (`:`-separated; legacy `ATF_PREVIEW_ROOTS` is still honored),
+> `PREVIEW_ROOTS` (`:`-separated; legacy `IGR_PREVIEW_ROOTS` is still honored),
 > plus the uploads directory. Original files never leave the host.
 
 ### `GET /api/document/page`

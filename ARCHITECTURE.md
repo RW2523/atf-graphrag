@@ -258,7 +258,7 @@ This separation is why re-indexing (write path) and querying (read path) can run
 }
 ```
 
-**CLI** (`python -m atf_graphrag`): `serve | ingest <path|dir> [corpus] | visual <img> [corpus] | query "<q>" [--trace] | stats | demo`.
+**CLI** (`python -m intelligraphrag`): `serve | ingest <path|dir> [corpus] | visual <img> [corpus] | query "<q>" [--trace] | stats | demo`.
 
 ---
 

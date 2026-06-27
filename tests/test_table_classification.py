@@ -1,7 +1,7 @@
 """Table detection: number-dense prose must NOT be classified as a table;
 real reconstructed grids must be. Plus the re-classification pass."""
-from atf_graphrag.ingestion.chunker import _detect_type, _is_table_row
-from atf_graphrag.indexing.reclassify import _is_real_table
+from intelligraphrag.ingestion.chunker import _detect_type, _is_table_row
+from intelligraphrag.indexing.reclassify import _is_real_table
 
 
 PROSE = ("From January 1, 2015, through December 31, 2015, BATS captured a total "
@@ -37,7 +37,7 @@ def test_is_real_table_discriminates():
 
 
 def test_reclassify_demotes_prose_keeps_grid():
-    from atf_graphrag.indexing.reclassify import reclassify_corpus
+    from intelligraphrag.indexing.reclassify import reclassify_corpus
 
     class _VS:
         def __init__(self):

@@ -3,7 +3,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.extraction.ontology import (
+from intelligraphrag.extraction.ontology import (
     ENTITY_TYPES, RELATION_TYPES, ontology_prompt, parse_extraction)
 
 
@@ -66,9 +66,9 @@ class _FakeLLM:
 
 
 def test_extraction_writes_descriptions_into_graph(tmp_path):
-    from atf_graphrag.config import Settings
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.indexing.indexer import Indexer
+    from intelligraphrag.config import Settings
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.indexing.indexer import Indexer
     s = Settings(profile="oss")
     s._cfg["vector_store"]["path"] = str(tmp_path / "v")
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")

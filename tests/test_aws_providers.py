@@ -7,8 +7,8 @@ import types
 
 import pytest
 
-from atf_graphrag.config import Settings
-from atf_graphrag.models import ChunkRecord, RetrievalHit
+from intelligraphrag.config import Settings
+from intelligraphrag.models import ChunkRecord, RetrievalHit
 
 
 # ---- Bedrock vision -------------------------------------------------------
@@ -22,7 +22,7 @@ def test_bedrock_vision_describe(monkeypatch, tmp_path):
             return {"output": {"message": {"content": [
                 {"text": "A bar chart: 2022 = 6,183,507 firearms."}]}}}
     monkeypatch.setattr(boto3, "client", lambda *a, **k: _RT())
-    from atf_graphrag.providers.bedrock import BedrockVision
+    from intelligraphrag.providers.bedrock import BedrockVision
 
     img = tmp_path / "chart.png"
     img.write_bytes(b"\x89PNG fakebytes")
@@ -47,7 +47,7 @@ def test_s3_blob_store_roundtrip(monkeypatch):
             if (Bucket, Key) not in store:
                 raise RuntimeError("404")
     monkeypatch.setattr(boto3, "client", lambda *a, **k: _S3())
-    from atf_graphrag.providers.bedrock import S3BlobStore
+    from intelligraphrag.providers.bedrock import S3BlobStore
 
     b = S3BlobStore({"bucket": "atf", "prefix": "blobs"})
     uri = b.put("k1", b"hello")
@@ -69,7 +69,7 @@ def test_bedrock_reranker_reorders(monkeypatch):
             return {"body": types.SimpleNamespace(
                 read=lambda: json.dumps({"results": results}).encode())}
     monkeypatch.setattr(boto3, "client", lambda *a, **k: _RT())
-    from atf_graphrag.providers.bedrock import BedrockReranker
+    from intelligraphrag.providers.bedrock import BedrockReranker
 
     def _hit(t, cid):
         h = RetrievalHit(chunk=ChunkRecord(text=t, chunk_id=cid), score=0.5)
@@ -84,7 +84,7 @@ def test_bedrock_reranker_reorders(monkeypatch):
 
 # ---- Qdrant (injected fake client) ----------------------------------------
 def test_qdrant_store_search_with_fake_client():
-    from atf_graphrag.stores.qdrant_store import QdrantVectorStore
+    from intelligraphrag.stores.qdrant_store import QdrantVectorStore
 
     class _Pt:
         def __init__(self, payload, score):
@@ -106,7 +106,7 @@ def test_qdrant_store_search_with_fake_client():
 
 
 def test_qdrant_search_applies_where_filter():
-    from atf_graphrag.stores.qdrant_store import QdrantVectorStore
+    from intelligraphrag.stores.qdrant_store import QdrantVectorStore
 
     class _Pt:
         def __init__(self, payload, score):
@@ -132,7 +132,7 @@ def test_qdrant_search_applies_where_filter():
 
 # ---- OpenSearch (injected fake client) ------------------------------------
 def test_opensearch_store_search_with_fake_client():
-    from atf_graphrag.stores.opensearch_store import OpenSearchVectorStore
+    from intelligraphrag.stores.opensearch_store import OpenSearchVectorStore
 
     class _Indices:
         def exists(self, index):
@@ -161,7 +161,7 @@ def test_opensearch_store_search_with_fake_client():
 def test_factory_selects_bedrock_vision_under_aws(monkeypatch):
     import boto3
     monkeypatch.setattr(boto3, "client", lambda *a, **k: object())
-    from atf_graphrag.providers import make_vision
+    from intelligraphrag.providers import make_vision
     v = make_vision(Settings(profile="aws"))
     assert v.name == "bedrock"
 
@@ -169,14 +169,14 @@ def test_factory_selects_bedrock_vision_under_aws(monkeypatch):
 def test_factory_blob_s3_under_aws(monkeypatch):
     import boto3
     monkeypatch.setattr(boto3, "client", lambda *a, **k: object())
-    from atf_graphrag.providers import make_blob_store
+    from intelligraphrag.providers import make_blob_store
     b = make_blob_store(Settings(profile="aws"))
     assert b.name in ("s3", "local")     # s3 when boto3 ok, else local fallback
 
 
 def test_factory_graceful_fallback_without_deps():
     # vector_store=qdrant but qdrant_client not installed -> Local fallback.
-    from atf_graphrag.providers import make_vector_store
+    from intelligraphrag.providers import make_vector_store
     s = Settings(profile="local")
     s._cfg["vector_store"]["provider"] = "qdrant"
     vs = make_vector_store(s, "pdf")

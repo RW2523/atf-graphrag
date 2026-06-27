@@ -1,6 +1,6 @@
 """Numeric-fact lane — rescue aggregate totals buried in number-dense text."""
-from atf_graphrag.config import Settings
-from atf_graphrag.retrieval.numeric_lookup import find_numeric
+from intelligraphrag.config import Settings
+from intelligraphrag.retrieval.numeric_lookup import find_numeric
 
 
 def _engine(tmp_path):
@@ -10,12 +10,12 @@ def _engine(tmp_path):
     s._cfg["blob_store"]["path"] = str(tmp_path / "b")
     s._cfg["retrieval"]["llm_refine"] = False
     s._cfg["retrieval"]["multi_hop"] = False
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     return Engine(s)
 
 
 def _add(e, cid, text, doc, year):
-    from atf_graphrag.models import ChunkRecord
+    from intelligraphrag.models import ChunkRecord
     rec = ChunkRecord(text=text, corpus="pdf", chunk_id=cid, source_name=doc,
                       document_id=cid, document_date=year, page_number=1)
     e.vstore("pdf").upsert(rec, e.embedder.embed([text])[0])
@@ -54,7 +54,7 @@ def test_find_numeric_requires_a_number(tmp_path):
 def test_pipeline_numeric_lane_fires(tmp_path):
     e = _engine(tmp_path)
     _seed(e)
-    from atf_graphrag.retrieval.pipeline import Retriever
+    from intelligraphrag.retrieval.pipeline import Retriever
     res = Retriever(e).answer("How many firearms were manufactured in 2023?",
                               trace=True)
     assert "3e_numeric" in res["trace"]              # lane engaged

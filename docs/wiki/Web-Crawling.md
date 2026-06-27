@@ -22,11 +22,11 @@ The crawler is built to be **polite** (robots.txt + rate limiting),
 
 | File | Responsibility |
 |---|---|
-| `atf_graphrag/ingestion/crawler.py` | Sitemap discovery + recursion, fetcher, politeness, ingestion entrypoint |
-| `atf_graphrag/ingestion/web_extract.py` | BeautifulSoup extraction + HTML `<table>` → markdown |
-| `atf_graphrag/ingestion/browser.py` | Optional Playwright headless rendering + `needs_render()` heuristic |
+| `intelligraphrag/ingestion/crawler.py` | Sitemap discovery + recursion, fetcher, politeness, ingestion entrypoint |
+| `intelligraphrag/ingestion/web_extract.py` | BeautifulSoup extraction + HTML `<table>` → markdown |
+| `intelligraphrag/ingestion/browser.py` | Optional Playwright headless rendering + `needs_render()` heuristic |
 | `scripts/crawl_site.py` | Command-line entrypoint |
-| `atf_graphrag/config.py` | The `web` config block |
+| `intelligraphrag/config.py` | The `web` config block |
 
 ---
 
@@ -279,7 +279,7 @@ flags default to the `web` config block and override it only when supplied:
 
 **What the script does**
 
-1. Defaults `ATF_PROFILE=local`, then loads the `Engine` and an `Indexer` (LLM
+1. Defaults `IGR_PROFILE=local`, then loads the `Engine` and an `Indexer` (LLM
    extraction is **off** for crawl speed).
 2. Builds an `overrides` dict from the flags you passed.
 3. If the effective render mode is `auto`/`always` but Playwright is **not**
@@ -301,7 +301,7 @@ flags default to the `web` config block and override it only when supplied:
 
 ## The `web` config block
 
-All keys live under `web` in `atf_graphrag/config.py`. `crawl_and_ingest()`
+All keys live under `web` in `intelligraphrag/config.py`. `crawl_and_ingest()`
 reads them and merges any CLI overrides on top.
 
 | Key | Default | Meaning |

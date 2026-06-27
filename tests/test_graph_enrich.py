@@ -1,7 +1,7 @@
 """Typed-graph enrichment over existing chunks (fake LLM — no network)."""
 import json
 
-from atf_graphrag.config import Settings
+from intelligraphrag.config import Settings
 
 
 def _engine(tmp_path):
@@ -9,12 +9,12 @@ def _engine(tmp_path):
     s._cfg["vector_store"]["path"] = str(tmp_path / "v")
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")
     s._cfg["blob_store"]["path"] = str(tmp_path / "b")
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     return Engine(s)
 
 
 def _seed(e, n=3):
-    from atf_graphrag.models import ChunkRecord
+    from intelligraphrag.models import ChunkRecord
     vs = e.vstore("pdf")
     for i in range(n):
         text = (f"Acme Guns Incorporated sold firearms to Dealer Smith in Houston "
@@ -46,8 +46,8 @@ def test_enrich_builds_typed_edges_and_journals(tmp_path):
     e = _engine(tmp_path)
     _seed(e)
     e.llm = _FakeLLM()
-    from atf_graphrag.indexing.indexer import Indexer
-    from atf_graphrag.graph.enrich import GraphEnricher
+    from intelligraphrag.indexing.indexer import Indexer
+    from intelligraphrag.graph.enrich import GraphEnricher
     enr = GraphEnricher(e, Indexer(e, use_llm_extraction=False), workers=2)
     assert len(enr.pending_chunks()) == 3
     out = enr.run()
@@ -63,14 +63,14 @@ def test_enrich_builds_typed_edges_and_journals(tmp_path):
 
 def test_enrich_skips_numeric_grids(tmp_path):
     e = _engine(tmp_path)
-    from atf_graphrag.models import ChunkRecord
+    from intelligraphrag.models import ChunkRecord
     vs = e.vstore("pdf")
     grid = "\n".join("| 123 | 456 | 789 | 1011 | 1213 |" for _ in range(20))
     rec = ChunkRecord(text=grid, corpus="pdf", chunk_id="g1",
                       source_name="t.pdf", document_id="d2", content_type="table")
     vs.upsert(rec, e.embedder.embed([grid])[0])
     vs.commit()
-    from atf_graphrag.indexing.indexer import Indexer
-    from atf_graphrag.graph.enrich import GraphEnricher
+    from intelligraphrag.indexing.indexer import Indexer
+    from intelligraphrag.graph.enrich import GraphEnricher
     enr = GraphEnricher(e, Indexer(e, use_llm_extraction=False))
     assert len(enr.pending_chunks()) == 0   # numeric grid not worth extracting

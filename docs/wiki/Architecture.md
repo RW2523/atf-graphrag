@@ -16,13 +16,13 @@ IntelliGraphRAG is organized as a stack of layers. Each layer talks only to the 
 
 | Layer | Responsibility | Key modules |
 |---|---|---|
-| **API / UI** | HTTP endpoints, single-page web UI, graph Explorer, AWS control plane | `atf_graphrag/api/server.py`, `api/ui.py` |
-| **Retrieval (read)** | Query understanding → multi-lane retrieval → grounded generation | `atf_graphrag/retrieval/pipeline.py`, `retrieval/agents.py` |
-| **Ingestion / Indexing (write)** | Parse → chunk → enrich → embed → vector + graph + table store | `atf_graphrag/indexing/indexer.py`, `ingestion/` |
-| **Engine** | Single shared object that wires every swappable component from config | `atf_graphrag/engine.py` |
-| **Providers (factory)** | Concrete LLM / embedding / vision / parser / store implementations | `atf_graphrag/providers/` |
-| **Stores** | Persisted vectors, knowledge graph, blobs, structured tables | `atf_graphrag/stores/`, `indexing/table_store.py` |
-| **Durability** | Epoch guard, PID writer lock, atomic commit, portable seeds | `atf_graphrag/storage_epoch.py`, `storage_lock.py` |
+| **API / UI** | HTTP endpoints, single-page web UI, graph Explorer, AWS control plane | `intelligraphrag/api/server.py`, `api/ui.py` |
+| **Retrieval (read)** | Query understanding → multi-lane retrieval → grounded generation | `intelligraphrag/retrieval/pipeline.py`, `retrieval/agents.py` |
+| **Ingestion / Indexing (write)** | Parse → chunk → enrich → embed → vector + graph + table store | `intelligraphrag/indexing/indexer.py`, `ingestion/` |
+| **Engine** | Single shared object that wires every swappable component from config | `intelligraphrag/engine.py` |
+| **Providers (factory)** | Concrete LLM / embedding / vision / parser / store implementations | `intelligraphrag/providers/` |
+| **Stores** | Persisted vectors, knowledge graph, blobs, structured tables | `intelligraphrag/stores/`, `indexing/table_store.py` |
+| **Durability** | Epoch guard, PID writer lock, atomic commit, portable seeds | `intelligraphrag/storage_epoch.py`, `storage_lock.py` |
 
 Data flows **downward on the write path** (ingestion populates the stores) and **upward on the read path** (retrieval queries the stores). The two paths are **decoupled through the stores** — they never call each other directly. That decoupling is why re-indexing and querying can run independently, and why swapping a store implementation changes nothing in the layers around it.
 
@@ -94,7 +94,7 @@ The double-ruled `╔═[…]═╗` blocks are **subagent quality gates** — a
 
 ## 3. The Engine
 
-The `Engine` (`atf_graphrag/engine.py`) is the single object the API, `Indexer`, and `Retriever` all share. Its only job is to **wire every swappable component from configuration** via the provider factories. Swapping a profile — `local` / `oss` / `hybrid` / `bedrock-hybrid` / `aws` — changes only what the factories construct inside `Engine.__init__`; nothing downstream changes.
+The `Engine` (`intelligraphrag/engine.py`) is the single object the API, `Indexer`, and `Retriever` all share. Its only job is to **wire every swappable component from configuration** via the provider factories. Swapping a profile — `local` / `oss` / `hybrid` / `bedrock-hybrid` / `aws` — changes only what the factories construct inside `Engine.__init__`; nothing downstream changes.
 
 ```python
 class Engine:
@@ -133,7 +133,7 @@ Notable engine behavior, straight from the source:
 
 ## 4. Providers, the Factory Pattern, and Profiles
 
-Concrete implementations live under `atf_graphrag/providers/`. The factory functions in `providers/__init__.py` (`make_llm`, `make_embedder`, `make_vision`, `make_reranker`, `make_parser`, `make_vector_store`, `make_graph_store`, `make_blob_store`, `make_ocr`, `make_guardrail`, `make_web_search`, `make_entity_extractor`) read config and return the right implementation behind a common interface.
+Concrete implementations live under `intelligraphrag/providers/`. The factory functions in `providers/__init__.py` (`make_llm`, `make_embedder`, `make_vision`, `make_reranker`, `make_parser`, `make_vector_store`, `make_graph_store`, `make_blob_store`, `make_ocr`, `make_guardrail`, `make_web_search`, `make_entity_extractor`) read config and return the right implementation behind a common interface.
 
 Every factory has the same shape: **return the configured backend when available, otherwise degrade gracefully to the local/offline default** (with a one-line `[providers] … falling back to local default` warning) when the backend's dependency or credentials are missing. This is why "no key / no network" still runs the platform end-to-end.
 
@@ -154,14 +154,14 @@ Every factory has the same shape: **return the configured backend when available
 
 ### Profiles
 
-Configuration is **layered** (`atf_graphrag/config.py`), lowest to highest priority:
+Configuration is **layered** (`intelligraphrag/config.py`), lowest to highest priority:
 
 1. `DEFAULTS` (the "local" profile, baked into `config.py`)
 2. `config/settings.json` (optional global overrides)
 3. `config/settings.<profile>.json` (optional per-profile overrides)
 4. environment variables
 
-The active profile is selected by the `ATF_PROFILE` env var (or the `profile` config key). Each profile is just a different set of provider choices the factories read:
+The active profile is selected by the `IGR_PROFILE` env var (or the `profile` config key). Each profile is just a different set of provider choices the factories read:
 
 - **`local`** — OpenRouter LLM/vision, local `sentence_transformer` embeddings, and local vector/graph/blob stores. The default development setup.
 - **`oss`** — fully open-source / offline stack (no external keys required).
@@ -169,7 +169,7 @@ The active profile is selected by the `ATF_PROFILE` env var (or the `profile` co
 - **`bedrock-hybrid`** — Bedrock intelligence with local/portable storage.
 - **`aws`** — Bedrock LLM/vision/embeddings, Qdrant/OpenSearch vectors, Neptune/Neo4j graph, S3 blobs, Bedrock Guardrails + Automated Reasoning, Bedrock Data Automation parsing, and managed RAG evaluation.
 
-> **Selected environment overrides** (read in `config._apply_env`): `ATF_PROFILE`, `ATF_LLM_MODEL`, `ATF_VISION_MODEL`, `ATF_EMBED_PROVIDER`, `ATF_PORT`, `ATF_PARSER` (force a parser), `ATF_DATA_DIR` (storage root), `ATF_API_TOKEN`, `ATF_PREVIEW_ROOTS`, `OPENROUTER_API_KEY`, `TAVILY_API_KEY` (setting it auto-enables web research unless `ATF_WEB_SEARCH=0`), and the `AWS_*` family. Secrets are read at provider call-time, never persisted to config.
+> **Selected environment overrides** (read in `config._apply_env`): `IGR_PROFILE`, `IGR_LLM_MODEL`, `IGR_VISION_MODEL`, `IGR_EMBED_PROVIDER`, `IGR_PORT`, `IGR_PARSER` (force a parser), `IGR_DATA_DIR` (storage root), `IGR_API_TOKEN`, `IGR_PREVIEW_ROOTS`, `OPENROUTER_API_KEY`, `TAVILY_API_KEY` (setting it auto-enables web research unless `IGR_WEB_SEARCH=0`), and the `AWS_*` family. Secrets are read at provider call-time, never persisted to config.
 
 ---
 
@@ -177,19 +177,19 @@ The active profile is selected by the `ATF_PROFILE` env var (or the `profile` co
 
 Four kinds of store back the platform. Each has a local default and one or more cloud adapters selected by config. The shared key across all four is **`chunk_id`** — the vector payload, the graph node membership, and the table store's `chunk_id` column all reference the same identifier, which is how graph traversals and cell lookups round-trip back to citable evidence.
 
-### 5.1 Vector store — `atf_graphrag/stores/vector_store.py`
+### 5.1 Vector store — `intelligraphrag/stores/vector_store.py`
 
 One store **per corpus**. The local store (`LocalVectorStore`) keeps `{ids, vecs, payloads}` in `storage/vectors/<corpus>/index.json` and searches by cosine similarity (NumPy when available, otherwise pure-Python). The payload is the full `ChunkRecord` — including structured `table_data` and provenance — so a retrieved vector carries everything needed for citation and cell-level lookup. Cloud adapters: `QdrantVectorStore`, `OpenSearchVectorStore`.
 
-### 5.2 Graph store — `atf_graphrag/stores/graph_store.py` (+ `neo4j.py`, `neptune.py`)
+### 5.2 Graph store — `intelligraphrag/stores/graph_store.py` (+ `neo4j.py`, `neptune.py`)
 
 An adjacency-list knowledge graph. **Nodes** are typed entities (manufacturers, sellers, buyers, firearm types, incident types, locations, cases, plus generic entities); **edges** are typed relations (from LLM extraction, weight 2, carrying a description) or lower-weight `co_occurs` links (weight 1). Each node carries the set of `chunk_id`s that produced it, so a traversal resolves straight back to the exact source chunks. The store exposes both plain BFS (`neighbors`, `subgraph_chunks`) and **typed-only** BFS (`neighbors_typed`, `subgraph_chunks_typed`) that excludes generic co-occurrence, plus labeled shortest-path resolution (`path_labeled`). The read path can also run personalized PageRank (PPR). Cloud adapters: `Neo4jGraphStore`, `NeptuneGraphStore`.
 
-### 5.3 Blob store — `atf_graphrag/providers/blob.py`
+### 5.3 Blob store — `intelligraphrag/providers/blob.py`
 
 Original files (local filesystem or S3). In preview, original files are read locally and **never leave the machine**.
 
-### 5.4 Table store — `atf_graphrag/indexing/table_store.py`
+### 5.4 Table store — `intelligraphrag/indexing/table_store.py`
 
 A SQLite database that makes tabular data **queryable, not just searchable**. Schema:
 
@@ -222,9 +222,9 @@ Corpora are not fixed: asking the engine for an unknown corpus name creates it o
 
 ## 6. The Ingest Path (write)
 
-`Indexer.index_file()` (`atf_graphrag/indexing/indexer.py`) runs the write path. Its top-level contract is "give me a file/dir/URL/image, get back chunk counts," but underneath it is a pipeline with gates between every stage.
+`Indexer.index_file()` (`intelligraphrag/indexing/indexer.py`) runs the write path. Its top-level contract is "give me a file/dir/URL/image, get back chunk counts," but underneath it is a pipeline with gates between every stage.
 
-1. **Parse** via the configured parser provider — `docling` (DocLayNet + TableFormer structured tables, the config default; falls back to `advanced` if not installed) or `advanced` (PyMuPDF text + pdfplumber tables + VLM for charts and scanned pages). The parser returns a uniform `(page_no, text)` contract. VLM output is cached so re-indexing never re-calls the model. `ATF_PARSER` overrides the choice. The **`parse_quality` gate** then detects silently-bad output (empty/garbled pages without an exception) and re-parses via the fallback path.
+1. **Parse** via the configured parser provider — `docling` (DocLayNet + TableFormer structured tables, the config default; falls back to `advanced` if not installed) or `advanced` (PyMuPDF text + pdfplumber tables + VLM for charts and scanned pages). The parser returns a uniform `(page_no, text)` contract. VLM output is cached so re-indexing never re-calls the model. `IGR_PARSER` overrides the choice. The **`parse_quality` gate** then detects silently-bad output (empty/garbled pages without an exception) and re-parses via the fallback path.
 2. **Chunk** (`ingestion/chunker.py`) — structure-aware chunking that tags each chunk with a `content_type` of `table | chart | figure | list | text`. Tables are kept row-atomic with the header repeated when split; `[TABLE]` / `[CHART]` markers are preserved. Defaults: `chunk_size=900`, `chunk_overlap=150`. The **`chunk_gate`** drops junk (URL-only fragments, nav timestamps, TOC listings) before it enters the index; tables, VLM output, and the doc-summary anchor are protected inside the gate.
 3. **Enrich** (`ingestion/metadata.py`) — deterministic regex/vocabulary extraction of dates, locations, case references, firearm/incident types, manufacturers, and sellers/buyers; **optional LLM entity/relation extraction** governed by `llm_extraction` = `off | auto | on`, where `auto` runs only on docs ≤ `llm_extraction_auto_max_pages` (default 40) so bulk uploads of big reports stay fast while small/connected sets get rich extraction. An explicit `use_llm_extraction` bool overrides this (test back-compat). The **`metadata_audit`** then samples the document's chunks to confirm labels are well-formed.
 4. **Embed** — `embed_text` is **context-prepended** (`"[doc title  year  section]\n" + text`) for tables, charts, figures, **and number-dense text**, so near-identical rows across years no longer collapse to the same vector and a headline total like `3,939,517 TOTAL` becomes reachable by keyword. Dedup is **document-scoped** (`corpus:document_id:text`): repeated pages within a doc are dropped, but the same row in two editions is kept, each with its own provenance.
@@ -239,7 +239,7 @@ Corpora are not fixed: asking the engine for an unknown corpus name creates it o
 
 ## 7. Subagent Quality Gates
 
-Between every ingestion stage — and between generation and the final answer — IntelliGraphRAG runs **subagents** (`atf_graphrag/subagents.py`): small automated reviewers that catch silently-bad data at the boundary. They are toggled in the `subagents` config block and default **on**.
+Between every ingestion stage — and between generation and the final answer — IntelliGraphRAG runs **subagents** (`intelligraphrag/subagents.py`): small automated reviewers that catch silently-bad data at the boundary. They are toggled in the `subagents` config block and default **on**.
 
 | Gate | Boundary | Class | What it does |
 |---|---|---|---|
@@ -256,7 +256,7 @@ The `grounding_verify` gate, invoked at the end of `retrieval/pipeline.py`, is t
 
 ## 8. The Query Path (read)
 
-`Retriever.answer(question, trace)` (`atf_graphrag/retrieval/pipeline.py`) runs the read path as a small **state machine of six agents** plus several deterministic lanes. LangGraph can host the same nodes in production — the control flow and contracts are identical. Every stage is wall-clock timed into a per-stage `trace`.
+`Retriever.answer(question, trace)` (`intelligraphrag/retrieval/pipeline.py`) runs the read path as a small **state machine of six agents** plus several deterministic lanes. LangGraph can host the same nodes in production — the control flow and contracts are identical. Every stage is wall-clock timed into a per-stage `trace`.
 
 1. **Query understanding** — `QueryUnderstandingAgent.plan()` sets `intent`, `top_k`, retrieval `mode` (`local` / `global` / `mixed`), and filters; an LLM can refine the classification.
 2. **Global short-circuit** — if the question routes `global` **and** community summaries have been built, `GlobalAnswerAgent` answers from Leiden community summaries via map-reduce. If that result is insufficient (a refusal or near-empty), the pipeline **falls through to the local hybrid lane** rather than refusing — recovering specific-data questions whose answer actually lives in a document table.
@@ -277,7 +277,7 @@ The `grounding_verify` gate, invoked at the end of `retrieval/pipeline.py`, is t
 
 The result is `{question, answer, citations[], mode, confidence, evidence_count, graph_paths, intent, incomplete, notes, web_research}` plus the full per-stage `trace` when `trace: true`.
 
-> **Main endpoint:** `POST /query` with body `{"question": "...", "trace": true|false}` → `{answer, citations[], mode, trace{…}}`. From the CLI: `python -m atf_graphrag query "<question>" [--trace]`.
+> **Main endpoint:** `POST /query` with body `{"question": "...", "trace": true|false}` → `{answer, citations[], mode, trace{…}}`. From the CLI: `python -m intelligraphrag query "<question>" [--trace]`.
 
 ---
 
@@ -286,17 +286,17 @@ The result is `{question, answer, citations[], mode, confidence, evidence_count,
 Local stores are plain files, so IntelliGraphRAG defends them against the two ways file-backed state gets clobbered — concurrent writers and stale writers — and against half-written commits.
 
 - **Atomic commit.** Every store write goes to a temp file and is swapped in with `os.replace`, so a commit is all-or-nothing and a crash never leaves a half-written index.
-- **PID writer lock** (`atf_graphrag/storage_lock.py`). A `.writer.lock` file under the storage root makes writes **single-writer across processes**: the HTTP server and any batch write-script (reload, enrichment) must `acquire_storage_lock()` before mutating the stores, so a script can never write over a running server (or vice-versa). The lock stores the holder's PID and checks liveness with a signal-0 probe (`pid_alive`), so a dead holder's lock is automatically reclaimed.
-- **Epoch guard** (`atf_graphrag/storage_epoch.py`). Atomicity and the cross-process lock cannot catch a **same-process stale reference** — an old in-memory engine that commits over newer on-disk data after a clear/restore. So every restore/clear/build calls `bump_epoch()` to write a fresh UUID to `<root>/.epoch`; each store records the epoch it loaded under, and `commit()` re-reads the file via `check_epoch()`, **refusing to write and raising `StaleWriteError`** when the epoch changed underneath it. Writers attached to the current engine always match; only stale ones are blocked.
+- **PID writer lock** (`intelligraphrag/storage_lock.py`). A `.writer.lock` file under the storage root makes writes **single-writer across processes**: the HTTP server and any batch write-script (reload, enrichment) must `acquire_storage_lock()` before mutating the stores, so a script can never write over a running server (or vice-versa). The lock stores the holder's PID and checks liveness with a signal-0 probe (`pid_alive`), so a dead holder's lock is automatically reclaimed.
+- **Epoch guard** (`intelligraphrag/storage_epoch.py`). Atomicity and the cross-process lock cannot catch a **same-process stale reference** — an old in-memory engine that commits over newer on-disk data after a clear/restore. So every restore/clear/build calls `bump_epoch()` to write a fresh UUID to `<root>/.epoch`; each store records the epoch it loaded under, and `commit()` re-reads the file via `check_epoch()`, **refusing to write and raising `StaleWriteError`** when the epoch changed underneath it. Writers attached to the current engine always match; only stale ones are blocked.
 - **Portable seeds & corpus export/import.** A "seed" is a frozen snapshot of a fully ingested + indexed knowledge base; the UI offers one-click clear + restore (`/api/seed/save`, `/api/seed/restore`). Corpora can also be exported/imported as portable, parse-once bundles (`scripts/export_corpus.py`, `import_corpus.py`, `reload_corpus.py`) so a parsed corpus can move between machines and be re-served cheaply.
 
 ---
 
 ## 10. API, UI, and Deployment
 
-The API (`atf_graphrag/api/server.py`) is a stdlib `ThreadingHTTPServer` on **port 8077** with zero web-framework dependency. Bearer-token auth (`ATF_API_TOKEN` or `server.auth_token`) is required off-localhost; local dev runs open. Singletons `_engine`, `_indexer`, `_retriever` are built on first request, and all store writes are serialized behind an ingest lock.
+The API (`intelligraphrag/api/server.py`) is a stdlib `ThreadingHTTPServer` on **port 8077** with zero web-framework dependency. Bearer-token auth (`IGR_API_TOKEN` or `server.auth_token`) is required off-localhost; local dev runs open. Singletons `_engine`, `_indexer`, `_retriever` are built on first request, and all store writes are serialized behind an ingest lock.
 
-Beyond `POST /query`, `/ingest`, `/ingest_visual`, and `/api/upload`, the server exposes status and document endpoints (`/api/status`, `/api/documents`, `/api/document`), async job management (`/api/jobs`), backups and seeds, subagent reports, graph/community/table builds, a **Debug tab** (`/api/debug/parse|chunk|index|graph|communities|query`) for step-by-step single-file pipeline inspection, and a full **AWS control plane** (`/api/aws/...`: Plan → Provision → Smoke → Teardown, resources tagged `Project=graphrag`). The web UI is served at `/` (`api/ui.py`) with the graph Explorer at `/graph/view`. The CLI (`python -m atf_graphrag`) exposes `serve`, `ingest`, `visual`, `query`, `stats`, and `demo`.
+Beyond `POST /query`, `/ingest`, `/ingest_visual`, and `/api/upload`, the server exposes status and document endpoints (`/api/status`, `/api/documents`, `/api/document`), async job management (`/api/jobs`), backups and seeds, subagent reports, graph/community/table builds, a **Debug tab** (`/api/debug/parse|chunk|index|graph|communities|query`) for step-by-step single-file pipeline inspection, and a full **AWS control plane** (`/api/aws/...`: Plan → Provision → Smoke → Teardown, resources tagged `Project=graphrag`). The web UI is served at `/` (`api/ui.py`) with the graph Explorer at `/graph/view`. The CLI (`python -m intelligraphrag`) exposes `serve`, `ingest`, `visual`, `query`, `stats`, and `demo`.
 
 Deployment targets are **local** (OpenRouter + local stores), **hybrid** / **bedrock-hybrid**, and **aws** (Bedrock + managed stores). A `Dockerfile` and `docker-compose.yml` are provided; `requirements.txt` holds the core and `requirements-aws.txt` the cloud extras.
 

@@ -6,7 +6,7 @@ first — data privacy, offline operation, adding a corpus or provider, and chea
 re-ingestion.
 
 IntelliGraph is built to **degrade gracefully**. The core HTTP API is pure Python
-stdlib (`atf_graphrag/api/server.py`), and every component is swappable by config.
+stdlib (`intelligraphrag/api/server.py`), and every component is swappable by config.
 Most "errors" below are really the platform falling back to a free, local path —
 this page tells you when that fallback is *expected*, and how to upgrade to the
 full experience when you want it.
@@ -14,12 +14,12 @@ full experience when you want it.
 > **First move for almost any problem: read the startup banner.**
 >
 > ```bash
-> python -m atf_graphrag serve
+> python -m intelligraphrag serve
 > ```
 >
 > ```text
 > [IntelliGraphRAG] profile=local llm=offline embeddings=local OPENROUTER_API_KEY=MISSING (offline fallback)
-> [IntelliGraphRAG] WARNING: no API auth token set and CORS is open — fine for local dev; set ATF_API_TOKEN before any non-local deploy.
+> [IntelliGraphRAG] WARNING: no API auth token set and CORS is open — fine for local dev; set IGR_API_TOKEN before any non-local deploy.
 > [IntelliGraphRAG] listening on http://127.0.0.1:8077
 > ```
 >
@@ -39,7 +39,7 @@ banner shows `llm=offline` and `OPENROUTER_API_KEY=MISSING (offline fallback)`.
 
 **Cause.** No OpenRouter key is set, the network is unavailable, or a live LLM call
 failed. The default `local` profile configures the `openrouter` provider, but with
-no key the factory (`atf_graphrag/providers/__init__.py` → `make_llm`) returns the
+no key the factory (`intelligraphrag/providers/__init__.py` → `make_llm`) returns the
 deterministic `OfflineLLM` responder. Offline mode is **extractive** — it stitches
 an answer from the retrieved context block and never invents facts — so answers
 are lower quality but still grounded and citable.
@@ -75,7 +75,7 @@ takes priority over the `OPENROUTER_API_KEY` environment variable.
 **Symptom.** JavaScript-heavy or bot-protected pages crawl with little or no text;
 the page is fetched but extraction is thin or empty. No crash.
 
-**Cause.** The headless-render path lives in `atf_graphrag/ingestion/browser.py` and
+**Cause.** The headless-render path lives in `intelligraphrag/ingestion/browser.py` and
 uses **Playwright** (headless Chromium) to run a page's JavaScript and return the
 final DOM. Playwright is an **optional dependency**: it is imported lazily, and
 every entry point degrades gracefully. `playwright_available()` checks whether the
@@ -119,7 +119,7 @@ Then set the render mode in the `web` config block:
 into the index** — IntelliGraph stores only chunks plus provenance. To serve the
 original file or render a PDF page, the server must first *locate the file on disk*.
 `_resolve_source_file()` searches the directories returned by `_preview_roots()`
-(`atf_graphrag/api/server.py`):
+(`intelligraphrag/api/server.py`):
 
 1. the `PREVIEW_ROOTS` environment variable (`:`-separated, like `$PATH`),
 2. the configured `server.preview_roots` list,
@@ -141,7 +141,7 @@ or persist it in config:
 ```
 
 > **Notes:**
-> - The legacy variable **`ATF_PREVIEW_ROOTS`** is still honoured for backward
+> - The legacy variable **`IGR_PREVIEW_ROOTS`** is still honoured for backward
 >   compatibility; `PREVIEW_ROOTS` takes precedence when both are set.
 > - Files uploaded through the UI are always previewable — the uploads dir is a
 >   preview root automatically.
@@ -156,7 +156,7 @@ IntelliGraph has **two independent durability guards** that can surface as error
 Both exist to prevent silent data loss — when you see them, they are working as
 designed, not malfunctioning.
 
-#### 1. Single-writer storage lock (`atf_graphrag/storage_lock.py`)
+#### 1. Single-writer storage lock (`intelligraphrag/storage_lock.py`)
 
 ```text
 [IntelliGraphRAG] REFUSING TO START: storage root '…/storage' is locked by live
@@ -180,7 +180,7 @@ holder is overwritten.
   rm /path/to/storage/.writer.lock
   ```
 
-#### 2. `StaleWriteError` (`atf_graphrag/storage_epoch.py`)
+#### 2. `StaleWriteError` (`intelligraphrag/storage_epoch.py`)
 
 ```text
 refusing stale store commit: storage epoch changed (a1b2c3d4→e5f6a7b8) — the data
@@ -215,12 +215,12 @@ hallucinate. But it can also point at a real gap. Run with the trace and check t
 table below:
 
 ```bash
-python -m atf_graphrag query "your question" --trace
+python -m intelligraphrag query "your question" --trace
 ```
 
 | Likely cause | How to check | Fix |
 | --- | --- | --- |
-| Thin / empty corpus | `GET /api/documents` → `total_documents` | Ingest more: `python -m atf_graphrag ingest <dir> <corpus>` |
+| Thin / empty corpus | `GET /api/documents` → `total_documents` | Ingest more: `python -m intelligraphrag ingest <dir> <corpus>` |
 | Offline LLM (extractive) | banner, or `key_set` in `GET /api/status` | Set `OPENROUTER_API_KEY` (see the offline section above) |
 | Question outside the corpus | `--trace` shows no lane returned evidence | Enable web research (Tavily), or ingest the missing source |
 | Evidence below the floor | `retrieval.min_confidence` (default `0.10`) | Lower it slightly, or improve corpus coverage |
@@ -230,7 +230,7 @@ numeric, community), what survived the evaluation gate, and the grounded citatio
 If **no lane returns evidence**, the refusal is the expected, safe outcome — do not
 "fix" it by forcing an answer.
 
-### Slow Docling parsing on CPU (`ATF_PARSER=advanced`)
+### Slow Docling parsing on CPU (`IGR_PARSER=advanced`)
 
 **Symptom.** Ingestion crawls; each page takes seconds.
 
@@ -243,11 +243,11 @@ case is when Docling *is* installed and running on CPU.
 **Fix — switch to the fast local parser for the run** (PyMuPDF + pdfplumber):
 
 ```bash
-export ATF_PARSER=advanced
-python -m atf_graphrag ingest <dir> <corpus>
+export IGR_PARSER=advanced
+python -m intelligraphrag ingest <dir> <corpus>
 ```
 
-The `ATF_PARSER` environment variable overrides `ingestion.parser.provider` for the
+The `IGR_PARSER` environment variable overrides `ingestion.parser.provider` for the
 process (accepts `docling | advanced | textract | bedrock | bda`). `advanced` is
 dramatically faster on CPU with strong text and table extraction; reserve `docling`
 for the documents where table-structure fidelity matters most. You can also set it
@@ -299,11 +299,11 @@ port (default `8077`).
 
 ```bash
 lsof -i :8077                 # find the PID, then: kill <pid>
-export ATF_PORT=8090          # or just run on another port
-python -m atf_graphrag serve
+export IGR_PORT=8090          # or just run on another port
+python -m intelligraphrag serve
 ```
 
-`ATF_PORT` overrides `server.port` (default `8077`); `server.host` defaults to
+`IGR_PORT` overrides `server.port` (default `8077`); `server.host` defaults to
 `127.0.0.1`. If the old process is gone but you **also** see a storage-lock refusal,
 the previous run left a stale `.writer.lock` — see the storage-lock section above.
 
@@ -312,7 +312,7 @@ the previous run left a stale `.writer.lock` — see the storage-lock section ab
 **Symptom.**
 
 ```text
-[IntelliGraphRAG] REFUSING to start: profile 'aws' requires auth. Set ATF_API_TOKEN
+[IntelliGraphRAG] REFUSING to start: profile 'aws' requires auth. Set IGR_API_TOKEN
 (or server.auth_token) before deploying. Use profile 'local' for unauthenticated
 local development.
 ```
@@ -324,12 +324,12 @@ profile a missing token is a warning, not a refusal.)
 **Fix — set a bearer token, then start:**
 
 ```bash
-export ATF_API_TOKEN="$(openssl rand -hex 24)"
-ATF_PROFILE=aws python -m atf_graphrag serve
+export IGR_API_TOKEN="$(openssl rand -hex 24)"
+IGR_PROFILE=aws python -m intelligraphrag serve
 ```
 
 Clients then send `Authorization: Bearer <token>` on every `POST`. The token may
-instead live in `server.auth_token`; the `ATF_API_TOKEN` environment variable takes
+instead live in `server.auth_token`; the `IGR_API_TOKEN` environment variable takes
 precedence. `GET` routes (status, documents, health) stay open; only mutating
 `POST` routes are gated.
 
@@ -387,7 +387,7 @@ downloads.
 ```
 
 ```bash
-python -m atf_graphrag ingest ./policy_docs policies
+python -m intelligraphrag ingest ./policy_docs policies
 ```
 
 **New / swapped provider** — every block is config-driven. Set `<block>.provider`,
@@ -431,7 +431,7 @@ resumable post-ingest LLM stages with `python scripts/finish_kb.py`.
 
 > Batch write-scripts acquire the **same** single-writer storage lock as the
 > server, so stop the server before running one against the same storage root (or
-> point it at a different `ATF_DATA_DIR`).
+> point it at a different `IGR_DATA_DIR`).
 
 ---
 

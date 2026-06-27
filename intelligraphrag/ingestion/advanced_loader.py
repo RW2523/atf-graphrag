@@ -200,7 +200,7 @@ class AdvancedPDFLoader:
         if cache_dir:
             self._cache_dir = Path(cache_dir)
         else:
-            # Walk up to find project root (contains atf_graphrag package)
+            # Walk up to find project root (contains intelligraphrag package)
             pkg = Path(__file__).resolve().parent.parent.parent
             self._cache_dir = pkg / "storage" / "vlm_cache"
         self._cache_dir.mkdir(parents=True, exist_ok=True)

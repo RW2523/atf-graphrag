@@ -1,6 +1,6 @@
 """Deterministic table-row lookup — ask about any cell in any row."""
-from atf_graphrag.config import Settings
-from atf_graphrag.retrieval.table_lookup import (extract_row_keys,
+from intelligraphrag.config import Settings
+from intelligraphrag.retrieval.table_lookup import (extract_row_keys,
                                                  extract_name_phrases, RowIndex,
                                                  find_rows)
 
@@ -11,12 +11,12 @@ def _engine(tmp_path):
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")
     s._cfg["blob_store"]["path"] = str(tmp_path / "b")
     s._cfg["retrieval"]["llm_refine"] = False
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     return Engine(s)
 
 
 def _seed_table(e, corpus="pdf"):
-    from atf_graphrag.models import ChunkRecord
+    from intelligraphrag.models import ChunkRecord
     rec = ChunkRecord(
         text=("| 57134751 | LASERAIN ARMS INC | 721 MAIN STREET | LITTLE ROCK | AR | 0 |\n"
               "| 16136645 | EMCO INC | 201 IND PARKWAY | GADSDEN | AL | 2187 |"),
@@ -75,7 +75,7 @@ def _seed_bleed_table(e, corpus="pdf"):
     """A table where the key tokens of "PHOENIX ARMS" are satisfied two ways:
     the real PHOENIX ARMS company (name cell, city ONTARIO) and an unrelated
     NORTH STAR ARMS row located in the city PHOENIX (cross-column bleed)."""
-    from atf_graphrag.models import ChunkRecord
+    from intelligraphrag.models import ChunkRecord
     rows = [
         ["98615666", "NORTH STAR ARMS LLC", "23042 N 15TH LN", "PHOENIX", "AZ", "37"],
         ["93336988", "PHOENIX ARMS", "4231 BRICKELL STREET", "ONTARIO", "CA", "16800"],
@@ -110,7 +110,7 @@ def _seed_same_suffix_table(e, corpus="pdf"):
     (the distinctive 'R & R' is single-letter/ampersand and gets dropped), so
     every one of these rows is an equally valid token match — only the full
     name phrase can break the tie."""
-    from atf_graphrag.models import ChunkRecord
+    from intelligraphrag.models import ChunkRecord
     companies = [
         ["98615001", "ACME SPORTING ARMS INC", "100 FIRST AVE", "DALLAS", "TX", "12"],
         ["98615002", "BIG SKY SPORTING ARMS LLC", "200 SECOND ST", "HELENA", "MT", "34"],
@@ -157,8 +157,8 @@ def test_find_rows_prefers_full_name_phrase_over_same_suffix_companies(tmp_path)
 def test_retrieval_injects_and_keeps_row_hit(tmp_path):
     e = _engine(tmp_path)
     _seed_table(e)
-    from atf_graphrag.models import QueryPlan
-    from atf_graphrag.retrieval.agents import RetrievalAgent, EvaluationAgent
+    from intelligraphrag.models import QueryPlan
+    from intelligraphrag.retrieval.agents import RetrievalAgent, EvaluationAgent
     plan = QueryPlan(question="What is the address of LASERAIN ARMS INC?", top_k=5)
     ra = RetrievalAgent()
     hits = ra.retrieve(plan, ["pdf"], e)
