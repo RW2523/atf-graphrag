@@ -12,15 +12,15 @@ import time
 
 # (question, [expected any-of], kind, must_refuse)
 Q = [
-    # cell-level (ground truth from real indexed AFMER rows)
-    ("What city is EMCO INC located in per the AFMER manufacturer data?", ["gadsden"], "cell", False),
-    ("What state is DAVIS INDUSTRIES in, per AFMER?", ["ca", "california"], "cell", False),
-    ("What is the address of POWELL KNIFE PISTOL INC in AFMER?", ["14390", "bowman"], "cell", False),
-    ("In which city is REPUBLIC ARMS INC located per AFMER?", ["chino"], "cell", False),
-    ("What city is INTERNATIONAL ANTIQUE REPRO in, per AFMER?", ["san juan"], "cell", False),
-    ("What state is REPUBLIC ARMS INC in, according to AFMER?", ["ca", "california"], "cell", False),
-    ("What is the address of EMCO INC in the AFMER data?", ["201", "parkway"], "cell", False),
-    ("What city is POWELL KNIFE PISTOL INC located in per AFMER?", ["tucson"], "cell", False),
+    # cell-level (ground truth re-sampled from the CURRENT parse's real rows)
+    ("What city is WILSONS GUN SHOP INC located in per the AFMER manufacturer data?", ["berryville"], "cell", False),
+    ("What state is EXCELL MANUFACTURING INC in, per AFMER?", ["az", "arizona"], "cell", False),
+    ("What is the address of R & R SPORTING ARMS INC in AFMER?", ["15481", "twin lakes"], "cell", False),
+    ("In which city is PHOENIX ARMS located per AFMER?", ["ontario"], "cell", False),
+    ("What city is BAR-STO PRECISION MACHINE INC in, per AFMER?", ["29 palms", "palms"], "cell", False),
+    ("What state is PHOENIX ARMS in, according to AFMER?", ["ca", "california"], "cell", False),
+    ("What is the address of WILSONS GUN SHOP INC in the AFMER data?", ["2234", "cr 719"], "cell", False),
+    ("What city is COTTER, JASON listed in per AFMER?", ["mountain home"], "cell", False),
     # aggregate / ranking (SQL lane)
     ("How many explosives incidents were reported in the 2023 Explosives Incident Report?", [], "aggregate", False),
     ("Which fire type had the highest count in the 2015 arson incident report?", ["incendiary", "accidental", "undetermined"], "aggregate", False),
@@ -76,13 +76,24 @@ Q = [
 
 
 def _is_refusal(a):
-    al = (a or "").lower()
-    cues = ["don't have", "do not have", "no information", "not contain", "cannot find",
-            "could not find", "not available", "unable to", "does not appear",
-            "no relevant", "not found", "insufficient", "not mentioned", "no data",
-            "outside", "not covered", "cannot provide", "does not include",
-            "do not include", "no specific", "not specify"]
-    return (not al.strip()) or any(c in al for c in cues)
+    """True only for a real refusal. Genuine refusals state the inability up
+    front, so we anchor refusal-SPECIFIC phrases to the answer's opening. Broad
+    substrings ("unable to", "do not include", "not available") were flagging
+    correct answers that merely mention a limitation mid-body, e.g. "...PMFs do
+    not include firearms registered in the NFRTR" or "...a person unable to
+    legally possess" — those are content, not refusals."""
+    al = (a or "").strip().lower()
+    if not al:
+        return True
+    head = al[:240]
+    cues = ["does not contain", "do not contain", "does not include any inf",
+            "not contain any inf", "no information", "not available in the",
+            "is not available in", "not provided in the", "is not provided",
+            "are not provided", "cannot provide", "could not find",
+            "i cannot answer", "not found in the", "no relevant",
+            "insufficient context", "outside the scope", "do not have inf",
+            "don't have", "does not specify", "not specified in the"]
+    return any(c in head for c in cues)
 
 
 def main():
