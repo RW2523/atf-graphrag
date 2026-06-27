@@ -8,7 +8,7 @@ INDEX_HTML = r'''<!doctype html>
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>GraphRAG — Console</title>
+<title>IntelliGraphRAG — Console</title>
 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 <style>
 :root{
@@ -254,7 +254,7 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
 </head>
 <body>
 <aside class="side">
-  <div class="brand"><div class="logo">&#9670;</div><div>GraphRAG<small>Knowledge Console</small></div></div>
+  <div class="brand"><div class="logo">&#9670;</div><div>IntelliGraphRAG<small>Knowledge Console</small></div></div>
   <nav class="nav">
     <button data-view="chat" class="active"><span class="ico">&#128172;</span> Chat</button>
     <button data-view="kb"><span class="ico">&#128218;</span> Knowledge Base</button>

@@ -5,5 +5,5 @@ cd "$(dirname "$0")"
 if [ -f .env ]; then
   set -a; . ./.env; set +a
 fi
-echo "Starting ATF GraphRAG (profile=${ATF_PROFILE:-local}) ..."
+echo "Starting IntelliGraphRAG (profile=${ATF_PROFILE:-local}) ..."
 python3 -m atf_graphrag serve
