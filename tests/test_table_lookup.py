@@ -1,6 +1,7 @@
 """Deterministic table-row lookup — ask about any cell in any row."""
 from atf_graphrag.config import Settings
-from atf_graphrag.retrieval.table_lookup import (extract_row_keys, RowIndex,
+from atf_graphrag.retrieval.table_lookup import (extract_row_keys,
+                                                 extract_name_phrases, RowIndex,
                                                  find_rows)
 
 
@@ -101,6 +102,56 @@ def test_find_rows_prefers_name_cell_over_cross_column_bleed(tmp_path):
     assert "ONTARIO" in top_row and "PHOENIX ARMS" in top_row
     # the cross-column bleed row must not outrank the true name-cell row
     assert "NORTH STAR" not in top_row
+
+
+def _seed_same_suffix_table(e, corpus="pdf"):
+    """Several companies sharing the '... SPORTING ARMS' suffix, each in its own
+    chunk. The token-AND key for the question collapses to [SPORTING, ARMS]
+    (the distinctive 'R & R' is single-letter/ampersand and gets dropped), so
+    every one of these rows is an equally valid token match — only the full
+    name phrase can break the tie."""
+    from atf_graphrag.models import ChunkRecord
+    companies = [
+        ["98615001", "ACME SPORTING ARMS INC", "100 FIRST AVE", "DALLAS", "TX", "12"],
+        ["98615002", "BIG SKY SPORTING ARMS LLC", "200 SECOND ST", "HELENA", "MT", "34"],
+        ["98633332", "R & R SPORTING ARMS INC", "15481 N TWIN LAKES DR", "TUCSON", "AZ", "56"],
+        ["98615003", "MOUNTAIN SPORTING ARMS CO", "300 THIRD BLVD", "DENVER", "CO", "78"],
+    ]
+    vs = e.vstore(corpus)
+    for i, row in enumerate(companies):
+        rec = ChunkRecord(
+            text=" | ".join(row), corpus=corpus, chunk_id=f"sa{i}",
+            content_type="table", source_name="afmer_2011.pdf",
+            document_id=f"d{i}", page_number=1, document_date="2011")
+        rec.table_data = {"columns": ["col"] * 6, "rows": [row]}
+        vs.upsert(rec, e.embedder.embed([rec.text])[0])
+    vs.commit()
+
+
+def test_extract_name_phrases_keeps_ampersand_and_single_letters():
+    phrases = extract_name_phrases("What is the address of R & R SPORTING ARMS INC?")
+    # the '&'/single-letter parts the key drops are preserved here
+    assert "r r sporting arms" in phrases
+    # an ordinary name (no dropped distinctive part) yields no phrase — the
+    # token-AND key already covers it, so we don't perturb its scoring
+    assert extract_name_phrases("Where is EMCO INC located?") == []
+
+
+def test_find_rows_prefers_full_name_phrase_over_same_suffix_companies(tmp_path):
+    # "R & R SPORTING ARMS INC" must resolve to its own row in TUCSON — NOT to
+    # any of the other SPORTING ARMS companies it shares suffix tokens with.
+    e = _engine(tmp_path)
+    _seed_same_suffix_table(e)
+    hits = find_rows("What is the address of R & R SPORTING ARMS INC?", e, ["pdf"])
+    assert hits, "the distinctive ampersand/single-letter name row must be found"
+    _, top_row, top_score = hits[0]
+    assert "R & R SPORTING ARMS" in top_row and "TUCSON" in top_row
+    # none of the same-suffix companies may outrank or be confused with it
+    assert "ACME" not in top_row and "BIG SKY" not in top_row
+    assert "MOUNTAIN" not in top_row
+    for _, other_row, other_score in hits[1:]:
+        assert "R & R" not in other_row
+        assert top_score > other_score   # phrase row wins decisively
 
 
 def test_retrieval_injects_and_keeps_row_hit(tmp_path):
