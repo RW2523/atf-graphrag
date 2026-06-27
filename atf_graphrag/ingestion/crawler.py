@@ -25,7 +25,7 @@ from xml.etree import ElementTree as ET
 
 from . import browser, web_extract
 
-_UA_STRING = "ATF-GraphRAG-Crawler/1.0"
+_UA_STRING = "IntelliGraphRAG-Crawler/1.0"
 _UA = {"User-Agent": _UA_STRING}
 
 

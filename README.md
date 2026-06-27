@@ -2,14 +2,14 @@
 
 > An intelligent, configurable GraphRAG platform — graph-grounded retrieval with cell-level precision over documents, tables, and the web.
 
-![Python](https://img.shields.io/badge/python-3.9%2B-blue)
-![Tests](https://img.shields.io/badge/tests-304%20passing-brightgreen)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-1.0.0-informational)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-315%20passing-brightgreen)](https://github.com/RW2523/intelligraphrag)
+[![License](https://img.shields.io/badge/license-Proprietary-blue)](https://github.com/RW2523/intelligraphrag/blob/main/LICENSE)
+[![Version](https://img.shields.io/badge/version-1.0.0-informational)](https://github.com/RW2523/intelligraphrag)
 
 **IntelliGraphRAG** (short: *IntelliGraph*) is a config-driven GraphRAG platform that fuses a knowledge graph, hybrid vector + BM25 search, deterministic table/cell lookup, and live web research into a single agentic retrieval pipeline. Its core is **stdlib-only** — it runs on nothing but Python — yet every component is swappable by configuration, so the same code runs locally on open-source providers or AWS-native on Bedrock and managed stores. Every answer ships with citations and passes through grounding and guardrail checks.
 
-It is domain-agnostic. It was built and validated end-to-end on a large U.S. government (ATF firearms/explosives) document corpus — referenced below only as the example dataset.
+It is domain-agnostic. It was built and validated end-to-end on a large example U.S. government firearms & explosives regulatory dataset — referenced below only as the sample government corpus.
 
 ---
 
@@ -60,6 +60,9 @@ See [Architecture](docs/wiki/Architecture.md) for the full design.
 ## Quick start
 
 ```bash
+git clone https://github.com/RW2523/intelligraphrag.git
+cd intelligraphrag
+
 pip install -r requirements.txt          # optional accelerators; core runs on stdlib alone
 python -m atf_graphrag serve             # HTTP API + web UI on http://localhost:8077
 ```
@@ -72,10 +75,10 @@ Then open **http://localhost:8077** and:
 
 > Without a key the app still runs end-to-end in **offline mode** — real retrieval, graph, eval, and rerank; generation returns an extractive answer from the retrieved context.
 
-Prefer a one-liner that loads `.env` first:
+Prefer a one-liner that loads `.env` first (copy `.env.example` to `.env` and fill it in):
 
 ```bash
-./run.sh
+./run.sh                                 # honors ATF_PROFILE (local | hybrid | aws)
 ```
 
 ---
@@ -87,7 +90,7 @@ Prefer a one-liner that loads `.env` first:
 python -m atf_graphrag ingest report.pdf pdf
 python -m atf_graphrag ingest data/sample pdf
 
-# vision ingestion of a chart/table image
+# vision (VLM) ingestion of a chart/table image
 python -m atf_graphrag visual chart.png visual
 ```
 
@@ -96,6 +99,8 @@ Crawl a website via `sitemap.xml` (robots-aware, rate-limited, with headless-ren
 ```bash
 python scripts/crawl_site.py https://www.example.gov/sitemap.xml --render auto --corpus web --max 50
 ```
+
+> HTML tables discovered while crawling flow into the same structured table pipeline as PDFs, so crawled tables are cell-queryable. Linked PDFs are queued into the PDF pipeline. Pass `--save` to commit and persist a seed after the crawl.
 
 ---
 
@@ -111,6 +116,9 @@ curl -X POST localhost:8077/query \
   -d '{"question":"What patterns connect the trafficking incidents?","trace":true}'
 # -> {"answer": "...", "citations": [...], "mode": "...", "trace": {...}}
 ```
+
+> In non-local profiles (`hybrid` / `aws`) the API requires a Bearer token —
+> add `-H "Authorization: Bearer $ATF_API_TOKEN"` to each request.
 
 **From the CLI:**
 
@@ -140,9 +148,9 @@ python -m atf_graphrag demo         # ingest the bundled sample and run sample q
 
 ## Project status
 
-- **304 automated tests** passing.
-- **~0.86 overall** on a 50-question end-to-end evaluation harness (`scripts/eval_50.py`) spanning cell, aggregate, cross-year, comparison, fact, relationship, pattern, timeline, multi-doc, visual, and refusal questions — every lane fires; refusals 100%.
-- Validated end-to-end on a large U.S. government (ATF) document corpus used purely as the example/validation dataset.
+- **315 automated tests** passing (`pytest`).
+- **0.90 overall** on a 50-question end-to-end evaluation harness (`scripts/eval_50.py`) spanning cell, aggregate, cross-year, comparison, fact, relationship, pattern, timeline, multi-doc, visual, and refusal questions — every lane fires; refusals 100%.
+- Validated end-to-end on a large example U.S. government firearms & explosives regulatory dataset, used purely as the sample/validation corpus.
 
 ---
 
@@ -154,6 +162,7 @@ python -m atf_graphrag demo         # ingest the bundled sample and run sample q
 
 | Page | Topic |
 |---|---|
+| [Home](docs/wiki/Home.md) | Wiki landing page and navigation |
 | [Architecture](docs/wiki/Architecture.md) | End-to-end system design and data flow |
 | [Installation & Quickstart](docs/wiki/Installation-and-Quickstart.md) | Install, optional dependencies, Docker, first run |
 | [Configuration Reference](docs/wiki/Configuration-Reference.md) | Layered config, profiles, every setting and env var |
@@ -170,4 +179,10 @@ python -m atf_graphrag demo         # ingest the bundled sample and run sample q
 | [Glossary](docs/wiki/Glossary.md) | Definitions of every key term |
 
 ---
-📖 [Docs Home](docs/wiki/Home.md) · [User Manual](docs/USER_MANUAL.md)
+
+## License
+
+Released under the [MIT License](LICENSE).
+
+---
+📖 [Docs Home](docs/wiki/Home.md) · [User Manual](docs/USER_MANUAL.md) · [Repository](https://github.com/RW2523/intelligraphrag)

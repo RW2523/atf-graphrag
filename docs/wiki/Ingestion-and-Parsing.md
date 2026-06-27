@@ -1,565 +1,633 @@
 # Ingestion & Parsing
 
-How IntelliGraphRAG turns raw documents — PDFs, HTML, images — into a searchable,
-graph-grounded, cell-addressable knowledge base. This page covers the ingestion
-pipeline end to end: parser selection, how tables / charts / scanned pages are
-handled, structure-aware chunking, the `table_data` structure, context-prepend
+How **IntelliGraphRAG** turns raw documents — PDFs, HTML, plain text, images —
+into a searchable, graph-grounded, cell-addressable knowledge base. This page is
+a deep dive on the ingestion pipeline end to end: parser selection, how tables /
+charts / scanned pages are handled (and how vision results are cached),
+structure-aware chunking, the `table_data` structure, context-prepended
 embeddings, document-scoped dedup, and how the table store is populated.
 
-> The pipeline was built and validated on a large U.S. government (ATF
-> firearms/explosives) corpus, but nothing in it is domain-specific — every stage
-> is generic and config-driven.
+> The pipeline was built and validated on a large example U.S. government
+> firearms & explosives regulatory dataset, but **nothing in it is
+> domain-specific** — every stage is generic and config-driven, and works on any
+> corpus of PDFs / HTML / text.
+
+---
 
 ## Pipeline at a glance
 
 ```text
-file → PARSE → (page_no, rich_text) per page
-            → CHUNK   (heading, chunk_text, content_type) triples
-            → METADATA enrich + dedup + subagent gates
-            → EMBED   (context-prepended for tables/charts/figures + number-dense text)
-            → STORE   vector store (payload carries table_data + provenance)
-                      graph store  (typed entities + co-occurrence)
-                      table store  (SQLite, populated from table_data)
+file ─▶ PARSE     → List[(page_no, rich_text)]      one entry per page
+     ─▶ CHUNK     → List[(heading, chunk_text, content_type)]   structure-aware
+     ─▶ METADATA  → enrich + document-scoped dedup + subagent gates
+     ─▶ EMBED     → context-prepended for tables/charts/figures + number-dense text
+     ─▶ STORE     → vector store  (payload carries table_data + provenance)
+                    graph store   (typed entities + co-occurrence edges)
+                    table store   (SQLite, rebuilt from each chunk's table_data)
 ```
 
-The entry points:
+Entry points:
 
 ```bash
 python -m atf_graphrag ingest <path|dir> [corpus]   # index a file or directory
-python -m atf_graphrag visual <image> [corpus]      # vision ingestion of an image
+python -m atf_graphrag visual <image> [corpus]      # vision ingestion of one image
 python scripts/crawl_site.py <url|sitemap> [opts]   # crawl & ingest a website
 ```
 
-The orchestration lives in `atf_graphrag/indexing/indexer.py` (`Indexer.index_file`,
-`index_directory`, `index_visual`).
+The orchestration lives in `atf_graphrag/indexing/indexer.py` — `Indexer.index_file`,
+`Indexer.index_directory`, `Indexer.index_text`, and `Indexer.index_visual`.
 
 ---
 
 ## 1. Parser selection
 
-Parsing converts a file into a list of `(page_no, text)` pairs. Every parser
-honors that same contract, so they are fully interchangeable. The parser is chosen
-by config under `ingestion.parser.provider` (or the `ATF_PARSER` environment
-variable, which overrides config):
+Parsing converts a file into a list of `(page_no, text)` pairs. **Every parser
+returns the same contract**, so swapping parsers is a config change only:
 
-| `provider` | Implementation | Best for |
-|---|---|---|
-| `advanced` *(default)* | `atf_graphrag/providers/parser.py` (PyMuPDF text + pdfplumber tables + VLM) | Most PDFs; broad, dependency-light |
-| `docling` | `atf_graphrag/providers/docling_parser.py` (DocLayNet layout + TableFormer) | Complex / borderless tables, dense layouts |
-| `textract` | `atf_graphrag/providers/aws_parsers.py` | AWS Textract OCR |
-| `bedrock` | `atf_graphrag/providers/bedrock.py` | Bedrock foundation-model parsing |
-| `bda` | `atf_graphrag/providers/bda.py` | Bedrock Data Automation (managed AWS) |
+```python
+def load(path, vision_provider=None) -> List[Tuple[int, str]]   # (page_no, text)
+```
+
+The parser is chosen by config and constructed once at engine startup
+(`Engine.parser = make_parser(self.settings)`), then used in `index_file`:
+
+```python
+parser = getattr(self.e, "parser", None)
+if parser is not None:
+    pages = parser.load(path, vision_provider=vision)
+else:
+    pages = load_file(path, vision_provider=vision)   # back-compat for older Engine
+```
+
+### Available providers
+
+Selected via `ingestion.parser.provider` (or the `ATF_PARSER` env var, which
+overrides config). The factory is `make_parser()` in
+`atf_graphrag/providers/__init__.py`.
+
+| Provider   | Engine class                    | What it does | Notes |
+| ---------- | ------------------------------- | ------------ | ----- |
+| `docling`  | `DoclingParser`                 | DocLayNet layout + TableFormer table-structure ML models; complex/borderless tables and reading order | **Default.** Falls back to `advanced` if `docling` is not installed |
+| `advanced` | `AdvancedParser` → `AdvancedPDFLoader` | Multi-stage PyMuPDF + pdfplumber + optional VLM | Fast; the resilient fallback for every other provider |
+| `textract` | `TextractParser`                | AWS-native structured / OCR parsing | Requires AWS credentials |
+| `bedrock`  | `BedrockDocumentParser`         | AWS foundation-model document parsing | Requires AWS credentials |
+| `bda`      | `BedrockDataAutomationParser`   | Amazon Bedrock Data Automation | Needs `ingestion.bda.bucket` + `project_arn` |
+
+> [!NOTE]
+> The default in the code's `DEFAULTS` dict is `docling`. Every provider degrades
+> gracefully: if the chosen parser cannot be imported or initialized, the factory
+> emits a fallback warning and returns `AdvancedParser`. Non-PDF inputs always go
+> through the base loader regardless of the configured provider.
+
+```jsonc
+// config/settings.*.json
+"ingestion": {
+  "parser": { "provider": "docling" }   // docling | advanced | textract | bedrock | bda
+}
+```
 
 ```bash
-ATF_PARSER=docling python -m atf_graphrag ingest reports/
+# Env override (highest precedence)
+export ATF_PARSER=advanced
 ```
 
-The factory in `atf_graphrag/providers/__init__.py` wires the configured parser
-and falls back gracefully. `Indexer.index_file` calls `parser.load(path,
-vision_provider=...)`; if no parser is wired (older Engine) it calls the base
-`load_file` directly.
+### What the base loader supports
 
-> **Graceful degradation is built in.** `DoclingParser` only routes PDFs through
-> docling, and only after lazily constructing the (heavy) `DocumentConverter` on
-> the first PDF. For non-PDFs, when docling isn't installed, or on any failure /
-> empty result, it delegates to the `AdvancedParser` — which preserves the VLM
-> cache and scanned-page fallback. Making docling the default never slows
-> `Engine()` startup and never loses a document.
+`ingestion/loaders.py` defines the supported extensions and the non-PDF paths:
+
+```python
+SUPPORTED = {".pdf", ".txt", ".md", ".markdown", ".html", ".htm"}
+```
+
+- **`.txt` / `.md` / `.markdown`** → read verbatim as a single page.
+- **`.html` / `.htm`** → stripped to text via a stdlib `HTMLParser` (skips
+  `<script>`/`<style>`), one page.
+- **`.pdf`** → the advanced multi-stage loader (below), with a pypdf fallback on
+  import failure or empty output.
+
+Unsupported extensions raise `ValueError`. `index_directory` walks a tree
+recursively, skips hidden files/dirs, and keys each document by its path
+**relative** to the ingested root — so same-named files in different subfolders
+stay distinct and never overwrite each other.
 
 ---
 
-## 2. Tables, charts, and scanned pages
+## 2. The `advanced` PDF loader (and the fallback everyone shares)
 
-Both first-party parsers emit structured visual content as inline markers so the
-chunker can classify each region correctly:
+`ingestion/advanced_loader.py` → `AdvancedPDFLoader.load()` returns
+`(page_no, rich_text)` for every page. Even when `docling` / `textract` /
+`bedrock` / `bda` is the configured provider, this loader is the safety net the
+others fall back to, and it owns the VLM cache and scanned-page handling.
 
-- **Tables** → `[EXTRACTED TABLE]` block of GitHub-flavored markdown.
-- **Charts / figures** → `[VLM CHART (...)]` block produced by the vision model.
+### Per-page pipeline
 
-### The advanced parser (PyMuPDF + pdfplumber + VLM)
+```text
+Stage 1   PyMuPDF  get_text("text", sort=True)   layout-aware body text
+Stage 1b  table detection (GATED on a cheap tabular-signal check)
+            pdfplumber find_tables()  →  markdown
+            PyMuPDF find_tables()     →  markdown   (FALLBACK only)
+Stage 2   PyMuPDF  embedded raster image → VLM describe   (charts/figures)
+Stage 3   PyMuPDF  full-page render → VLM
+            (a) scanned pages   (< 120 non-whitespace chars)
+            (b) chart pages     (chart reference + vector drawings + no Stage-2 hit)
+```
 
-`atf_graphrag/ingestion/advanced_loader.py` runs three gated stages per page:
+**Stage 1 — body text.** `get_text("text", sort=True)` sorts text spans by
+`(y, x)` before joining. This merges multi-column table rows correctly and
+preserves inter-word spacing for dense layouts — outperforming both PyMuPDF's
+default column-split and pdfplumber's occasional word concatenation in tight
+layouts.
 
-| Stage | Engine | What it does |
-|---|---|---|
-| 1 | PyMuPDF `get_text("text", sort=True)` | Layout-aware body text — sorts spans by (y, x) so multi-column table rows merge and spacing is preserved |
-| 1b | pdfplumber `find_tables()` (PyMuPDF `find_tables` fallback) | Ruled & borderless tables → markdown, **gated** by a cheap tabular-signal check so prose pages are never scanned |
-| 2 | PyMuPDF image extract → VLM | Embedded raster charts/figures (≥ `min_image_px`) described by the vision model |
-| 3 | PyMuPDF full-page render → VLM | **Scanned pages** (< 120 non-whitespace chars → VLM text *is* the page) and **chart pages** (page references a chart AND carries vector drawings AND Stage 2 found nothing) |
+**Stage 1b — table detection (gated).** Table scanning is the dominant cost on
+large reports, and most pages are prose. So the loader first runs a cheap
+`_has_tabular_signal()` check over the already-extracted body text (≥ 3 lines
+each carrying 2+ numeric fields, or numbers plus wide multi-space gaps). Only
+pages that look tabular get scanned. On those, pdfplumber is tried first; PyMuPDF
+`find_tables()` runs **only as a fallback** when pdfplumber finds nothing
+(catching borderless grids) — never both on the same page. Extracted tables are
+rendered as GitHub-flavored markdown and prefixed:
 
-Stage 1b is deliberately gated: table detection is the dominant cost on large
-reports (~16 s on a 200-page document), so `_has_tabular_signal()` first inspects
-the already-extracted text and only scans pages that look tabular. pdfplumber runs
-first; PyMuPDF `find_tables` is used only as a fallback when pdfplumber finds
-nothing — never both on the same page.
+```text
+[EXTRACTED TABLE: <caption>]
+| col | col | col |
+| --- | --- | --- |
+| ... | ... | ... |
+```
 
-The VLM prompts are content-type-specific (`chart`, `table`, `scanned`, `figure`,
-`auto`) and instruct the model to extract *every* number and label exhaustively.
-Refusals ("I can't analyze this image…") and offline placeholders are detected by
-`_is_vlm_refusal()` and **never stored or cached**, so an offline run can't poison
-the corpus.
+The caption (if any) is sniffed from a `Table X.Y …` line in the ~40pt band
+above the table bbox.
 
-### The docling parser (DocLayNet + TableFormer)
+**pdfplumber budget.** pdfplumber fully parses each page's vector content
+(~10s on a 200-page report), so it is enabled only for documents at or under
+`pdfplumber_max_pages` (default `60`). Larger docs rely on PyMuPDF text +
+`find_tables`, which are far faster; small docs keep pdfplumber for maximum
+ruled-table fidelity.
 
-`atf_graphrag/providers/docling_parser.py` converts the PDF, then emits every
-element (text, table, picture) in **reading order** computed from each item's
-bbox. Tables go through docling's own markdown exporter (`[EXTRACTED TABLE]`).
-Pictures are rendered straight from the PDF page region and VLM-described, with
-the page's surrounding prose passed as **delta-context** so the model can resolve
-the figure's real title, axis labels, and units. Decorations/logos below
-`_MIN_PIC_DIM` (80 pt) are skipped; at most `_MAX_PICS_PER_PAGE` (4) pictures are
-described per page.
+### Charts, figures & scanned pages → VLM
 
-### The VLM cache
+When a vision provider is wired (`vlm_enabled` is true only when
+`vision_provider is not None`):
 
-Every VLM description is cached per `(file, page, index)`, so re-ingesting a
-document never re-pays for vision calls:
+- **Stage 2** extracts embedded **raster** images larger than `min_image_px`
+  (default `600` wide, height ≥ half that), converts CMYK/alpha to RGB, and sends
+  each to the VLM. Larger images (`w > 400 and h > 300`) use the `chart` prompt;
+  smaller ones use the `figure` prompt.
+- **Stage 3** renders the **whole page** to PNG (default `150` DPI) and sends it
+  to the VLM when either:
+  - the page is **sparse** (< 120 non-whitespace chars) — a scanned page; the VLM
+    text *becomes* the page content (it replaces, not appends); **or**
+  - the page is a **chart page**: it references a chart/figure, carries enough
+    vector-drawing operations to plausibly be a chart (`get_drawings() ≥ 16` — so
+    a stray rule/underline doesn't trigger it), **and** Stage 2 produced no
+    description. Many charts are drawn as vectors rather than embedded rasters, so
+    Stage 2 misses them; the full-page render with the `chart` prompt recovers
+    them and the description is *appended* to the page text.
 
-- **Advanced loader:** `storage/vlm_cache/<file_hash>.json`, keyed by image xref
-  or page render (e.g. `img_p3_x42`, `page_5_chart`).
-- **Docling:** `DATA_DIR/vlm_cache/docling_<hash>.json` via `_PicCache`, keyed by
-  picture label (e.g. `p3_img2`).
+Decorative-image pages that already have good text are **not** re-rendered.
 
-The cache **self-heals**: a poisoned entry (offline/refusal cached by an earlier
-keyless run) is recomputed once a real key is configured, and empty/failed
-results are never cached.
+### Content-type-specific VLM prompts
 
-### Scanned-page rescue in the indexer
+`advanced_loader.py` ships five prompts, keyed by detected content type, all
+tuned to extract every number/label (never summarize):
 
-Even after parsing, if a page still has almost no text or `needs_ocr(text)` is
-true, `Indexer._ocr_or_vision()` renders the page to a 150-DPI PNG and sends it to
-the VLM for full OCR, with a prompt that demands tables as `| col | col |` rows
-and complete chart-data extraction.
+| Key       | Used for | Goal |
+| --------- | -------- | ---- |
+| `chart`   | charts/graphs | title, type, axes, every data value, time periods, one-line finding |
+| `table`   | tables | full table as `\| cell \| cell \|` markdown, header + every row |
+| `scanned` | scanned pages | all text, preserving headings/bullets/rows/lists |
+| `figure`  | figures/diagrams | subject, measurements, all labels |
+| `auto`    | mixed/unknown | precise extraction of all content |
+
+Every successful VLM block is tagged with a marker the chunker reads:
+
+```text
+[VLM CHART (p4_img1)]   <description…>
+[VLM SCANNED (page_7)]  <full-page OCR…>
+```
+
+### VLM refusal / junk filtering
+
+Vision models sometimes decline ("I can't analyze this image…") or, offline,
+return placeholders (`[offline vision]`, `[vision unavailable]`). `_is_vlm_refusal()`
+detects these (too short, or matching a refusal marker in the first 200 chars)
+and **drops** them so they never enter the index or the cache. This prevents an
+offline run from poisoning the corpus.
+
+### VLM cache (re-ingest is free)
+
+All VLM results are cached on disk so re-indexing a document never re-pays for
+vision calls:
+
+- **`advanced` loader cache** → `storage/vlm_cache/<file_md5_16>.json`, keyed by
+  the file's content hash. Cache keys are `img_p{page}_x{xref}` (embedded images)
+  and `page_{n}_{type}` (full-page renders).
+- **`docling` picture cache** → `<DATA_DIR>/vlm_cache/docling_<path_md5_12>.json`
+  (see §3), keyed by `p{page}_img{index}`.
+
+Two important cache behaviors:
+
+- **Only successful descriptions are cached.** A `""` result (offline / network
+  failure / refusal) is never written, so a later keyed run can retry.
+- **Self-healing.** On read, a *poisoned* cached entry (one that now looks like a
+  refusal) is treated as missing and recomputed — so a corpus first ingested
+  offline heals automatically once a real key is configured.
+
+The cache file is written atomically (temp file + `os.replace`).
 
 ---
 
-## 3. Structure-aware chunking
+## 3. The `docling` parser (default)
 
-`atf_graphrag/ingestion/chunker.py` is the heart of structure preservation. Its
-public API:
+`providers/docling_parser.py` → `DoclingParser` uses Docling (DocLayNet layout +
+TableFormer table structure) for materially better complex/borderless-table and
+reading-order extraction. It honors the same `(page_no, text)` contract and
+preserves the VLM behavior.
 
-```python
-chunk_text(text, size=900, overlap=150) -> List[Tuple[heading, chunk_text, content_type]]
-```
+Key behaviors:
 
-Each chunk is classified into one of five **content types**: `text`, `table`,
-`chart`, `figure`, `list`. The defaults come from
-`ingestion.chunk_size` (900) and `ingestion.chunk_overlap` (150).
-
-### How it works
-
-1. **`_split_blocks`** splits text into `(heading, block)` pairs on heading lines
-   (markdown `#` lines or long all-caps lines).
-2. **`_split_content_blocks`** separates contiguous table / figure / chart / list
-   regions from prose within a block, using a look-ahead window and `_detect_type`.
-3. Each segment is formatted and sized per its type.
-
-### Why number-dense prose is *not* a table
-
-Government prose is full of numbers (dates, counts, years), so a naive
-"≥ 3 numbers ⇒ table" rule mis-classified ~96% of number-heavy paragraphs.
-`_is_table_row()` instead requires a markdown row, **or** a genuinely columnar
-line: short, multi-column with 2+-space gaps, and not a flowing sentence (a line
-ending in `.`/`:`/`;` with > 8 words is rejected).
-
-### Content-type markers
-
-The chunker prepends a marker so downstream retrieval and the indexer can label
-each chunk:
-
-| Content type | Prefix |
-|---|---|
-| table | `[TABLE: <heading>]` (or `[TABLE]`) |
-| chart | `[CHART] <heading>` |
-| figure | `[FIGURE] <heading>` |
-
-### Row-atomic table splitting
-
-Tables are kept **atomic** — never split mid-row. `_split_table_into_chunks()`
-splits a large table only *between* logical rows, and **repeats the header row** at
-the start of every chunk so each fragment stays self-describing:
-
-```python
-def _split_table_into_chunks(heading, text, size):
-    header = rows[0]               # first row is the header
-    buf = [header]
-    for row in rows[1:]:
-        if len("\n".join(buf+[row])) > size and buf != [header]:
-            chunks.append("[TABLE: ...]\n" + "\n".join(buf))
-            buf = [header, row]    # restart WITH the header for context
-        ...
-```
-
-Charts and figures are never truncated either — their tail holds the data values,
-so oversized chart/figure descriptions are split at sentence boundaries, each
-continuation keeping its `[CHART]`/`[FIGURE]` prefix. Lists are kept whole (split
-only at blank lines between groups). Plain prose uses a sliding window with
-sentence-boundary snapping.
-
-Finally, micro-chunks (< 40 chars) are filtered out — they are almost always
-chunking artefacts and hurt retrieval more than they help.
+- **Lazy model load.** Only an *importability* check happens at construction; the
+  heavy `DocumentConverter` (which loads the layout/table ML models) is created on
+  the **first PDF parse**, so making `docling` the default doesn't slow every
+  `Engine()`.
+- **PDFs only.** Non-PDF inputs and any docling failure (import, convert, or empty
+  result) fall straight through to the embedded `AdvancedParser`.
+- **Reading order.** Tables, text, and pictures are collected with a sort key
+  derived from each item's bbox (docling bboxes are bottom-left origin, so it
+  sorts top→bottom by `-t`, then left→right by `l`) and emitted per page in
+  reading order.
+- **Tables → markdown.** Each docling table is exported via its own
+  `export_to_markdown` / `to_markdown` (or a grid fallback) and prefixed
+  `[EXTRACTED TABLE]`, matching the chunker's table detection.
+- **Pictures → VLM with page context.** Docling detects pictures but doesn't keep
+  the pixels, so the parser renders each picture's bbox region straight from the
+  PDF page and VLM-describes it. Pictures smaller than `_MIN_PIC_DIM` (80 pts)
+  are skipped as logos/decorations, and at most `_MAX_PICS_PER_PAGE` (4) are
+  described per page. Crucially, each picture is captioned **with its page's
+  surrounding prose** (up to ~800 chars) fed into the `chart` prompt — so the VLM
+  can resolve the figure's real title, axis labels, units, and subject. Blocks
+  are emitted as `[VLM CHART (pX_imgN)]`.
+- **Version tolerance.** If the installed docling can't expose per-page structure,
+  `_parse_pdf` returns `[]`, and the caller falls back to the per-page advanced
+  loader — IntelliGraphRAG never collapses a PDF into a single page.
 
 ---
 
-## 4. The `table_data` structure
+## 4. Structure-aware chunking
 
-When a chunk is typed `table`, the indexer parses the markdown back into an
-**addressable** grid via `atf_graphrag/indexing/tables.py` (`parse_table`). This
-is what makes cell-level lookup, multi-row comparison, and numeric grounding
-possible — the generation step can quote the exact source cell instead of letting
-the LLM guess.
+`ingestion/chunker.py` → `chunk_text(text, size=900, overlap=150)` turns one
+page's rich text into a list of **`(section_heading, chunk_text, content_type)`**
+triples. `content_type` is one of:
 
-`parse_table()` tries markdown first (`parse_markdown_table`), then a
-space/tab-aligned columnar parser (`parse_columnar_table`). The result:
+| Type     | Meaning | Prefix in chunk text |
+| -------- | ------- | -------------------- |
+| `text`   | regular prose | — |
+| `table`  | tabular data rows | `[TABLE: <heading>]` |
+| `chart`  | chart/graph description or caption | `[CHART] <heading>` |
+| `figure` | figure caption / image description | `[FIGURE] <heading>` |
+| `list`   | bullet or numbered list | — |
+
+The defaults (`chunk_size: 900`, `chunk_overlap: 150`) come from
+`ingestion` config and are passed in by the indexer (`self.size`, `self.overlap`).
+
+### How blocks are split
+
+1. **By heading** (`_split_blocks`) — the text is cut on heading lines
+   (`#`-prefixed markdown, or all-caps runs of 7+ chars) into `(heading, block)`
+   pairs.
+2. **By content region** (`_split_content_blocks`) — within each heading-block,
+   contiguous table / chart / figure / list regions are separated from prose into
+   typed sub-segments.
+
+`_detect_type()` decides a block's type from a small look-ahead window. It
+recognizes:
+
+- `Table` / `[EXTRACTED TABLE]` captions, and `[VLM …]` markers (which carry their
+  own type hint — `chart`/`graph` → chart, `table` → table, else figure);
+- `Figure`/`Fig.`/`Chart`/`Graph`/`Exhibit`/`Diagram`/`Illustration` captions;
+- markdown tables (enough `| … |` rows), columnar tables, and bullet/numbered
+  lists by line-ratio thresholds.
+
+> [!IMPORTANT]
+> **Number-dense prose is not a table.** Regulatory prose is full of dates,
+> counts, and years, so a naive "has 3+ numbers" rule mis-classified ~96% of
+> number-heavy paragraphs as tables. `_is_table_row()` instead requires a real
+> markdown row, **or** a *short, columnar* line (cells separated by 2+ spaces /
+> tabs, not a flowing sentence ending in `.`/`:`/`;`).
+
+### Atomicity rules — what stays whole
+
+The whole point of structure-aware chunking is to keep retrievable units intact:
+
+- **Tables are absorbed greedily.** Once a table starts, the chunker swallows the
+  **entire contiguous table** (caption, header, separator, every data row,
+  interior blank lines) into one segment — up to a 400-line safety cap. Without
+  this, the per-line look-ahead window shrinks below 2 rows at the table's tail
+  and splits the last rows off, breaking multi-row tables. A guard ensures the
+  greedy loop only enters when the *current* line is itself a table line, so it
+  can never infinite-loop.
+- **Large tables split between row groups, never mid-row** (`_split_table_into_chunks`).
+  The header row is **repeated** at the top of every continuation chunk so each
+  fragment keeps its column context, and each chunk carries the `[TABLE: heading]`
+  prefix.
+- **Charts/figures are never truncated.** A description longer than `size` is split
+  at sentence boundaries into continuation chunks, each keeping the
+  `[CHART]`/`[FIGURE]` prefix line so downstream typing stays correct. A tiny
+  trailing remainder is merged into the previous chunk rather than dropped (the
+  tail of a chart description holds data values). The caption line plus the
+  immediately following prose paragraph are kept together as the figure's
+  description.
+- **Lists stay together**, splitting only at blank lines between groups when they
+  exceed `size`.
+- **Prose** uses a sliding window of `size` chars with `overlap`, snapping the cut
+  to the nearest sentence boundary (`. `) past the halfway mark. A guard stops the
+  window when the next advance would be ≤ `overlap` chars, preventing
+  character-by-character micro-duplicate explosions at block tails.
+
+### Micro-chunk filter
+
+Finally, chunks under **40 characters** are dropped — they're almost always
+artefacts (stray header lines, content-stripped fragments) and hurt retrieval
+more than they help.
+
+---
+
+## 5. Per-chunk indexing, dedup & metadata
+
+`Indexer._index_text()` is where each chunk becomes a `ChunkRecord` and is stored.
+
+### Document-scoped dedup
+
+Dedup is scoped to **`(corpus, document_id)`**, not global:
 
 ```python
+doc_scope = f"{corpus}:{meta.get('document_id', '')}:"
+h = hashlib.md5((doc_scope + piece).encode()).hexdigest()
+if h in self._seen_hashes:
+    continue   # drop repeated pages/blocks WITHIN the same document
+```
+
+This drops repeated pages/blocks **within** one document (running headers,
+duplicated boilerplate) while **keeping** identical text across **different**
+documents — e.g. the same table row in a 2024 and a 2025 edition. Both copies
+carry their own provenance and both must stay retrievable/queryable.
+
+### Content-type tagging & provenance
+
+For `table` / `chart` / `figure` chunks the indexer sets:
+
+- `visual_content_type` = the content type (enables content-aware retrieval
+  scoring later);
+- `extraction_method` = `"vision"` if the chunk carries an inline `[VLM …]`
+  marker, else `"table_extraction"`;
+- `vision_model` (for VLM-derived chunks) and a 300-char `extraction_summary`.
+
+### Subagent quality gates
+
+Several layer-boundary subagents run during ingestion (all on by default, all
+fail-open so they never break ingest — except a `JobCancelled` that must
+propagate):
+
+| Subagent | Boundary | Role |
+| -------- | -------- | ---- |
+| `ParseQualityAgent` | parse → chunk | re-parse with the fallback when parser output is silently empty/garbled |
+| `ChunkGateAgent`    | chunk → index | block junk (URL-only / nav timestamps / TOC listings); tables, VLM output, and the doc-summary anchor are protected |
+| `MetadataAuditAgent`| enrich → index | per-doc label-coverage report (samples up to 200 chunks) |
+| `IndexAuditAgent`   | index → store | round-trip retrieval probe — is the doc actually findable? |
+| `GraphQualityAgent` | graph → community | junk-rate + typed-entity stats |
+
+### Doc-summary anchor chunk
+
+After the page pass, the indexer injects one extra **`[DOC SUMMARY: <name> (<year>)]`**
+chunk built from the first page (up to 1200 chars). The text is *flattened* (newlines
+→ ` | `) on purpose: all-caps title lines would otherwise be treated as headings by
+the chunker and split the label from its statistics, letting dedup drop the stats.
+A year parsed from the filename (regex tolerant of `_`-joined years like
+`afmer_2022.pdf`) is attached as `document_date` so date-filtered queries route
+correctly even when the body lacks an explicit date.
+
+---
+
+## 6. `table_data` — the addressable cell structure
+
+Tables are extracted to markdown during parsing, but markdown isn't queryable.
+For exact cell lookup, multi-row comparison, and numeric grounding, every `table`
+chunk is **also** parsed back into an addressable structure via `parse_table()`
+(`indexing/tables.py`) and stored on the record:
+
+```python
+if ctype == "table":
+    td = parse_table(piece)
+    if td:
+        rec.table_data = td
+    rec.table_title = table_title_from(heading, piece)
+```
+
+### Shape
+
+```jsonc
 {
   "columns": ["State", "2022", "2023"],
   "rows": [
-    ["Texas",      "1,234", "1,310"],
-    ["California",  "987",   "1,002"]
+    ["Texas",     "1,234", "1,310"],
+    ["California", "2,001", "1,998"]
   ],
   "n_rows": 2,
   "n_cols": 3,
-  "format": "markdown"          # or "columnar"
+  "format": "markdown"        // or "columnar"
 }
 ```
 
-It is defensive: it returns `{}` (no false table) when there are fewer than two
-usable rows, pads ragged rows to a uniform width, and synthesizes `col1, col2, …`
-names when a header row is all-numeric. A safety cap (`_MAX_CHARS` 60 000,
-`_MAX_LINES` 1000) prevents parsing a pathologically huge chunk.
+- Cells are **strings**, kept exactly as printed (commas, `%`, `$` preserved) so
+  numbers are quoted verbatim and only cast at query time.
+- Ragged rows are padded to the widest row.
+- An all-numeric "header" is treated as data, and synthetic `col1…colN` column
+  names are generated.
 
-`table_title_from(heading, text)` derives a best-effort title — an `Exhibit` /
-`Table` / `Figure` caption in the first few lines, else the section heading.
+### Two parsers, tried in order
 
----
+`parse_table()` tries markdown first, then columnar:
 
-## 5. The chunk record
+1. **`parse_markdown_table()`** — for pipe-delimited text. Skips the `--- | ---`
+   separator, keeps rows with ≥ 2 non-empty cells, needs ≥ 2 usable rows. Tags
+   `format: "markdown"`.
+2. **`parse_columnar_table()`** — for space/tab-aligned tables with no pipes. A run
+   of lines where most have a leading label plus ≥ 1 numeric column split by 2+
+   spaces; an all-text first line becomes the header. Tags `format: "columnar"`.
+   This is what lets borderless/space-aligned tables (common in scanned or
+   plain-text reports) still become addressable cells.
 
-Each chunk becomes a `ChunkRecord` (`atf_graphrag/models.py`). The fields most
-relevant to ingestion:
+Both are pure-stdlib and defensive: they return `{}` (no table) on anything that
+isn't really a table, and cap input at 60,000 chars / 1,000 lines to avoid
+pathological chunks.
 
-```python
-ChunkRecord(
-    text="[TABLE: Firearms by State]\n| State | 2022 | 2023 |\n...",
-    corpus="pdf",
-    content_type="table",            # text|table|chart|figure|list
-    section_heading="Firearms by State",
-    document_id="a1b2c3d4e5f6",      # md5(name)[:12]
-    document_title="afmer_2023.pdf",
-    source_name="afmer_2023.pdf",
-    page_number=14,
-    document_date="2023",            # year from filename if body has no date
-    # --- structured table data ---
-    table_title="Table 2: Firearms by State",
-    table_data={"columns": [...], "rows": [...], "n_rows": 51, "n_cols": 3,
-                "format": "markdown"},
-    # --- visual / extraction metadata ---
-    visual_content_type="table",     # table|chart|figure|image
-    extraction_method="table_extraction",   # text|vision|table_extraction|ocr|web
-    vision_model="",                 # set when VLM-derived
-    extraction_summary="...first 300 chars...",
-    # --- embedding-only context ---
-    embed_text="[afmer_2023.pdf 2023 Firearms by State]\n[TABLE: ...]\n...",
-)
-```
+### `table_title`
 
-For `table` / `chart` / `figure` chunks the indexer sets `visual_content_type`,
-and marks `extraction_method = "vision"` when the chunk carries a `[VLM ...]`
-marker (recording the `vision_model`) or `"table_extraction"` otherwise.
+`table_title_from()` looks for an `Exhibit`/`Table`/`Figure`/`Appendix` caption in
+the first few lines of the chunk; failing that it uses the section heading
+(truncated to 160 chars). Companion helper `table_to_text()` renders structured
+data back to compact markdown (capped rows) when a table needs to be put into an
+LLM prompt.
 
 ---
 
-## 6. Context-prepend embeddings (`embed_text`) — and why
+## 7. Context-prepended embeddings
 
 A bare table row like `Pistols | 217,691` is near-identical across years and
-documents, so its embedding **collapses to the same vector** as every other
-year's edition. A grand total like `3,939,517 TOTAL` carries no query keywords at
-all, leaving it an un-findable number blob.
-
-The fix (`Indexer._index_text`): for tables, charts, figures — **plus number-dense
-text chunks** (> 20% digits and a 3+-digit number) — the indexer prepends document
-title + year + section/table title as **embedding-only** context:
+documents, so it collapses to the same vector and becomes un-findable. The fix:
+embed extra context **for the embedding vector only**, while the raw text is kept
+intact for display and BM25.
 
 ```python
-ctx = " ".join((document_title or source_name, document_date,
-                table_title or section_heading))
-c.embed_text = f"[{ctx}]\n{c.text}"
-# e.g. "[afmer_2023.pdf 2023 Firearms by State]\nPistols | 217,691"
+if c.content_type in ("table", "chart", "figure") or number_dense:
+    ctx = " ".join(x for x in (
+        c.document_title or c.source_name, c.document_date,
+        c.table_title or c.section_heading) if x).strip()
+    if ctx:
+        c.embed_text = f"[{ctx}]\n{c.text}"
+...
+vectors = self.e.embedder.embed([c.embed_text or c.text for c in chunks])
 ```
 
-The vector store embeds `embed_text` when present, else `text`. Crucially, the
-**raw `text` is unchanged** — display, citations, and BM25 all still use the
-original cell content. The only thing that changes is the vector, so a query like
-`"firearms 2023 afmer"` can now reach a number that used to be invisible, and the
-2023 vs 2024 editions of the same row separate cleanly in vector space.
+Applied to:
+
+- **all** `table` / `chart` / `figure` chunks; **plus**
+- **number-dense text** chunks — where digits make up > 20% of the text **and**
+  there's a 3+-digit run (a grand total like `3,939,517 TOTAL` carries no query
+  keywords). Prepending the doc title + year + section lets a query like
+  `firearms 2023 afmer` reach an otherwise un-findable number blob.
+
+`embed_text` is used **only** to compute the vector; the stored, displayed, and
+lexically-indexed text remains `c.text`. (The `ChunkRecord` field is documented as
+"context-enriched text used for EMBEDDING ONLY".)
 
 ---
 
-## 7. Document-scoped deduplication
+## 8. Storing the chunk: vector + graph
 
-Repeated pages or boilerplate *within* a single document are dropped, but
-identical text across *different* documents (e.g. the same table row in the 2024
-and 2025 editions) is **kept** — each carries its own provenance and both must be
-retrievable. The dedup key is scoped to `corpus:document_id`:
+For each surviving chunk, `_index_text` does:
 
 ```python
-doc_scope = f"{corpus}:{document_id}:"
-h = hashlib.md5((doc_scope + piece).encode()).hexdigest()
-if h in self._seen_hashes:
-    continue          # same text, same document → drop
-self._seen_hashes.add(h)
+for rec, vec in zip(chunks, vectors):
+    vs.upsert(rec, vec)     # vector store: payload carries text + table_data + provenance
+    self._build_graph(rec)  # graph store: typed entities + co-occurrence edges
 ```
 
-A per-document **summary anchor chunk** (`[DOC SUMMARY: <name> (<year>)] ...`) is
-also injected from the first page, with newlines flattened to ` | ` so its all-caps
-title lines aren't mistaken for headings and split away from their statistics.
+`_build_graph()` canonicalizes every entity name through the `EntityResolver`
+*before* node/edge creation (so `S&W` and `Smith & Wesson` collapse to one node
+for cross-document linking), then:
 
-### Subagent gates
+- adds typed nodes (manufacturers, sellers, buyers, firearm type, incident type,
+  location, case reference) plus a capped set of generic entities;
+- adds **typed relations** from LLM extraction first (weight 2, carrying their
+  descriptions); then
+- adds **co-occurrence** edges (weight 1) **only** between pairs that *don't*
+  already have a typed relation — keeping the graph from becoming a dense,
+  low-signal clique.
 
-Three quality gates run during ingestion (each toggleable under `subagents`):
+LLM entity/relation extraction is governed by `ingestion.llm_extraction`:
 
-- **ParseQuality** (`parse→chunk`): silently-bad parser output (empty/garbled
-  pages with no exception) is detected and re-parsed via the fallback.
-- **ChunkGate** (`chunk→index`): junk (URL-only chunks, nav timestamps, TOC
-  listings) never enters the index — tables, VLM output, and the summary anchor
-  are protected.
-- **MetadataAudit / IndexAudit / GraphQuality** (post-index): verify the document
-  is well-labelled, actually findable, and the graph clean. Audits never break
-  ingestion.
+| Mode   | Behavior |
+| ------ | -------- |
+| `off`  | never run (fast; co-occurrence graph only) |
+| `on`   | every chunk (richest graph; slow/costly at scale) |
+| `auto` | only docs ≤ `llm_extraction_auto_max_pages` (default 40) — bulk uploads of big reports stay fast while small/connected sets get rich extraction |
+
+Default is `auto`. An explicit `use_llm_extraction` flag still overrides (back-compat
+for tests), and extraction is force-disabled when the LLM provider is `offline`.
+
+After every file, both stores are committed so chunks survive across sessions.
 
 ---
 
-## 8. How the table store is populated
+## 9. Table-store population
 
-The vector-store payload carries `table_data` + full provenance. The SQL table
-store (`atf_graphrag/indexing/table_store.py`) is an **additional index** built by
-scanning those payloads — no data is moved, removed, or merged.
+The structured `table_data` grids are promoted into a **queryable SQLite store**
+(`indexing/table_store.py`, `tables.db` beside the vector store) so tabular
+questions can be answered by SQL over *all* rows instead of hoping semantic
+retrieval surfaced the right fragment. **No data is removed or merged** — the
+store is an additional index over existing chunks.
 
-`TableStore.build(engine)` walks every chunk that carries `table_data` and inserts
-into a SQLite schema:
+### Build
 
-```sql
-tables(id, doc, page, year, title, columns, n_rows, chunk_id, search_blob,
-       category, cat_conf)
-rows  (table_id, idx, cells)          -- one row per data row, cells as JSON
-categories(category, n_tables, years, confidence, name, reason, summary)
-```
+`TableStore.build(engine)` (re)scans every chunk payload carrying `table_data`
+with non-empty rows and inserts:
 
-`year` is taken from `document_date` (or extracted from the doc name); `columns`
-and each row's `cells` are stored as JSON; `search_blob` concatenates title + doc
-+ columns + a few sample cells for ranking. Triggered via the CLI
-(`scripts/backfill_tables.py`) or the API (`POST /api/tables/build`).
+- a row in **`tables`** — `doc, page, year, title, columns, n_rows, chunk_id,
+  search_blob` (the year is taken from `document_date`, else parsed from the doc
+  name; the `search_blob` concatenates title + doc + columns + sample cells for
+  ranking);
+- the cells in **`rows`** — `(table_id, idx, cells)`, one JSON-encoded list per
+  row.
 
-Two later stages run on every (re)build:
+### Lazy build & rebuild
 
-- **`consolidate()`** groups same-kind tables across documents/years using a
-  signature (year/numbers removed) — matched when the Jaccard overlap is
-  **≥ 0.55** *and* the column count matches. Cross-document combination then
-  happens **at query time** (year/doc are columns to filter and `GROUP BY`), so
-  there's zero risk of a silent wrong merge.
-- **`summarize_categories()`** builds an LLM catalog describing each table
-  category.
+`get_store(engine)` is a per-storage-root singleton. It compares the store's
+table count against the number of `table_data`-bearing payloads and **rebuilds on
+mismatch**, so the SQL lane always reflects the current corpus without an explicit
+build step.
 
-> **Why this matters for retrieval.** With every table row in SQLite, the
-> retrieval pipeline's **SQL lane** can answer aggregate / cross-year questions
-> with a validated `SELECT` over *all* rows (SELECT-only + forbidden-keyword
-> guard), and the **table_row lane** can do deterministic cell lookup — instead of
-> hoping semantic search surfaced the right fragment. Any failure falls back to
-> normal RAG, so the worst case equals plain semantic retrieval.
+### Consolidation & catalog (downstream)
 
----
+On every build, `consolidate()` groups same-category tables across documents/years
+(confidence-gated Jaccard signature ≥ 0.55 + matching column count) so retrieval
+can pull every edition of a table family and SQL can `GROUP BY year` across them —
+without ever physically merging rows. An optional LLM pass
+(`summarize_categories`) names/describes the biggest families for the catalog and
+the text-to-SQL prompt.
 
-## 9. What feeds the graph
-
-After embedding, `Indexer._build_graph()` extracts typed entities (manufacturers,
-sellers, buyers, firearm types, incident types, locations, case references) plus
-generic entities, canonicalizes them through the `EntityResolver` (so `S&W` ==
-`Smith & Wesson` collapse to one node), and links co-occurring entities. LLM-based
-entity/relation extraction is governed by `ingestion.llm_extraction`
-(`off | auto | on`); `auto` runs only on small docs
-(≤ `llm_extraction_auto_max_pages`, default 40) so bulk uploads stay fast. See
-the Graph documentation for details.
+> The full retrieval and text-to-SQL story lives in **[Tables & SQL](Tables-and-SQL.md)**.
 
 ---
 
-## 10. Web ingestion (crawling)
+## 10. Vision-only ingestion of a single image
 
-IntelliGraphRAG can ingest a website directly, not just local files. The crawler
-discovers pages from a **sitemap** (never random scraping), extracts the main
-content with **BeautifulSoup**, and — crucially — turns every HTML `<table>` into
-an `[EXTRACTED TABLE]` markdown block so a table on a web page becomes
-**cell-queryable exactly like a table parsed from a PDF**. The whole subsystem
-lives in `atf_graphrag/ingestion/`:
+`Indexer.index_visual(image_path, …)` handles standalone images (the `visual`
+CLI command). It calls `vision.describe()`, and if a summary comes back, indexes
+it as a chunk with `source_type="image"`, `visual_content_type="image"`,
+`extraction_method="vision"`, the `vision_model`, and a short
+`extraction_summary` — full provenance, same as any other chunk.
 
-| File | Responsibility |
-|---|---|
-| `crawler.py` | sitemap discovery, polite fetching, page crawl, ingestion entrypoint |
-| `web_extract.py` | BeautifulSoup main-content extraction + HTML `<table>` → markdown |
-| `browser.py` | optional Playwright headless-Chromium render for JS / bot-walled pages |
+---
 
-```bash
-python scripts/crawl_site.py <url-or-sitemap> \
-    [--max N] [--render auto|always|never] [--delay S] \
-    [--no-robots] [--corpus C] [--save]
-```
-
-### Content extraction (`web_extract.py`)
-
-`extract_content(html, url)` returns
-`{title, headings, date, linked_pdfs, content, n_tables}`. BeautifulSoup is the
-primary path; if `bs4` is not importable the module degrades to a small regex
-extractor (`_extract_regex`) so ingestion never hard-fails — but the regex path
-does **no** table extraction (`n_tables = 0`).
-
-The BeautifulSoup path (`_extract_bs4`, lxml parser with an html.parser
-fallback):
-
-- **Title** from `<title>`.
-- **Published date** from standard meta tags (`article:published_time`,
-  `name=date`, `og:updated_time`, `dcterms.date`), else a `<time datetime=…>`,
-  truncated to 40 chars.
-- **Linked PDFs** — every `<a href>` matching `.pdf` resolved to an absolute URL,
-  deduped and order-preserving.
-- **Headings** — first 10 non-empty `<h1>`/`<h2>`/`<h3>`.
-- **Main body text** — taken from `<main>` → `<article>` → `<body>` (in that
-  preference order) after **noise tags are decomposed**: `script`, `style`,
-  `noscript`, `nav`, `footer`, `header`, `aside`, `form`, `svg`, `button`,
-  `iframe`.
-
-### HTML tables → `[EXTRACTED TABLE]`
-
-`html_table_to_markdown(table)` renders a BeautifulSoup `<table>` as
-GitHub-flavoured markdown **with a header separator row**, so
-`parse_markdown_table()` recognises the header and yields a structured
-`{columns, rows}` grid. Cells are whitespace-normalised and ragged rows are
-padded to a common width; a table with fewer than two rows is rejected (returns
-`""`).
-
-Order of operations matters: tables are captured **first**, then the `<table>`
-elements are stripped from the DOM alongside the noise tags so table text isn't
-duplicated in the body text. Each captured table is appended to `content` as:
-
-```text
-[EXTRACTED TABLE]
-| State | 2022 | 2023 |
-| --- | --- | --- |
-| Texas | 1,234 | 1,310 |
-```
-
-Because the page's `content` carries the same `[EXTRACTED TABLE]` marker the PDF
-parsers emit (see §2), crawled tables flow through the **identical** downstream
-path: chunker → `parse_table` → `table_data` → table store → SQL / table_row
-deterministic cell lookup. No web-specific table handling exists; the marker is
-the contract.
-
-### Crawling & sitemaps (`crawler.py`)
-
-- **`find_sitemaps(base_url)`** resolves the sitemap(s) for a site. If `base_url`
-  itself ends in `.xml` it is used directly; otherwise `robots.txt` is read for
-  `Sitemap:` directives; otherwise it falls back to `/sitemap.xml`. Returns
-  absolute, deduped URLs.
-- **`discover_sitemap(sitemap_url)`** returns page URLs. A `<sitemapindex>`
-  (a sitemap of sitemaps) is followed **recursively** into its children (depth
-  capped at 3); a `<urlset>` yields its `<loc>` page URLs. If the XML won't
-  parse it falls back to a `<loc>` regex.
-- **`crawl_page` / `crawl_sitemap`** fetch and extract pages politely.
-- **`ingest_sitemap(indexer, …)`** indexes each page into the `web` corpus
-  (`source_type="website"`) and queues every linked PDF into the PDF pipeline,
-  **deduped across pages**; PDF locators in the returned map are prefixed
-  `pdf:`.
-- **`crawl_and_ingest(engine, indexer, base_url, **overrides)`** is the
-  config-driven entrypoint: it reads the `web` config block, builds a
-  Playwright-capable fetcher, resolves sitemaps from `base_url`, and ingests
-  every page plus its linked PDFs. `overrides` shadow individual `web` keys.
-
-**Politeness** is built in: `RobotsPolicy` checks `robots.txt` per host with
-**fail-open** semantics (if robots can't be fetched/parsed, fetching is
-allowed), and the crawler rate-limits between requests, honouring the larger of
-the configured `crawl_delay` and any robots `Crawl-delay`. All network calls
-(`fetch` / `sleep` / `download`) are injectable, so the crawler is unit-testable
-offline.
-
-### Optional headless render (`browser.py`)
-
-Some government sites serve a JS shell or a bot/JS challenge to non-browser
-clients, leaving urllib/httpx with an empty or blocked page.
-`make_fetcher(render=…)` builds a fetch function that is **static-first with a
-Playwright fallback**:
-
-| `render` | Behaviour |
-|---|---|
-| `never` | static HTTP GET only |
-| `auto` *(default)* | static first, then render only if `browser.needs_render()` says the page is a JS shell / bot challenge / too thin |
-| `always` | render only (static skipped) |
-
-`needs_render(html, min_words)` returns `True` when the fetch failed, the HTML
-contains an anti-bot/JS-challenge marker (e.g. `captcha`, `enable javascript`,
-`just a moment`, `cf-browser-verification`, `checking your browser`), or the
-visible word count is below `min_static_words` (default 80). When escalation is
-needed, `render_html()` drives **lazily-imported** Playwright headless Chromium,
-navigates with `wait_until="networkidle"`, and returns the final DOM HTML for
-BeautifulSoup to parse normally.
-
-Playwright is an **optional** dependency. Install it once to enable rendering:
-
-```bash
-pip install playwright && playwright install chromium
-```
-
-Every entry point degrades gracefully when Playwright or its browser binaries
-are absent — `render_html()` returns `None` (never raises) and the crawler keeps
-working in static-only mode.
-
-### `web` config block
+## 11. Configuration quick reference
 
 ```jsonc
-{
-  "web": {
-    "sitemaps": [],              // optional explicit sitemap URLs
-    "max_pages": 50,             // page cap (per sitemap)
-    "crawl_delay": 1.0,          // seconds between requests (min; robots can raise)
-    "respect_robots": true,
-    "ingest_linked_pdfs": true,
-    "pdf_corpus": "pdf",         // corpus for linked PDFs
-    "corpus": "web",             // corpus for crawled pages
-    "render": "auto",            // auto|always|never
-    "render_wait_ms": 0,         // extra wait after networkidle
-    "render_timeout_ms": 30000,
-    "min_static_words": 80,      // below this, auto-render escalates
-    "user_agent": "ATF-GraphRAG-Crawler/1.0"
-  }
+"ingestion": {
+  "chunk_size": 900,
+  "chunk_overlap": 150,
+  "parser": { "provider": "docling" },       // docling | advanced | textract | bedrock | bda
+  "ocr": { "provider": "auto" },             // auto | tesseract | textract | off
+  "bda": {                                   // used only when parser.provider = "bda"
+    "region": "us-east-1", "bucket": "", "prefix": "bda/",
+    "project_arn": "", "profile_arn": ""
+  },
+  "llm_extraction": "auto",                  // off | auto | on
+  "llm_extraction_auto_max_pages": 40,
+  "auto_enrich": true,                       // post-ingest typed-graph enrichment of new chunks
+  "extraction": { "provider": "llm" }        // llm | comprehend
 }
 ```
 
----
-
-## Configuration reference
-
-```jsonc
-{
-  "ingestion": {
-    "chunk_size": 900,
-    "chunk_overlap": 150,
-    "parser":  { "provider": "docling" },   // docling|advanced|textract|bedrock|bda
-    "ocr":     { "provider": "..." },
-    "llm_extraction": "auto",               // off|auto|on
-    "llm_extraction_auto_max_pages": 40,
-    "bda": { "region": "...", "bucket": "...", "prefix": "...",
-             "project_arn": "...", "profile_arn": "..." }
-  }
-}
-```
-
-| Setting | Env override | Default |
-|---|---|---|
-| `ingestion.parser.provider` | `ATF_PARSER` | `advanced` |
-| `ingestion.chunk_size` | — | `900` |
-| `ingestion.chunk_overlap` | — | `150` |
-| `ingestion.llm_extraction` | — | `auto` |
-| `ingestion.llm_extraction_auto_max_pages` | — | `40` |
+Relevant env overrides: `ATF_PARSER` (parser provider), `ATF_DATA_DIR` (storage
+root — controls where `vlm_cache/` and `tables.db` live), `ATF_PROFILE`
+(settings file selection).
 
 ---
 
-📖 [Docs Home](Home.md) · [User Manual](../USER_MANUAL.md) · [Architecture](Architecture.md)
+## Source map
+
+| Concern | File |
+| ------- | ---- |
+| Orchestration, dedup, embeds, graph build | `atf_graphrag/indexing/indexer.py` |
+| Structure-aware chunking | `atf_graphrag/ingestion/chunker.py` |
+| Multi-stage PDF loader + VLM + cache | `atf_graphrag/ingestion/advanced_loader.py` |
+| Base loaders + supported types | `atf_graphrag/ingestion/loaders.py` |
+| Docling parser + picture VLM cache | `atf_graphrag/providers/docling_parser.py` |
+| Parser base + selection | `atf_graphrag/providers/parser.py`, `atf_graphrag/providers/__init__.py` |
+| `table_data` parsing | `atf_graphrag/indexing/tables.py` |
+| Table store (SQLite + SQL lane) | `atf_graphrag/indexing/table_store.py` |
+| Defaults | `atf_graphrag/config.py` |
+
+---
+
+*Repository: <https://github.com/RW2523/intelligraphrag>*

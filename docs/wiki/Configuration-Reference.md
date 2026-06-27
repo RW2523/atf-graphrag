@@ -1,371 +1,567 @@
 # Configuration Reference
 
-IntelliGraphRAG is a **config-driven GraphRAG platform**: every component — the LLM, vision model, embedder, reranker, vector store, graph store, blob store, parser, and retrieval lanes — is swappable through configuration. There is no code to change to move from a fully local stack to a managed AWS one; you change a few keys (or pick a profile) and the provider factories in [`atf_graphrag/providers/__init__.py`](../../atf_graphrag/providers/__init__.py) construct the right backend, gracefully degrading to a local default whenever a configured backend's dependency or credentials are missing.
+> **Scope.** This page is the exhaustive reference for every configuration
+> setting in **IntelliGraphRAG** ("IntelliGraph"). It documents the
+> configuration loading model, the four resolution layers, the profile system,
+> every top-level configuration block, and every supported environment variable.
+> Source of truth: [`atf_graphrag/config.py`](https://github.com/RW2523/intelligraphrag/blob/main/atf_graphrag/config.py).
 
-This page is the exhaustive reference for the configuration system defined in [`atf_graphrag/config.py`](../../atf_graphrag/config.py).
+IntelliGraphRAG is designed so that **every component is swappable by
+configuration** — LLM, vision model, embeddings, reranker, vector store, graph
+store, parser, guardrails, web crawl, retrieval lanes, and more. You can run the
+whole stack locally and offline, on hosted models via OpenRouter, or on AWS
+managed services, simply by changing settings — no code changes required.
 
-> **Quick orientation**
-> - The full set of built-in defaults lives in the `DEFAULTS` dict in `atf_graphrag/config.py` — this page documents it verbatim.
-> - To override, create `config/settings.json` (and/or a profile file), or set environment variables.
-> - No JSON file is required to run: the defaults are a complete, working **local** profile.
+The platform was originally validated on the example U.S. government firearms &
+explosives regulatory dataset. Nothing in the configuration is specific to that
+sample government corpus; the defaults below are general-purpose.
 
 ---
 
-## The 4-layer precedence
+## Configuration model
 
-Settings are resolved by `Settings.__init__` in `atf_graphrag/config.py`. Each layer is **deep-merged** over the one before it (later layers win, key by key — nested dicts merge rather than replace), in this order from lowest to highest priority:
+All configuration is a single nested dictionary. Defaults live in code, and you
+override them with optional JSON files and environment variables. Nested blocks
+are **deep-merged**, so a JSON override only needs to specify the keys it
+changes — everything else falls through to the defaults.
 
-| # | Layer | Source | Notes |
-|---|-------|--------|-------|
-| 1 | **Built-in defaults** | `DEFAULTS` in `atf_graphrag/config.py` | A complete working **local** configuration. Deep-copied per `Settings` instance, so per-request edits never leak into the global defaults. |
-| 2 | **Base settings file** | `config/settings.json` (optional) | Your site-wide overrides. Parse errors are warned and skipped, not fatal. |
-| 3 | **Profile settings file** | `config/settings.<profile>.json` (optional) | Profile-specific overrides, e.g. `config/settings.aws.json`. The active profile is chosen as described below. |
-| 4 | **Environment variables** | `ATF_*`, `OPENROUTER_*`, `TAVILY_*`, `AWS_*` | Highest priority. Applied by `_apply_env`. Secrets are read at provider call-time, not merged into the config tree. |
+### The four layers (lowest to highest priority)
+
+Each layer overrides the one before it. The effective value of any key is taken
+from the highest-priority layer that sets it.
+
+| Priority | Layer | Location | Notes |
+|---|---|---|---|
+| 1 (lowest) | **Code defaults** | `DEFAULTS` in `atf_graphrag/config.py` | The "local / open-source" profile. Always present. |
+| 2 | **Base JSON file** | `config/settings.json` | Optional. Deep-merged over defaults. Invalid JSON is warned about and ignored. |
+| 3 | **Profile JSON file** | `config/settings.<profile>.json` | Optional. `<profile>` is `local`, `hybrid`, or `aws`. Deep-merged over the base file. |
+| 4 (highest) | **Environment variables** | `ATF_*` plus selected `OPENROUTER_*` / `AWS_*` / `TAVILY_*` keys | Applied last. Only a curated subset of keys can be overridden via env (see [Environment variables](#environment-variables)). |
 
 ```text
-DEFAULTS  →  config/settings.json  →  config/settings.<profile>.json  →  environment
- (lowest priority)                                                        (highest priority)
+DEFAULTS
+  └─ deep-merge ← config/settings.json
+       └─ deep-merge ← config/settings.<profile>.json
+            └─ env overrides (ATF_*, OPENROUTER_*, AWS_*, TAVILY_*)
+                 = effective settings
 ```
 
-**Profile selection order** (used to pick which `config/settings.<profile>.json` to load):
-
-1. An explicit `profile` argument to `Settings(profile=...)`, then
-2. the `ATF_PROFILE` environment variable, then
-3. the `profile` key resolved from layers 1–2 (defaults to `"local"`).
+> **Deep-merge semantics.** Merging is recursive only for nested objects. A
+> non-object value (string, number, boolean, list) at a given key fully
+> replaces the value below it. For example, overriding `corpora` replaces the
+> entire list; overriding `ingestion.chunk_size` leaves the rest of the
+> `ingestion` block intact.
 
 ### Profiles
 
-The `profile` key names which `config/settings.<profile>.json` overlay is applied. The platform ships with four conventional profiles:
+The **profile** selects which `config/settings.<profile>.json` file is layered
+on top of the base file. The profile is resolved in this order:
 
-| Profile | Intended stack |
-|---------|----------------|
-| `local` | The default. OpenRouter for LLM/vision, local sentence-transformer embeddings, local vector/graph/blob stores. Runs with just Python. |
-| `hybrid` | A mix — e.g. cloud LLM with local stores, or local LLM with managed stores. |
-| `aws` | Fully managed: Bedrock LLM/vision/embeddings, Qdrant/OpenSearch vectors, Neptune/Neo4j graph, S3 blobs, Bedrock Guardrails, Bedrock Data Automation parsing. |
-| `oss` | Open-source / offline-leaning stack. |
+1. An explicit `profile` argument passed to `Settings(...)` in code.
+2. The `ATF_PROFILE` environment variable.
+3. The `profile` key in the merged config (defaults to `"local"`).
 
-> The defaults in `config.py` **are** the `local` profile. The other profiles are realized by supplying the matching `config/settings.<profile>.json` overlay file.
+Built-in profile names:
 
-### Runtime OpenRouter key
+| Profile | Intended setup |
+|---|---|
+| `local` | Fully local / open-source. Models via OpenRouter or offline fallback; local vector, graph, and blob stores. This is the default. |
+| `hybrid` | Mix of local components and hosted/managed services. |
+| `aws` | AWS-managed services (Bedrock, Textract, OpenSearch, Neptune, etc.). |
 
-The OpenRouter API key is resolved by `Settings.openrouter_key()`. A key set at runtime through the web UI (`POST /api/key`, in-memory only) takes priority over the `OPENROUTER_API_KEY` environment variable. This lets you bring your own key from the browser without restarting the server.
+> The profile JSON file is optional. If `config/settings.<profile>.json` does
+> not exist, the profile still sets `cfg["profile"]` but no extra overrides are
+> applied.
+
+### Storage location
+
+By default all local stores live under `storage/` at the repository root. You
+can relocate this with the `ATF_DATA_DIR` environment variable, which is read at
+import time:
+
+```bash
+export ATF_DATA_DIR=/var/lib/intelligraph
+```
+
+The directory is created automatically on startup. The default `vector_store`,
+`graph_store`, and `blob_store` paths are all derived from this directory.
+
+### Secrets
+
+Secrets are **not** stored in the config dictionary. API keys and cloud
+credentials are read from the environment (or runtime UI input) at provider
+call-time. The OpenRouter key, in particular, can be set at runtime from the web
+UI via `POST /api/key`; a runtime key takes priority over `OPENROUTER_API_KEY`.
+
+### Minimal override example
+
+```jsonc
+// config/settings.json
+{
+  "llm": { "model": "anthropic/claude-3.5-sonnet" },
+  "retrieval": { "default_top_k": 20 },
+  "web_search": { "enabled": true, "provider": "tavily" }
+}
+```
+
+```jsonc
+// config/settings.aws.json  (used when ATF_PROFILE=aws)
+{
+  "llm": { "provider": "bedrock" },
+  "vector_store": { "provider": "opensearch" },
+  "graph_store": { "provider": "neptune" }
+}
+```
 
 ---
 
-## Configuration blocks
+## Top-level blocks
 
-Each top-level key in `DEFAULTS` is documented below. Types and defaults are taken directly from `atf_graphrag/config.py`.
+The sections below document every top-level key. Each table lists the
+configuration key, its type, its default value, and what it controls.
 
-### Top-level keys
+### `profile`
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `profile` | string | `"local"` | Active profile name; selects the `config/settings.<profile>.json` overlay. |
+|---|---|---|---|
+| `profile` | string | `"local"` | Active profile name. Selects `config/settings.<profile>.json`. Overridable via `ATF_PROFILE`. One of `local`, `hybrid`, `aws`. |
 
 ---
 
-### `llm` — chat / generation
+### `llm`
 
-All chat and synthesis requests. The factory `make_llm` picks `OpenRouterLLM` (when provider is `openrouter` and a key is present), `BedrockLLM` (lazy, needs boto3), or falls back to `OfflineLLM`.
+Controls all chat/generation requests (extraction, summarization, synthesis,
+query refinement, judging, etc.).
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `provider` | string | `"openrouter"` | One of `openrouter` \| `bedrock` \| `offline`. |
-| `model` | string | `"openai/gpt-4o-mini"` | Any OpenRouter model id (or Bedrock model id under the `bedrock` provider). |
-| `base_url` | string | `"https://openrouter.ai/api/v1"` | OpenRouter-compatible API base URL. |
-| `temperature` | float | `0.1` | Sampling temperature. |
-| `max_tokens` | int | `1024` | Max output tokens per completion. |
-| `offline_fallback` | bool | `true` | If no key/network, degrade gracefully to the offline LLM instead of erroring. |
-| `cheap_model` | string | `""` | Model for high-volume steps (per-chunk extraction, community summaries, map-reduce MAP). Empty falls back to `model`. |
-| `strong_model` | string | `""` | Model for final synthesis. Empty falls back to `model`. |
+|---|---|---|---|
+| `provider` | string | `"openrouter"` | LLM backend. One of `openrouter`, `bedrock`, `offline`. |
+| `model` | string | `"openai/gpt-4o-mini"` | Default model id (any OpenRouter model id when provider is `openrouter`). Overridable via `ATF_LLM_MODEL`. |
+| `base_url` | string | `"https://openrouter.ai/api/v1"` | API base URL for OpenAI-compatible providers. |
+| `temperature` | float | `0.1` | Sampling temperature for generation. Low value favors determinism. |
+| `max_tokens` | int | `1024` | Maximum tokens generated per response. |
+| `offline_fallback` | bool | `true` | If no API key or no network, degrade gracefully instead of failing. |
+| `cheap_model` | string | `""` (falls back to `model`) | Cheaper model used for high-volume steps (per-chunk extraction, community summaries, map-reduce MAP phase). Empty means use `model`. |
+| `strong_model` | string | `""` (falls back to `model`) | Stronger model used for final synthesis. Empty means use `model`. |
 
-> When `provider` is `bedrock`, the guardrails block is passed through to the Bedrock `Converse` call so the guardrail applies inline (see `make_llm`).
+> **Model tiering.** Setting `cheap_model` and `strong_model` lets you route
+> high-volume, low-stakes steps to a cheaper model while reserving a stronger
+> model for final answer synthesis. Both default to `model`, so behavior is
+> unchanged until you configure them.
 
 ---
 
-### `vision` — multimodal (images, charts, scanned pages)
+### `vision`
 
-Used for VLM chart/scan understanding during ingestion and visual queries. The factory `make_vision` picks `OpenRouterVision`, `BedrockVision`, or `OfflineVision`.
+Multimodal model for images, charts, and scanned pages.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `provider` | string | `"openrouter"` | One of `openrouter` \| `bedrock` \| `offline`. |
-| `model` | string | `"openai/gpt-4o-mini"` | A multimodal-capable model id. |
-| `base_url` | string | `"https://openrouter.ai/api/v1"` | OpenRouter-compatible API base URL. |
+|---|---|---|---|
+| `provider` | string | `"openrouter"` | Vision backend. One of `openrouter`, `bedrock`, `offline`. |
+| `model` | string | `"openai/gpt-4o-mini"` | A multimodal-capable model id. Overridable via `ATF_VISION_MODEL`. |
+| `base_url` | string | `"https://openrouter.ai/api/v1"` | API base URL for OpenAI-compatible providers. |
 
 ---
 
 ### `embeddings`
 
-Text-embedding backend. The factory `make_embedder` picks `OpenRouterEmbedder`, `BedrockEmbedder`, `SentenceTransformerEmbedder`, or `LocalEmbedder` (dependency-free hashing fallback).
+Text embedding generation for vector indexing and semantic search.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `provider` | string | `"sentence_transformer"` | One of `sentence_transformer` \| `local` \| `openrouter` \| `bedrock`. `local` = dependency-free deterministic hashing (offline fallback). |
-| `model` | string | `"all-MiniLM-L6-v2"` | 384-dim sentence-transformer model; fast with strong semantic quality. |
-| `base_url` | string | `"https://openrouter.ai/api/v1"` | API base URL for the `openrouter` provider. |
-| `dim` | int | `384` | Embedding dimension. Must match the chosen model. |
-| `batch_size` | int | `64` | Embedding batch size. |
+|---|---|---|---|
+| `provider` | string | `"sentence_transformer"` | Embedding backend. One of `sentence_transformer`, `local`, `openrouter`, `bedrock`. Overridable via `ATF_EMBED_PROVIDER`. |
+| `model` | string | `"all-MiniLM-L6-v2"` | Embedding model id. The default is a 384-dim, fast, strong-quality local model. |
+| `base_url` | string | `"https://openrouter.ai/api/v1"` | API base URL when using the OpenAI-compatible `/embeddings` endpoint. |
+| `dim` | int | `384` | Embedding dimensionality. Must match the chosen model. |
+| `batch_size` | int | `64` | Number of texts embedded per batch. |
 
-> Changing `model`/`dim` after a corpus is indexed requires re-indexing — existing vectors are dimension-bound.
+> **Provider meanings.**
+> `sentence_transformer` = local neural embedder via the `sentence-transformers`
+> library. `local` = dependency-free deterministic hashing (offline fallback,
+> no model download). `openrouter` = OpenAI-compatible `/embeddings` endpoint.
+> `bedrock` = AWS-managed embeddings.
 
 ---
 
 ### `reranker`
 
-Second-stage reranking of retrieved candidates. The factory `make_reranker` supports `local`, `bge`, `bedrock`, and `llm`.
+Re-scores retrieved candidates before they are passed to the LLM.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `provider` | string | `"local"` | One of `local` (cross-feature) \| `llm` \| `bedrock`. `bge` (cross-encoder) is also accepted by the factory when installed. |
-| `model` | string | `"openai/gpt-4o-mini"` | Model id used by the `llm` reranker. |
+|---|---|---|---|
+| `provider` | string | `"local"` | Reranker backend. One of `local` (cross-feature scoring), `llm`, `bedrock`. |
+| `model` | string | `"openai/gpt-4o-mini"` | Model id used when the reranker provider is `llm`. |
 
 ---
 
 ### `vector_store`
 
-Dense + BM25 hybrid storage. The factory `make_vector_store` picks `QdrantVectorStore`, `OpenSearchVectorStore`, or `LocalVectorStore`.
+Where dense vectors are stored and searched.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `provider` | string | `"local"` | One of `local` \| `qdrant` \| `opensearch`. |
-| `path` | string | `"<DATA_DIR>/vectors"` | On-disk path for the local store. |
+|---|---|---|---|
+| `provider` | string | `"local"` | Vector backend. One of `local`, `qdrant`, `opensearch`. |
+| `path` | string | `"<ATF_DATA_DIR>/vectors"` | On-disk path for the local vector store. |
 
 ---
 
 ### `graph_store`
 
-Knowledge-graph storage. The factory `make_graph_store` picks `Neo4jGraphStore`, `NeptuneGraphStore`, or `LocalGraphStore`.
+Where the knowledge graph (entities + relations) is persisted.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `provider` | string | `"local"` | One of `local` \| `neo4j` \| `neptune`. |
-| `path` | string | `"<DATA_DIR>/graph"` | On-disk path for the local store. |
+|---|---|---|---|
+| `provider` | string | `"local"` | Graph backend. One of `local`, `neo4j`, `neptune`. |
+| `path` | string | `"<ATF_DATA_DIR>/graph"` | On-disk path for the local graph store. |
 
-> For `neo4j`, the connection `uri`/`user`/`password` are read from the environment at provider construction time.
+> When `provider` is `neo4j`, the connection `uri`, `user`, and `password` are
+> read from the environment at call-time rather than from this block.
 
 ---
 
 ### `blob_store`
 
-Original-file and metadata storage. The factory `make_blob_store` picks `S3BlobStore` (provider `s3`) or `LocalBlobStore`.
+Stores raw document blobs and ingestion metadata.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `provider` | string | `"local"` | `local` \| `s3`. |
-| `path` | string | `"<DATA_DIR>/blobs"` | On-disk path for the local store. |
+|---|---|---|---|
+| `provider` | string | `"local"` | Blob backend. `local` stores files on disk. |
+| `path` | string | `"<ATF_DATA_DIR>/blobs"` | On-disk path for the local blob store. |
 
 ---
 
 ### `ingestion`
 
-Parsing, chunking, OCR, and the per-chunk extraction policy. Several nested blocks live here.
+Document parsing, chunking, OCR, and graph-extraction pipeline. Includes the
+nested `parser`, `ocr`, `bda`, and `extraction` sub-blocks.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `chunk_size` | int | `900` | Chunk size in characters (≈ tokens × 4). |
-| `chunk_overlap` | int | `150` | Overlap in characters between adjacent chunks. |
-| `ocr.provider` | string | `"auto"` | OCR engine: `auto` \| `tesseract` \| `textract` \| `off`. |
-| `parser.provider` | string | `"docling"` | Document parser — see table below. |
-| `bda` | object | see below | Bedrock Data Automation working config (used when `parser.provider = "bda"`). |
-| `orchestrator` | string | `"sequential"` | Ingestion orchestration: `sequential` \| `langgraph`. |
-| `llm_extraction` | string | `"auto"` | Per-chunk LLM entity/relation extraction: `off` \| `auto` \| `on`. |
-| `llm_extraction_auto_max_pages` | int | `40` | In `auto` mode, only extract from documents up to this page count. |
-| `auto_enrich` | bool | `true` | Post-ingest typed-graph enrichment of NEW chunks (journaled, background). |
-| `extraction.provider` | string | `"llm"` | Entity/PII extraction backend: `llm` \| `comprehend` (AWS-native NER+PII). |
+|---|---|---|---|
+| `chunk_size` | int | `900` | Target chunk size in characters (roughly tokens × 4). |
+| `chunk_overlap` | int | `150` | Characters of overlap between consecutive chunks. |
+| `ocr` | object | `{ "provider": "auto" }` | OCR configuration. See below. |
+| `parser` | object | `{ "provider": "docling" }` | Document parser configuration. See below. Overridable via `ATF_PARSER`. |
+| `bda` | object | see [`ingestion.bda`](#ingestionbda) | Bedrock Data Automation working config (used only when `parser.provider` is `bda`). |
+| `orchestrator` | string | `"sequential"` | Ingestion orchestration mode. One of `sequential`, `langgraph`. |
+| `llm_extraction` | string | `"auto"` | Per-chunk LLM entity/relation extraction. One of `off`, `auto`, `on`. |
+| `llm_extraction_auto_max_pages` | int | `40` | When `llm_extraction` is `auto`, only documents up to this page count are extracted. |
+| `auto_enrich` | bool | `true` | Post-ingest typed-graph enrichment of newly added chunks (journaled, runs in background). |
+| `extraction` | object | `{ "provider": "llm" }` | Entity/relation extraction backend. See below. |
 
-**`parser.provider` values:**
+#### `ingestion.ocr`
 
-| Value | Backend |
-|-------|---------|
-| `docling` | DocLayNet + TableFormer structured tables (default; ~4.2s/page; falls back to `advanced` if Docling is not installed). |
-| `advanced` | Fast PyMuPDF + pdfplumber text/tables (+ VLM for charts/scanned pages). |
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `provider` | string | `"auto"` | OCR engine. One of `auto`, `tesseract`, `textract`, `off`. |
+
+#### `ingestion.parser`
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `provider` | string | `"docling"` | Document parser. One of `docling`, `advanced`, `textract`, `bedrock`, `bda`. |
+
+Parser provider meanings:
+
+| Provider | Description |
+|---|---|
+| `docling` | DocLayNet + TableFormer structured-table parsing. **Default.** Approximately 4.2s/page; automatically falls back to `advanced` if Docling is not installed. |
+| `advanced` | Fast parsing via PyMuPDF + pdfplumber. |
 | `textract` | AWS Textract structured / OCR parsing. |
 | `bedrock` | AWS Bedrock foundation-model parsing. |
-| `bda` | Amazon Bedrock Data Automation (requires `bda.bucket` + `bda.project_arn`). |
+| `bda` | Amazon Bedrock Data Automation. Requires `ingestion.bda.bucket` and `ingestion.bda.project_arn`. |
 
-**`ingestion.bda` — Bedrock Data Automation:**
+#### `ingestion.bda`
+
+Working configuration for Bedrock Data Automation, used only when
+`ingestion.parser.provider` is `bda`.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `region` | string | `"us-east-1"` | AWS region for the BDA project. |
-| `bucket` | string | `""` | S3 bucket for BDA input/output (required for `bda`). |
-| `prefix` | string | `"bda/"` | S3 key prefix for BDA artifacts. |
-| `project_arn` | string | `""` | BDA project ARN (required for `bda`). |
-| `profile_arn` | string | `""` | BDA blueprint/profile ARN. |
+|---|---|---|---|
+| `region` | string | `"us-east-1"` | AWS region for the BDA service. |
+| `bucket` | string | `""` | S3 bucket for BDA input/output. **Required** for BDA. |
+| `prefix` | string | `"bda/"` | S3 key prefix for BDA working files. |
+| `project_arn` | string | `""` | BDA project ARN. **Required** for BDA. |
+| `profile_arn` | string | `""` | Optional BDA blueprint/profile ARN. |
 
-> The `extraction.provider = "comprehend"` backend is only used when explicitly set; otherwise `make_entity_extractor` returns `None` and callers fall back to LLM extraction.
+#### `ingestion.extraction`
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `provider` | string | `"llm"` | Entity/relation extraction backend. One of `llm`, `comprehend` (AWS-native NER + PII). |
 
 ---
 
-### `subagents` — layer-boundary quality gates
+### `subagents`
 
-Each subagent guards a boundary between ingestion/retrieval stages. All default to `true`.
+Layer-boundary quality gates inserted between pipeline stages. Each is a boolean
+master switch (all default `true`).
 
-| Key | Type | Default | Boundary / purpose |
-|-----|------|---------|--------------------|
-| `parse_quality` | bool | `true` | parse → chunk: re-parse with a fallback parser when output is bad. |
-| `chunk_gate` | bool | `true` | chunk → index: junk chunks never enter the index. |
-| `metadata_audit` | bool | `true` | enrich → index: per-document coverage report. |
-| `index_audit` | bool | `true` | index → store: round-trip retrieval probe. |
-| `graph_quality` | bool | `true` | graph → community: junk-rate + typed-edge statistics. |
-| `grounding_verify` | bool | `true` | generate → answer: numbers in the answer must match the sources. |
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `parse_quality` | bool | `true` | parse → chunk: re-parse with fallback when the parse looks bad. |
+| `chunk_gate` | bool | `true` | chunk → index: keep junk chunks out of the index. |
+| `metadata_audit` | bool | `true` | enrich → index: produce a per-document coverage report. |
+| `index_audit` | bool | `true` | index → store: round-trip retrieval probe to verify indexing. |
+| `graph_quality` | bool | `true` | graph → community: junk-rate plus typed-edge statistics. |
+| `grounding_verify` | bool | `true` | generate → answer: verify that numbers in the answer match the sources. |
 
 ---
 
-### `guardrails` — content safety over LLM I/O
+### `guardrails`
 
-The factory `make_guardrail` picks `BedrockGuardrail`, `LocalGuardrail`, or a no-op `Guardrail`.
+Content-safety controls applied over LLM input/output.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `provider` | string | `"none"` | `none` (pass-through) \| `local` (regex PII + denied terms) \| `bedrock` (Amazon Bedrock Guardrails). |
-| `enabled` | bool | `false` | Master switch. |
-| `guardrail_id` | string | `""` | Bedrock guardrail identifier. |
+|---|---|---|---|
+| `provider` | string | `"none"` | Guardrail backend. One of `none`, `local`, `bedrock`. |
+| `enabled` | bool | `false` | Master switch for guardrails. |
+| `guardrail_id` | string | `""` | Bedrock guardrail identifier (when provider is `bedrock`). |
 | `guardrail_version` | string | `"DRAFT"` | Bedrock guardrail version. |
-| `redact_pii` | bool | `true` | Local provider: regex PII redaction. |
-| `denied_terms` | string[] | `[]` | Local provider: blocklist of terms. |
-| `trace` | bool | `false` | Bedrock: return policy assessments in the trace. |
+| `redact_pii` | bool | `true` | `local` provider: regex-based PII redaction. |
+| `denied_terms` | list[string] | `[]` | `local` provider: blocklist of denied terms. |
+| `trace` | bool | `false` | `bedrock` provider: return policy assessment traces. |
 
 ---
 
-### `web` — web crawling
+### `web`
 
-Configuration for the web crawler (`atf_graphrag/ingestion/crawler.py`). The crawler discovers sitemaps (explicit `.xml`, `robots.txt` `Sitemap:` entries, or `/sitemap.xml`), recurses `<sitemapindex>` documents, fetches pages static-first with an optional headless-Chromium (Playwright) fallback, extracts main content and HTML tables (`atf_graphrag/ingestion/web_extract.py`), respects `robots.txt`, rate-limits, and queues linked PDFs into the PDF pipeline.
+Sitemap-driven web crawling and ingestion, including headless-browser
+rendering keys.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `sitemaps` | string[] | `[]` | Sitemap / page URLs to crawl. Each is resolved to one or more `sitemap.xml` documents (explicit `.xml`, `robots.txt` `Sitemap:` lines, or `/sitemap.xml`); `<sitemapindex>` entries are followed recursively. |
-| `max_pages` | int | `50` | Cap on pages crawled per sitemap. |
-| `crawl_delay` | float | `1.0` | Polite delay (seconds) between requests (rate limiting). |
-| `respect_robots` | bool | `true` | Honour `robots.txt` (fetch rules and disallow paths). |
-| `ingest_linked_pdfs` | bool | `true` | Queue PDFs linked from crawled pages into the PDF ingestion pipeline. |
+|---|---|---|---|
+| `sitemaps` | list[string] | `[]` | `sitemap.xml` URLs to crawl. |
+| `max_pages` | int | `50` | Maximum pages crawled per sitemap. |
+| `crawl_delay` | float | `1.0` | Polite delay (seconds) between requests. |
+| `respect_robots` | bool | `true` | Honor `robots.txt`. |
+| `ingest_linked_pdfs` | bool | `true` | Queue linked PDFs into the PDF corpus. |
 | `pdf_corpus` | string | `"pdf"` | Corpus that linked PDFs are routed to. |
 | `corpus` | string | `"web"` | Corpus that crawled pages land in. |
-| `render` | string | `"auto"` | Headless-browser rendering mode: `auto` (static fetch, render only when a page looks JS-shelled/bot-challenged/thin) \| `always` (always render; for fully client-rendered sites) \| `never` (static fetch only). |
-| `render_wait_ms` | int | `0` | Extra settle time (ms) after `networkidle` before reading rendered HTML. |
-| `render_timeout_ms` | int | `30000` | Render timeout (ms) for the headless page load. |
-| `min_static_words` | int | `80` | In `auto` mode, render when the static fetch yields fewer than this many visible words. |
-| `user_agent` | string | `"ATF-GraphRAG-Crawler/1.0"` | User-Agent sent with crawl requests. |
+| `render` | string | `"auto"` | Headless-browser (Playwright) rendering mode. See below. |
+| `render_wait_ms` | int | `0` | Extra settle time (ms) after `networkidle` before capture. |
+| `render_timeout_ms` | int | `30000` | Render timeout in milliseconds. |
+| `min_static_words` | int | `80` | Below this visible-word count, the page is rendered with a browser instead of static fetch. |
+| `user_agent` | string | `"IntelliGraphRAG-Crawler/1.0"` | User-Agent header for crawl requests. |
 
-> Headless rendering uses Playwright (lazy, headless Chromium). It is optional — install with `pip install playwright && playwright install chromium`; when absent, the crawler degrades to static fetch regardless of `render`. The CLI `scripts/crawl_site.py` mirrors these keys: `python scripts/crawl_site.py <url-or-sitemap> [--max N] [--render auto|always|never] [--delay S] [--no-robots] [--corpus C] [--save]`.
+Render mode (`web.render`) values:
+
+| Value | Behavior |
+|---|---|
+| `auto` | Static fetch; render with a browser only when the page looks JS-shelled. **Default.** |
+| `always` | Always render (slow; for fully client-rendered sites). |
+| `never` | Static fetch only. |
 
 ---
 
 ### `retrieval`
 
-The multi-lane retrieval pipeline. These flags toggle and tune the lanes described in the [Architecture](Architecture.md) docs.
+Query-time retrieval lanes, fusion, reranking, and corrective logic.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `default_top_k` | int | `15` | Candidates retrieved per lane (wide net for diverse 30+ doc corpora). |
-| `graph_hops` | int | `2` | Hop depth for graph traversal. |
-| `hybrid` | bool | `true` | Vector + BM25 fusion. |
-| `evaluate` | bool | `true` | Run the EvaluationAgent over retrieved evidence. |
-| `rerank` | bool | `true` | Run the RerankingAgent. |
+|---|---|---|---|
+| `default_top_k` | int | `15` | Default number of candidates retrieved. Tuned for diverse, large corpora. |
+| `graph_hops` | int | `2` | Maximum graph traversal hops during graph retrieval. |
+| `hybrid` | bool | `true` | Fuse vector and BM25 retrieval. |
+| `evaluate` | bool | `true` | Run retrieval evaluation. |
+| `rerank` | bool | `true` | Apply the reranker to retrieved candidates. |
 | `llm_refine` | bool | `true` | LLM query-plan refinement (pinned off during eval for determinism). |
-| `graph_retriever` | string | `"bfs"` | `bfs` \| `ppr` (personalized PageRank for relationship/pattern questions). |
-| `sql_lane` | bool | `true` | Tabular questions → text-to-SQL over the table store. |
+| `graph_retriever` | string | `"bfs"` | Graph traversal strategy. One of `bfs`, `ppr` (personalized PageRank, for relationship/pattern questions). |
+| `sql_lane` | bool | `true` | Route tabular questions to SQL over the table store. |
 | `numeric_lane` | bool | `true` | Rescue headline totals buried in number-dense text. |
-| `corrective` | bool | `true` | Weak/insufficient evidence → reformulate + retry. |
-| `corrective_max_retries` | int | `1` | Max corrective retries. |
-| `weak_top` | float | `0.45` | Evidence is "weak" below this top score. |
+| `corrective` | bool | `true` | On weak/insufficient evidence, reformulate the query and retry. |
+| `corrective_max_retries` | int | `1` | Maximum corrective retries. |
+| `weak_top` | float | `0.45` | Evidence is considered weak below this top score. |
 | `multi_hop` | bool | `true` | LLM decomposition for bridge/comparison questions. |
-| `multi_hop_min_words` | int | `10` | Only decompose questions at least this long. |
-| `visual_boost` | float | `1.05` | Score boost for table/chart/figure chunks on table/visual intent. |
-| `min_confidence` | float | `0.10` | Confidence floor for evidence reaching the LLM. |
+| `multi_hop_min_words` | int | `10` | Only decompose questions at least this long/complex. |
+| `visual_boost` | float | `1.05` | Score boost for tables/charts/figures on table/visual-intent queries. |
+| `min_confidence` | float | `0.10` | Minimum confidence to let evidence reach the LLM. |
 
 ---
 
-### `graph` — communities + pruning
+### `graph`
 
-Community detection (Leiden) and noise pruning. Both nested blocks are gated off by default because they involve expensive LLM/clustering work.
+Graph exploration: community detection, community summaries, and noise pruning.
+Contains the nested `communities` and `prune` sub-blocks.
 
-**`graph.communities`:**
-
-| Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `enabled` | bool | `false` | Gate the community build (one LLM summary per cluster). |
-| `max_cluster_size` | int | `10` | Maximum nodes per cluster. |
-| `min_community_size` | int | `3` | Discard communities smaller than this. |
-
-**`graph.prune`** (Phase A noise pruning — drop weak, untyped edges between obscure nodes before clustering/traversal):
+#### `graph.communities`
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
+|---|---|---|---|
+| `enabled` | bool | `false` | Gate the expensive community build (one LLM call per cluster). |
+| `max_cluster_size` | int | `10` | Maximum nodes per community cluster. |
+| `min_community_size` | int | `3` | Minimum nodes for a cluster to count as a community. |
+
+#### `graph.prune`
+
+Phase-A noise pruning: drop weak, untyped edges between obscure nodes before
+clustering/traversal so communities tighten and context stays clean.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
 | `enabled` | bool | `false` | Master switch for pruning. |
-| `min_edge_weight` | int | `2` | Edge weight below this is "weak". |
-| `min_degree` | int | `2` | Both endpoints below this are "obscure". |
+| `min_edge_weight` | int | `2` | Edges with weight below this are "weak". |
+| `min_degree` | int | `2` | Nodes where both endpoints fall below this are "obscure". |
 | `keep_typed` | bool | `true` | Never prune evidence-backed typed edges. |
-| `drop_hub_percentile` | int | `0` | If `>0`, drop the top-X% highest-degree super-nodes before clustering (splits co-occurrence hairballs). |
+| `drop_hub_percentile` | int | `0` | If > 0, drop the top X% highest-degree super-nodes before clustering (splits the co-occurrence hairball). |
 
 ---
 
 ### `corpora`
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `corpora` | string[] | `["pdf", "web", "connected", "visual", "news"]` | The named corpora the engine manages. Each is an independently namespaced vector store partition. |
+|---|---|---|---|
+| `corpora` | list[string] | `["pdf", "web", "connected", "visual", "news"]` | The set of named corpora the system manages. Overriding this key replaces the entire list. |
 
 ---
 
-### `web_search` — on-demand web research (Tavily)
+### `web_search`
 
-Agentic augmentation: when a question is about current events that may live outside the local corpus AND local evidence is thin, the web-research agent searches, judges each result for relevance/novelty/worth, and ingests only worthy content into the `news` corpus. The factory `make_web_search` picks `TavilySearch` (provider `tavily`, needs `TAVILY_API_KEY`) or a no-op `OfflineWebSearch`.
+On-demand agentic web research (Tavily). When a question concerns current
+events/cases that may live in news/articles/blogs/releases **and** the local
+corpus is thin, the web-research agent searches, judges each result for
+relevance + novelty + worth, and ingests only worthy content into the `news`
+corpus.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `provider` | string | `"offline"` | `offline` (no-op) \| `tavily`. |
-| `enabled` | bool | `false` | Master switch. |
+|---|---|---|---|
+| `provider` | string | `"offline"` | Web search backend. One of `offline`, `tavily`. |
+| `enabled` | bool | `false` | Master switch for web research. |
 | `auto` | bool | `true` | Only augment when needed, not on every query. |
-| `corpus` | string | `"news"` | Corpus that worthy results are ingested into. |
-| `max_results` | int | `5` | Max search results to fetch. |
-| `min_relevance` | float | `0.30` | Keyword/score floor to consider a result. |
-| `novelty_threshold` | float | `0.88` | Skip a result if too similar to existing corpus content. |
-| `min_content_chars` | int | `200` | Ignore thin snippets below this length. |
-| `max_ingest_per_query` | int | `3` | Cap worthy docs added per question. |
-| `judge_with_llm` | bool | `true` | Use an LLM worthiness judge when a key is set. |
-| `insufficient_conf` | float | `0.45` | Local "thin evidence" threshold that triggers augmentation. |
+| `corpus` | string | `"news"` | Corpus that ingested web content lands in. |
+| `max_results` | int | `5` | Maximum search results considered per query. |
+| `min_relevance` | float | `0.30` | Keyword/score floor for a result to be considered. |
+| `novelty_threshold` | float | `0.88` | Skip a result if it is too similar to existing corpus content. |
+| `min_content_chars` | int | `200` | Ignore results with thinner content than this. |
+| `max_ingest_per_query` | int | `3` | Cap on worthy documents added per question. |
+| `judge_with_llm` | bool | `true` | Use an LLM worthiness judge when an API key is set. |
+| `insufficient_conf` | float | `0.45` | Local "thin evidence" threshold that can trigger web research. |
 
-> Setting `TAVILY_API_KEY` is enough to auto-enable web research (provider `tavily`, `enabled = true`). `ATF_WEB_SEARCH=0` force-disables it even when a key is present.
+> **Auto-enable.** Setting `TAVILY_API_KEY` is enough to turn web research on:
+> it flips `provider` to `tavily` and `enabled` to `true`. Set `ATF_WEB_SEARCH=0`
+> to force web research off even when a key is present. Web research never fires
+> unless it is both enabled and actually needed.
 
 ---
 
-### `server` — HTTP API
+### `server`
+
+The API/web server.
 
 | Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `host` | string | `"127.0.0.1"` | Bind host for the API/UI server. |
-| `port` | int | `8077` | Bind port. |
-| `auth_token` | string | `""` | Bearer token required on `POST` endpoints. Empty = open (local dev only). |
-| `preview_roots` | string[] | `[]` | Extra directories to resolve original source files for the document preview. The uploads directory is always searched; files are read locally and never copied off-machine. |
+|---|---|---|---|
+| `host` | string | `"127.0.0.1"` | Bind address. |
+| `port` | int | `8077` | Listen port. Overridable via `ATF_PORT`. |
+| `auth_token` | string | `""` | Bearer token required on `POST` endpoints. Empty means open (local dev only). Overridable via `ATF_API_TOKEN`. |
+| `preview_roots` | list[string] | `[]` | Extra directories to resolve original source files for KB document preview. The uploads directory is always searched. Also honors `ATF_PREVIEW_ROOTS`. |
 
-> Set `auth_token` (or `ATF_API_TOKEN`) before any non-local deployment. Off-local, clients must send `Authorization: Bearer <token>` on `POST` requests.
+> **Auth.** Leave `auth_token` empty only for local development. Before
+> deploying, set it (or the `ATF_API_TOKEN` env var) so that requests must
+> include `Authorization: Bearer <token>` on `POST` endpoints.
+
+> **Preview safety.** Preview files are read locally and never copied off the
+> machine.
 
 ---
 
 ## Environment variables
 
-Environment variables are the highest-priority layer. Those handled directly by `_apply_env` in `config.py` override specific config keys; the secret/credential variables are read at provider call-time.
+Environment variables are the highest-priority layer. Only the curated keys
+below are read; everything else must be set via JSON. Secrets (API keys and
+cloud credentials) are read at provider call-time, not merged into config.
 
-| Variable | Effect |
-|----------|--------|
-| `ATF_PROFILE` | Sets the active `profile` (selects `config/settings.<profile>.json`). |
-| `ATF_DATA_DIR` | Base data directory (`DATA_DIR`); default is `<repo>/storage`. Resolved at import time and used for local vector/graph/blob paths. |
-| `ATF_LLM_MODEL` | Overrides `llm.model`. |
-| `ATF_VISION_MODEL` | Overrides `vision.model`. |
-| `ATF_EMBED_PROVIDER` | Overrides `embeddings.provider`. |
-| `ATF_PARSER` | Overrides `ingestion.parser.provider` (`advanced` \| `docling` \| `textract` \| `bedrock` \| `bda`). |
-| `ATF_PORT` | Overrides `server.port` (parsed as int). |
-| `ATF_API_TOKEN` | Bearer token for `POST` endpoints (see `server.auth_token`). |
-| `OPENROUTER_API_KEY` | OpenRouter API key. A runtime key set via `POST /api/key` takes priority over this. |
-| `TAVILY_API_KEY` | Tavily key. Its presence auto-enables web research (`web_search.provider = tavily`, `enabled = true`) unless `ATF_WEB_SEARCH=0`. |
-| `ATF_WEB_SEARCH` | Set to `0` to force-disable web research even when `TAVILY_API_KEY` is set. |
-| `PREVIEW_ROOTS` | Extra preview source directories (legacy alias: `ATF_PREVIEW_ROOTS`). Feeds `server.preview_roots`. |
-| `AWS_*` | Standard AWS credential/region variables (`AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`, …). Read by the Bedrock / S3 / Neptune / Textract / BDA providers at call-time. |
+### Config overrides
 
-> `./run.sh` loads a `.env` file before starting the server, so any of the above can be placed there for local development.
+| Variable | Affects | Effect |
+|---|---|---|
+| `ATF_PROFILE` | `profile` | Selects the active profile (`local` / `hybrid` / `aws`) and the corresponding `config/settings.<profile>.json`. |
+| `ATF_DATA_DIR` | storage root | Base directory for local vector/graph/blob stores. Read at import time; defaults to `<repo>/storage`. |
+| `ATF_LLM_MODEL` | `llm.model` | Overrides the default LLM model id. |
+| `ATF_VISION_MODEL` | `vision.model` | Overrides the vision model id. |
+| `ATF_EMBED_PROVIDER` | `embeddings.provider` | Overrides the embeddings provider. |
+| `ATF_PARSER` | `ingestion.parser` | Overrides the document parser provider (`advanced` / `docling` / `textract` / `bedrock`). Replaces the entire `parser` block with `{ "provider": <value> }`. |
+| `ATF_PORT` | `server.port` | Overrides the server port (parsed as an integer). |
+| `ATF_API_TOKEN` | `server.auth_token` | Bearer token required on `POST` endpoints. See [`server`](#server). |
+| `ATF_PREVIEW_ROOTS` | `server.preview_roots` | Extra directories searched for KB document preview source files. |
+| `ATF_WEB_SEARCH` | `web_search.enabled` | Set to `0` to force web research off even when `TAVILY_API_KEY` is present. |
+| `TAVILY_API_KEY` | `web_search` | Presence auto-enables web research: sets `provider="tavily"` and `enabled=true` (unless `ATF_WEB_SEARCH=0`). Also used as the Tavily credential. |
+
+> The keys directly handled in the env layer of `config.py` are `ATF_PROFILE`,
+> `ATF_LLM_MODEL`, `ATF_VISION_MODEL`, `ATF_EMBED_PROVIDER`, `ATF_PORT`,
+> `ATF_PARSER`, `TAVILY_API_KEY`, and `ATF_WEB_SEARCH`. `ATF_DATA_DIR`,
+> `ATF_API_TOKEN`, and `ATF_PREVIEW_ROOTS` are consumed elsewhere (storage path
+> and server, respectively) but are part of the supported configuration surface.
+
+### Secrets / credentials (read at call-time)
+
+These are never merged into the config dictionary; they are read by the relevant
+provider when it makes a request.
+
+| Variable | Used by | Notes |
+|---|---|---|
+| `OPENROUTER_API_KEY` | OpenRouter LLM / vision / embeddings / reranker | A runtime key set from the web UI (`POST /api/key`) takes priority over this env var. |
+| `AWS_*` (standard AWS credential chain) | Bedrock, Textract, BDA, OpenSearch, Neptune, Comprehend | Standard AWS SDK credential resolution. Used by the `aws`/`hybrid` profiles and any AWS-backed provider. |
+| `TAVILY_API_KEY` | Tavily web research | Also auto-enables the `web_search` block (see above). |
+
+> **Runtime OpenRouter key.** The OpenRouter key can be set live from the
+> browser via `POST /api/key`. It is held in memory only by default and takes
+> priority over `OPENROUTER_API_KEY`.
 
 ---
 
-📖 [Docs Home](Home.md) · [User Manual](../USER_MANUAL.md) · [Architecture](Architecture.md)
+## Quick recipes
+
+**Run fully offline (no network, no keys).**
+
+```jsonc
+// config/settings.json
+{
+  "llm": { "provider": "offline" },
+  "vision": { "provider": "offline" },
+  "embeddings": { "provider": "local" },
+  "web_search": { "provider": "offline", "enabled": false }
+}
+```
+
+**Switch to AWS-managed services.**
+
+```bash
+export ATF_PROFILE=aws
+```
+
+```jsonc
+// config/settings.aws.json
+{
+  "llm": { "provider": "bedrock" },
+  "vision": { "provider": "bedrock" },
+  "embeddings": { "provider": "bedrock" },
+  "ingestion": { "parser": { "provider": "textract" }, "extraction": { "provider": "comprehend" } },
+  "vector_store": { "provider": "opensearch" },
+  "graph_store": { "provider": "neptune" },
+  "guardrails": { "provider": "bedrock", "enabled": true, "guardrail_id": "..." }
+}
+```
+
+**Enable graph communities and pruning.**
+
+```jsonc
+// config/settings.json
+{
+  "graph": {
+    "communities": { "enabled": true },
+    "prune": { "enabled": true, "drop_hub_percentile": 1 }
+  }
+}
+```
+
+**Harden the server for deployment.**
+
+```bash
+export ATF_API_TOKEN="$(openssl rand -hex 24)"
+export ATF_PORT=8080
+```
+
+---
+
+## See also
+
+- Source: [`atf_graphrag/config.py`](https://github.com/RW2523/intelligraphrag/blob/main/atf_graphrag/config.py)
+- Repository: <https://github.com/RW2523/intelligraphrag>

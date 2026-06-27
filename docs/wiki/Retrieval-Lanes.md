@@ -1,190 +1,362 @@
 # Retrieval Lanes
 
-The retrieval layer is the heart of IntelliGraphRAG. A single question can fan out across many specialised **lanes** — vector + BM25 hybrid, graph, deterministic table-row lookup, text-to-SQL, numeric rescue, global/community map-reduce, corrective retry, multi-hop, and on-demand web research — and the results are then evaluated, reranked, expanded into whole tables, and turned into a cited answer.
+The retrieval layer is the heart of **IntelliGraphRAG** (short: *IntelliGraph*). A single question can fan out across many specialised **lanes** — vector + BM25 hybrid, graph (BFS or Personalized PageRank), deterministic table-row lookup, text-to-SQL, numeric rescue, global/community map-reduce, corrective retry, multi-hop chaining, and on-demand web research — and the merged results are then evaluated, reranked, expanded into whole tables, and turned into a cited answer.
 
-This page walks the full pipeline end to end, then documents each lane individually. Everything here is implemented in `atf_graphrag/retrieval/` — primarily `pipeline.py` (the orchestrator), `agents.py` (the six core subagents), `table_lookup.py`, `numeric_lookup.py`, and `structured.py`.
+This page walks the full pipeline end to end, then documents each lane individually. Everything described here is implemented under [`atf_graphrag/retrieval/`](https://github.com/RW2523/intelligraphrag/tree/main/atf_graphrag/retrieval):
 
-> The pipeline is a small, explicit state machine. The same node contracts run unchanged whether orchestrated by the bundled `sequential` runner or hosted by LangGraph in production.
+| File | Responsibility |
+| --- | --- |
+| `pipeline.py` | The `Retriever.answer()` orchestrator — wires the lanes together as a state machine |
+| `agents.py` | The six core subagents (Query Understanding, Corpus Selection, Retrieval, Evaluation, Reranking, Generation) plus the Global Answer agent |
+| `table_lookup.py` | Deterministic table-row lookup ("any cell in any row") with contiguity + name-phrase scoring |
+| `numeric_lookup.py` | Numeric-fact lane — rescues headline totals buried in number-dense text |
+| `structured.py` | Comparison fan-out + whole-table expansion helpers |
+| `adaptive.py` | Corrective retry + multi-hop decomposition |
+| `web_research.py` | Agentic, on-demand web augmentation |
+| `bm25.py` / `graph_retriever.py` | Keyword scoring + PPR graph retriever |
+
+> The pipeline is a small, explicit state machine. The same node contracts run unchanged whether driven by the bundled sequential runner or hosted by LangGraph in production — the control flow and contracts are identical.
 
 ---
 
 ## The Query Pipeline
 
-`Retriever.answer()` in `atf_graphrag/retrieval/pipeline.py` runs the following stages. Each stage is wrapped in a wall-clock timer so the full per-stage breakdown appears in `trace.timings_ms`.
+`Retriever.answer(question, trace=False)` in `pipeline.py` runs the stages below. Every stage is wrapped in a wall-clock timer (`_timed`), so a full per-stage breakdown appears in `trace.timings_ms` when `trace=True`. The numbered `steps` keys (`1_query_understanding`, `2_corpus_selection`, …) are the keys you see in the returned `trace` object.
 
 ```text
-Query Understanding
-   └─> (Global mode? answer from community summaries, with local fallback)
-Corpus Selection
-   ├─> Multi-hop decomposition (bridge/comparison questions)
-Multi-lane Retrieval  (vector + BM25 + graph + table_row)
-   ├─> Comparison fan-out (retrieve BOTH sides of "A vs B")
-   ├─> Mixed-mode community enrichment
-Evaluation            (floor table_row/sql; exempt table_row from junk penalty)
-   ├─> SQL lane        (text-to-SQL over the table store)
-   ├─> Numeric lane    (headline-total rescue from number-dense text)
-   ├─> Corrective retry (weak evidence -> reformulate + retry)
-   ├─> Web research     (Tavily augmentation into the 'news' corpus)
-Reranking             (guarantee a structured table chunk for numeric questions)
-Whole-table expansion (pull every sibling row chunk of a retrieved table)
-Generation            (table_to_text; EVIDENCE section quoting exact cells)
-   └─> Post-generation retry + grounding-verify subagent
+1  Query Understanding
+      └─ Global mode? → community map-reduce, then global→local fallback if insufficient
+2  Corpus Selection
+      └─ 2b Multi-hop decomposition (bridge/comparison questions, LLM-gated)
+3  Multi-lane Retrieval   (vector + BM25 + graph[bfs|ppr] + table_row)
+      ├─ 3b Comparison fan-out (retrieve BOTH sides of "A vs B")
+      └─    Mixed-mode community enrichment (graph_paths)
+4  Evaluation             (floor table_row/sql; exempt table_row from junk penalty)
+      ├─ 3d SQL lane       (text-to-SQL over the structured table store)
+      ├─ 3e Numeric lane   (headline-total rescue from number-dense text)
+      ├─ 4b Corrective retry (weak evidence → reformulate + retry)
+      └─ 4b Web research    (on-demand augmentation into the 'news' corpus)
+5  Reranking              (linear blend or provider cross-encoder; guarantee a table chunk)
+      └─ 5b Whole-table expansion (pull every sibling row-chunk of a retrieved table)
+6  Generation             (table_to_text; EVIDENCE section quoting exact cells)
+      ├─ 6b Post-generation retry (answer admits "insufficient" → one reformulated retry)
+      └─ 7  Grounding-verify subagent (every number must appear in cited context)
 ```
+
+> The ordering looks unusual at first: the SQL and numeric lanes (`3d`, `3e`) physically run *after* the evaluation step in code, but they **inject** their results at the top of the hit list (with floored scores), so they behave as authoritative evidence for the reranker. The trace keys are numbered by logical lane, not by line order.
+
+The final return value is a dict with `answer`, `confidence`, `citations`, `graph_paths`, `evidence_count`, `intent`, `mode`, `incomplete`, `notes`, and `web_research`; plus a full `trace` when requested.
+
+---
 
 ### 1. Query Understanding
 
-`QueryUnderstandingAgent.plan()` (`agents.py`) classifies the question into an **intent** (`fact`, `entity`, `relationship`, `pattern`, `timeline`, `table`, `visual`, `multi`) and a **mode** (`local`, `mixed`, `global`). It works fully offline using keyword heuristics, then — only when a real LLM is configured **and** `retrieval.llm_refine` is enabled — refines the plan with a strict-JSON LLM classification. The plan also carries flags such as `use_graph`, `use_metadata`, `use_bm25`, `top_k`, and a `filters["domain"]` scoring hint (e.g. `manufacture`, `export`, `import`, `trace`).
+`QueryUnderstandingAgent.plan()` classifies the question into an **intent** and a **mode**, then sets routing flags on a `QueryPlan`.
 
-- A relationship/pattern question sets `use_graph=True` and routes to **mixed** mode (local graph lane **plus** community context).
-- A sensemaking question ("common themes", "across all documents") routes to **global** — unless it also names a specific year or is a table intent, which makes it **mixed**.
-- Everything else stays **local** on the hybrid vector lane (the baseline).
+**Intents:** `fact` (default), `entity`, `relationship`, `pattern`, `timeline`, `table`, `visual`, `multi`.
+
+**Modes:** `local`, `mixed`, `global`.
+
+Classification is fully offline first — driven by keyword word-lists (`REL_WORDS`, `TIMELINE_WORDS`, `TABLE_WORDS`, `VISUAL_WORDS`, `ENTITY_WORDS`, `ALL_WORDS`, `GLOBAL_WORDS`, plus domain word-lists). It also stores a **domain scoring hint** in `plan.filters["domain"]` (one of `manufacture`, `export`, `import`, `pmf`, `trace`, `theft`, `arson`, `explosives`, `selling`) used later for source boosting.
+
+Mode routing:
+
+- A **relationship/pattern** question sets `use_graph=True` and routes to **mixed** — the local graph lane (BFS or PPR) **and** community context, never fully delegated to community summaries.
+- A **sensemaking/global** question (`GLOBAL_WORDS`, or `intent == "multi"`) routes to **global** — unless it also names a specific year (`\b(19|20)\d{2}\b`) or is a `table` intent, which makes it **mixed** (run both, merge with provenance).
+- Everything else stays **local** on the hybrid vector lane (the baseline that holds the retrieval score).
+
+A year in the question (`\b(19|20)\d{2}\b`) or `" in 20"` also flips `use_metadata=True`, enabling metadata-filtered retrieval.
+
+> **LLM refinement is gated.** Only when `engine.llm.name != "offline"` **and** `retrieval.llm_refine` is true does `_llm_refine()` ask the model for a strict-JSON `{intent, use_graph, use_metadata, top_k}` and overlay it. The evaluation harness pins `llm_refine: false` for deterministic, reproducible retrieval (LLM refinement can vary `top_k` run-to-run even at temperature 0).
 
 ### 2. Corpus Selection
 
-`CorpusSelectionAgent.select()` decides which corpora to search (e.g. `pdf`, `web`, `connected`, `visual`, `news`). A caller can pin one or more corpora programmatically via `plan.filters["corpus"]` (honoured verbatim), the question can name a corpus explicitly ("the web corpus", "visual data"), or topic words route heuristically. Otherwise all available corpora are searched.
+`CorpusSelectionAgent.select()` resolves which corpuses to search, intersected with corpuses that actually contain chunks:
+
+1. **Explicit isolation** — `plan.filters["corpus"]` (set by the API/UI) is honoured verbatim. This is how a caller queries one corpus in isolation.
+2. **`multi` intent** (or nothing available) returns all available corpuses.
+3. **Named-in-question** — phrases like `"web corpus"` or `"pdf documents"` scope to that corpus.
+4. **Heuristic routing** — `website/web/site/online/url` → `web`; visual words → `visual`; `collection`/`across documents` → `connected`.
+
+The default corpuses are `pdf`, `web`, `connected`, `visual`, `news`.
 
 ### 3. Multi-lane Retrieval
 
-`RetrievalAgent.retrieve()` is where the vector, BM25, graph, and deterministic table-row lanes all merge into one candidate pool (see the per-lane sections below). After merging it applies a quality filter, year boost, small-doc boost, domain boost, stable tie-break, a pool cut, and per-source diversity capping — then re-injects any deterministic table-row matches that were culled, because an exact row match is the answer's evidence by construction.
+`RetrievalAgent.retrieve()` is where the bulk of the work happens. It embeds the question once, then merges candidates from every active lane into one de-duplicated `merged` map keyed by `chunk_id` (each chunk keeps its highest score). See the per-lane sections below for vector+BM25, graph, and table-row.
 
-### 4. Evaluation
+The merged hits then pass through several **generic scoring adjustments** (all multiplicative on `h.score`):
 
-`EvaluationAgent.evaluate()` scores every hit with a blend of cosine similarity, query-token overlap, completeness, a metadata bonus, and a content-type bonus, multiplied by a per-source weight and the chunk's own confidence. Weak hits below `retrieval.min_confidence` are dropped (with a graceful fallback to the top-k if nothing clears the bar). See [Evaluation flooring and exemptions](#evaluation-flooring--exemptions) below for the special handling of structured lanes.
+| Adjustment | Effect |
+| --- | --- |
+| **Chunk-quality filter** (`_chunk_quality`) | Multiplier in `[0.10, 1.0]` that demotes navigation/TOC, URL-only, doc-summary headers, section-outline pages, and micro-chunks (< 60 chars). `table_row` matches are **exempt**. |
+| **Year boost** | When the query names a year: `+30%` for year-matched docs, `-20%` for dated-but-wrong-year docs, `-15%` for undated docs. |
+| **Small-doc boost** | Docs with fewer than `500` chunks get up to a `1.5×` boost to offset their TF-IDF frequency disadvantage. |
+| **Domain-intent boost** | A `1.8×` boost for sources matching a hint domain that semantics routinely mis-routes (`export`, `pmf`, `manufacture`, `selling`). Other domains are left to semantics. |
+
+After scoring, hits are **sorted with a stable `(-score, chunk_id)` tie-break** (so equal-score graph hits do not reorder under `PYTHONHASHSEED`), trimmed to a wide pool (`max(top_k*5, 60)`), then **source-diversity capped** (`_apply_source_diversity`) at `_max_per_source(n_sources)` — 3 per source normally, 6 for diverse corpora with 15+ distinct sources. Any `table_row` exact match culled by the cap is **re-injected** because an exact row is the answer's evidence by construction.
+
+### 4. Evaluation (with flooring)
+
+`EvaluationAgent.evaluate()` scores each hit and drops weak ones. The blended score is:
+
+```text
+score = (0.45·cosine_sim + 0.30·token_overlap + 0.15·completeness
+         + meta_bonus + ctype_bonus) · source_weight · chunk_confidence
+```
+
+- `completeness = min(1.0, len(text)/400)`
+- `meta_bonus = 0.10` when the chunk has entities or a case reference
+- `ctype_bonus = 0.12` for `table`/`chart`/`figure` chunks on `table`/`visual` intents
+- `source_weight`: `vector 1.0`, `table_row 1.0`, `graph 0.95`, `bm25 0.85`, else `0.8`
+
+**Evaluation flooring** is the key correctness guarantee: a deterministic exact-row match (`source == "table_row"`) scores ~0 on cosine/overlap because a numeric row like `57134751 | EMCO INC | GADSDEN | AL | 2187` has almost no semantic similarity to the question. So its score is **floored to `0.72`** — high-confidence by construction. Without this floor the one chunk holding the asked-about cell would be dropped by the heuristic blend.
+
+Hits with `eval_score >= retrieval.min_confidence` (default `0.10`) are kept; if none clear the bar, the top `top_k` by score are returned anyway so generation always has something.
 
 ### 5. Reranking
 
-`RerankingAgent.rerank()` recomputes a linear blend (`0.7 * eval_score + 0.3 * coverage + content-type bonus`), optionally applies an LLM reranker and/or a provider cross-encoder (whose order is authoritative when present), and cuts to `top_k`. For numeric/table questions it **guarantees** at least one parsed-table chunk survives into generation (see below).
+`RerankingAgent.rerank()` computes a linear blend, then optionally defers to a provider reranker:
 
-### 6. Whole-table Expansion
-
-`expand_whole_tables()` (`structured.py`) runs **after** rerank so it survives the top-k cut: for every retrieved table chunk it pulls every sibling chunk of the same table (same `document_id` + `page_number`) so the COMPLETE table — all rows — reaches the generator. This is what lets "which row is highest?" or "compare these rows" actually see the whole grid.
-
-### 7. Generation with Citations
-
-`GenerationAgent.generate()` builds a context block where each hit carries full provenance (`source, p.X, report_type, "table title"`). Tables are rendered with `table_to_text()` so cells are addressable; charts/figures use their VLM summary. Every answer returns `citations[]`. For numeric/table questions the system prompt enforces an **EVIDENCE** section that quotes the exact source row or cell verbatim with its `[n]` and `(source, page)` before stating the answer — and forbids inventing a number not present in a quoted row.
-
-### Post-generation safety
-
-If the generated answer itself reads as a refusal/insufficient (`_insufficient()`), the pipeline reformulates once, re-retrieves, regenerates, and keeps whichever answer actually answers. Finally the **grounding-verify** subagent (when enabled) checks that every number in the answer appears in the cited context, triggering one strict regenerate on violation and a confidence cut + caveat if any number remains unsupported.
-
----
-
-## The Lanes
-
-### Vector + BM25 Hybrid
-
-The baseline dense/sparse hybrid in `RetrievalAgent.retrieve()`. The question is embedded once; each corpus is searched by vector similarity for `top_k * 3` candidates, and — when `retrieval.hybrid` is on — by a cached per-corpus `BM25` index for `top_k * 2` candidates (BM25 hits enter at `0.75 *` their score). Table/chart/figure chunks get a small `retrieval.visual_boost` (default `1.05`) for table/visual intents. A per-source diversity cap and a small-doc boost keep large documents from flooding the pool.
-
-### Graph (BFS / PPR)
-
-When `plan.use_graph` is set (relationship, pattern, timeline, entity intents), the agent expands over the typed knowledge graph and produces labelled relationship paths shown to the generator as **KNOWN RELATIONSHIP PATHS**. Two retrievers are available via `retrieval.graph_retriever`:
-
-- **`bfs`** (default) — `_graph_expand()` collects chunks reachable within `retrieval.graph_hops` (default 2). Chunks reached via **typed** edges enter at `0.65`; co-occurrence-only chunks enter at `0.5`.
-- **`ppr`** — `_graph_expand_ppr()` runs personalized PageRank (HippoRAG-style) seeded on the query's entity nodes, ranking chunks by centrality and normalising scores into a `0.50–0.70` band. Used for relationship/pattern intents; falls back to BFS if `networkx` is unavailable.
-
-### Table Row (Deterministic Cell Lookup)
-
-Implemented in `table_lookup.py`. Embeddings and BM25 are unreliable for finding *one* entity's row among thousands of table chunks — a row like `57134751 | EMCO INC | GADSDEN | AL | 2187` has almost no semantic similarity to "What city is EMCO INC located in?". This lane makes that lookup exact:
-
-1. **`extract_row_keys()`** pulls candidate row-key terms from the question — proper-noun/uppercase runs, quoted strings, license-style long numbers — most-specific first. Generic, no domain hardcoding.
-2. **`RowIndex`** is an inverted index `token -> {chunk_id}` built once per corpus over the string cells of every chunk's structured `table_data`, cached on the vector store and rebuilt when the corpus changes.
-3. **`find_rows()`** intersects each key's token sets, then scans only the candidate chunks' rows for one satisfying the key.
-
-**Contiguity-aware locality scoring** is what makes this precise. `_row_match_quality()` ranks matches so a name phrase contained in **one cell** beats tokens that merely scatter across columns. A key like `["PHOENIX","ARMS"]` is satisfied by the real `PHOENIX ARMS` name cell **and** by an unrelated `NORTH STAR ARMS … | PHOENIX | AZ` row; the locality bonus disambiguates them:
-
-| Match shape | Locality bonus |
-|---|---|
-| Key tokens contiguous in one cell (the name phrase) | `+0.06` |
-| All tokens in one cell but not adjacent | `+0.03` |
-| Tokens scattered across cells (cross-column bleed) | `-0.05` (penalised) |
-
-`_cell_contiguous()` verifies the tokens form a contiguous run (only non-alphanumerics between them). A single-token **name-phrase fallback** is also allowed for distinctive names (keys of length ≥ 4 chars), and a single-token key is ignored when it matches too broadly (noise). Scores start at `0.86 + 0.02 * key_specificity + locality`, with a `±` year-match boost from chunk metadata.
-
-The matched row is injected as a high-score `table_row` hit, and crucially **the matched row text is pinned into the chunk's `extraction_summary`** (`MATCHED TABLE ROW: …`) so the generator quotes the exact cell as citation evidence.
-
-### SQL (Text-to-SQL)
-
-For tabular/aggregate questions (`table` intent, or words like *how many / highest / most / total / count / compare / average / rank / which state / sum*) the pipeline runs the SQL lane over the structured table store (`atf_graphrag/indexing/table_store.py`, via `get_store(engine).query(...)`). The store loads the relevant tables into an **in-memory SQLite** database, asks the LLM for **ONE** `SELECT`, and validates it before execution.
-
-The guard is strict (`table_store.py`):
-
-```python
-_SELECT_ONLY = re.compile(r"^\s*select\b", re.I)
-_FORBIDDEN   = re.compile(r"\b(insert|update|delete|drop|alter|attach|pragma|create)\b", re.I)
+```text
+rerank_score = 0.7·eval_score + 0.3·token_coverage + ctype_bonus
 ```
 
-Anything that isn't a lone `SELECT`, or that contains a forbidden keyword, is rejected. The aggregate is computed over **all** rows with provenance, then injected as a top `[SQL RESULT]` evidence chunk (score `0.97`, `eval_score` `0.95`). Any failure at all — no candidate tables, bad SQL, empty result, exception — is caught by `_safe_sql()` and the lane adds nothing, so the RAG lanes proceed unchanged (**automatic fallback to RAG**). Toggle with `retrieval.sql_lane`.
+For numeric/`table` questions, structured chunks get a **decisive** content-type bonus: `+0.30` for a `table` chunk that has parsed `table_data`, `+0.18` otherwise. An optional LLM reranker (`reranker.provider == "llm"`) and a provider cross-encoder (e.g. a BGE reranker on `engine.reranker`, surfaced as `last_reranker`) can reorder the list authoritatively; otherwise the linear blend wins. The default reranker provider is `local`.
 
-### Numeric
+> **Numeric guarantee.** After cutting to `top_k`, if the question is numeric and **no** `table`-with-`table_data` chunk survived, the best such chunk is force-promoted to the front of the result so structured evidence always reaches generation.
 
-`numeric_lookup.py` rescues **headline totals** that live in number-dense *text* rather than a grid — e.g. `3,939,517 TOTAL`. Such chunks embed poorly (numbers carry little semantic signal) and are deliberately quality-penalised (DOC SUMMARY anchors are demoted), so the exact figure gets buried below top-k. `find_numeric()` scans chunks that (a) contain a real big number (`\d{1,3}(?:,\d{3})+|\d{4,}`) and (b) strongly match the question's content terms (prefix-stemmed to bridge "manufactured"/"manufacturing"), boosting year-matched documents, source-name matches, and "total"/summary anchors. The best matches are injected as top evidence. The lane fires only for numeric/aggregate questions **when the SQL lane produced nothing** (`"3d_sql" not in steps`), and adds nothing on no match. Toggle with `retrieval.numeric_lane`.
+### 5b. Whole-table expansion
 
-### Global / Community
+`expand_whole_tables()` (`structured.py`) runs **after** rerank so it survives the `top_k` cut. For every `table` hit it pulls **all sibling table chunks** from the same `(corpus, document_id, page)` via a lazily-built, cache-invalidated page index — so a "which row is highest / compare these rows" question sees the COMPLETE table, not a fragment. Capped at `max_extra=12` added chunks. Works for any table in any document.
 
-`GlobalAnswerAgent.answer()` handles corpus-wide sensemaking via a true **map-reduce over Leiden community summaries** (GraphRAG-style), used only when communities have been built:
+### 6. Generation
 
-- **MAP** — the cheap model answers the question from **each** relevant community independently, replying `NONE` for irrelevant ones.
-- **REDUCE** — the strong model aggregates the partial answers into one source-traced answer, citing communities as `[Cn]`.
+`GenerationAgent.generate()` builds a numbered context block from the hits. For `table` chunks it renders `table_to_text(table_data)` (addressable rows); for `chart`/`figure` chunks it uses the VLM `extraction_summary` (actual values). It detects `has_structured` evidence and an `evidence_gap` (a numeric question with no table/chart evidence).
 
-Every claim resolves back to community member `chunk_ids` for provenance. If the map-reduce can't answer (insufficient/refusal per `_insufficient()`), the pipeline drops to the local hybrid lane instead of refusing — so a community miss never surfaces as "no answer". In **mixed** mode the top community summaries are appended to the local answer's graph paths as `[COMMUNITY] …` context.
+Two system prompts are used. For numeric questions the model must emit an `EVIDENCE:` section quoting the exact source row/value verbatim **before** the `ANSWER:`, and must never compute a number not present in a quoted row. Known relationship paths (graph paths and `[COMMUNITY]` context) are appended as `KNOWN RELATIONSHIP PATHS`.
 
-### Corrective Retry
+**Calibrated confidence:** the base is the mean `eval_score` of the top-5 hits. For numeric answers, confidence is cut to `0.4×` when there is no structured evidence (`evidence_gap`), or `0.7×` when the answer didn't quote any `[n]`/`EVIDENCE`. An `incomplete` flag and `notes` are returned when the gap exists.
 
-When `retrieval.corrective` is on, `CorrectiveRetriever().improve()` (in `adaptive.py`) detects weak/insufficient evidence after evaluation, reformulates the query, retrieves again, merges what's gained, and re-evaluates — bounded by `retrieval.corrective_max_retries` (default 1). A second, post-generation corrective pass also fires if the *answer text itself* reads as a refusal (see [Post-generation safety](#post-generation-safety)).
+### 6b / 7. Post-generation retry + grounding verify
 
-### Multi-hop
-
-For bridge/comparison questions (gated by `retrieval.multi_hop` and a minimum of `retrieval.multi_hop_min_words`, default 10), `MultiHopPlanner` (in `adaptive.py`) LLM-decomposes the question into hops ("find X, then use X to find Y"), runs each hop through the same retrieve + evaluate contract, and chains the intermediate facts — adding the hop hits to the candidate pool and the hop chain to the graph paths shown to the generator.
-
-Closely related is the generic **comparison fan-out** (`structured.py`): `is_comparison()` detects "A vs B" / "compare A and B", `comparison_targets()` extracts the compared entities (US states, years, proper-noun phrases), and the pipeline runs one retrieval per target and merges so **both** sides reach context.
-
-### Web Research
-
-`WebResearchAgent` (in `web_research.py`) augments on-demand: when the question is event/news-oriented and local evidence is thin, `should_augment()` triggers a web search (Tavily), judges each result for relevance/novelty/worth, ingests only worthy content into the **`news`** corpus, then retrieves and merges it. Governed by the `web_search` config block (`provider`, `enabled`, `auto`, `corpus`, `min_relevance`, `novelty_threshold`, …). The `trace.4b_web_research` block reports whether it triggered and why.
+- **Post-generation retry** (`6b_retry`): if the final answer itself reads as a refusal (`_insufficient()` — under 25 chars or containing markers like "does not contain", "insufficient", "not found"), the query is reformulated once, a fresh retrieve + evaluate + rerank runs, and the better of the two answers wins.
+- **Grounding verify** (`7_grounding`): when `subagents.grounding_verify` is on (default), `GroundingVerifierAgent` checks that every number in the answer appears in the cited context; on violation it does one strict regenerate, then attaches an explicit caveat and cuts confidence if any number remains ungrounded.
 
 ---
 
-## Evaluation Flooring & Exemptions
+## The Lanes in Detail
 
-Deterministic structured evidence reads as "low quality" to the generic heuristics — a numeric row scores ~0 on similarity and token overlap — so the pipeline protects it explicitly:
+### Vector + BM25 (hybrid) — the baseline
 
-- **Quality-filter exemption (`agents.py`).** The chunk-quality filter that penalises TOC/URL/summary "junk" chunks **skips** `table_row` hits: a numeric row looks like low-quality text but it *is* the asked-about cell.
-- **Evaluation floor for `table_row` (`EvaluationAgent`).** An exact row match is floored to `score = max(score, 0.72)` — high-confidence by construction, rather than dropped by the heuristic blend.
-- **Evaluation floor for `sql` (`pipeline.py`).** The injected `[SQL RESULT]` chunk enters with `score = 0.97` and `eval_score = 0.95`, so the computed aggregate is treated as top evidence.
-- **Re-injection after culling (`agents.py`).** Any `table_row` match removed by the pool cut or the per-source diversity cap is re-appended, guaranteeing it reaches evaluation.
-- **Rerank guarantee (`RerankingAgent`).** For a numeric/table question, if no parsed-table chunk survived into the top-k, the best `content_type == "table"` chunk with `table_data` is force-inserted at the front so structured evidence always reaches generation.
+The default lane for every `local` question. Two signals are fused into the `merged` map:
 
-### Pinning the matched row for exact-cell citations
+- **Dense vector search** over each corpus's vector store: `vs.search(qvec, top_k*3, where=...)`.
+- **BM25 keyword search** (`bm25.py`) when `plan.use_bm25` (config `retrieval.hybrid`, default on). BM25 is a classic `k1=1.5, b=0.75` scorer built on demand over a corpus's chunks and **cached per corpus** (`_BM25_CACHE`, invalidated when the chunk count changes). BM25 catches exact terms that dense embeddings blur — case references, serial numbers, license numbers, proper names. BM25 hits are added at `0.75 × score`.
 
-The table-row lane doesn't just rank a chunk higher — it **pins the exact matched row** into the chunk's `extraction_summary` as `MATCHED TABLE ROW: <row text>` (truncated to 900 chars). Because the generator reads `extraction_summary` and the numeric-answer prompt requires quoting the exact source row/cell verbatim in its `EVIDENCE:` section, the pinned row becomes the literal cell-level citation in the answer. This is the mechanism behind IntelliGraphRAG's "any cell in any row" precision.
+Both signals apply a small **content boost** (`retrieval.visual_boost`, default `1.05`) to `table`/`chart`/`figure` chunks when intent is `table`/`visual`.
+
+A **domain pre-fetch** runs a second vector search filtered to domain-matched source names (`afmer` for manufacture, `nfcta_export` for export, `nfcta_selling` for selling) so the right chunks exist in the pool before the boosts can act on them — they may not survive the generic top-K cut otherwise (e.g. a manufacturing-totals table that never says "United States").
+
+A `where` predicate (`_filter`) enforces metadata filters and year filters when `use_metadata` is set: a chunk is accepted if its `document_date`/`incident_date` matches any query year **or** it is undated (undated reference docs are always included).
+
+### Graph — BFS subgraph and Personalized PageRank
+
+Active when `plan.use_graph` is set (relationship/pattern/entity/timeline intents, or questions with "pattern"/"across"). The mode is chosen by `retrieval.graph_retriever`:
+
+**BFS expansion (`_graph_expand`, default `bfs`).** Query content tokens are resolved to graph nodes; for each matched node it collects chunks reachable within `retrieval.graph_hops` (default `2`). **Typed-edge** chunks are kept separate from plain **co-occurrence** chunks: typed-relationship evidence enters at score `0.65`, co-occurrence-only at `0.50`. Up to 8 labelled relationship paths are produced for the answer's `graph_paths` (typed paths preferred; plain `A -> B -> C` paths as fallback).
+
+**Personalized PageRank (`_graph_expand_ppr`, `ppr`).** A HippoRAG-style retriever, used only when `graph_retriever == "ppr"` **and** intent is `relationship`/`pattern`. It seeds PageRank on the query's entity nodes, ranks chunks by centrality, and normalises scores into a `0.50–0.70` contribution band (above co-occurrence, below direct vector hits). Falls back to BFS when `networkx` is unavailable or no chunks rank. The active mode is reported in the trace as `graph_mode`.
+
+In **mixed** mode the pipeline also appends the top-3 `[COMMUNITY]` summaries to `graph_paths` so the generator renders corpus-wide context alongside local evidence.
+
+### Table-row — deterministic "any cell in any row"
+
+`table_lookup.find_rows()` makes single-row lookups exact instead of lucky. Embeddings/BM25 cannot reliably surface one row among thousands of table chunks, so this lane works structurally over parsed `table_data`:
+
+1. **`extract_row_keys()`** pulls candidate row keys from the question — quoted strings, proper-noun/uppercase runs, and license-style long numbers — tokenises them (dropping a generic `_STOP` set), and orders most-specific-first.
+2. **`RowIndex`** is an inverted index `token → {chunk_id}` built once per vector store over the **string cells** of every chunk's `table_data` and cached (rebuilt when the store grows). `candidates(key)` intersects the per-token sets; a single-token key is ignored when it matches more than 60 chunks (too noisy).
+3. For each candidate chunk, every row is scored by **locality** via `_row_match_quality()`:
+   - all key tokens **contiguous in one cell** (a real name phrase) → `+0.06` (strongest)
+   - all key tokens in one cell but **not adjacent** → `+0.03`
+   - tokens **scattered across cells** (cross-column bleed) → `-0.05` (penalised)
+
+   The **contiguity** check (`_cell_contiguous`) is what separates the genuine `PHOENIX ARMS` name cell from an unrelated `NORTH STAR ARMS … | PHOENIX | AZ` row where the tokens happen to land in different columns.
+4. **Name-phrase re-ranking** (`extract_name_phrases` + `_phrase_in_cell`) adds a decisive `+0.10` when the question's full proper-noun phrase sits intact in one cell. This exists because the token-AND key path deliberately drops single-letter and `&` tokens — so `R & R SPORTING ARMS INC` collapses to the key `[SPORTING, ARMS]` and would match every unrelated "Sporting Arms" company. The name-phrase signal keeps the `&` / single-letter parts to break that tie. It only fires for names whose distinctive part the tokenizer actually drops; ordinary names like `EMCO` need no phrase signal.
+5. Final score: `0.86 + 0.02·min(len(key),4) + locality (+ name-phrase bonus) ± year-match`, capped at `0.99`.
+
+The matched row is pinned into the chunk's `extraction_summary` as `MATCHED TABLE ROW: …` so generation quotes the exact cell. Matches are injected as `table_row` hits, are **exempt from the junk-quality penalty**, **floored to 0.72** at evaluation, and **always re-injected** if culled by diversity capping. The path is fully deterministic and generic — no company or domain is hardcoded.
+
+### SQL — text-to-SQL over the structured table store
+
+Fires when `retrieval.sql_lane` is on **and** the intent is `table` or the question matches an aggregate pattern (`how many|highest|most|least|total|count|compare|average|rank|which state|sum`). `get_store(engine).query(question, engine)` runs SQL over the structured table store — computed over **all** rows, with provenance — and the result is injected as **top evidence**:
+
+- A synthetic `ChunkRecord` (`chunk_id` prefixed `sql:`) holds `[SQL RESULT] computed from <provenance>`, the generated SQL, the result header, and up to 20 result rows.
+- It is inserted at the front of `hits` with `score=0.97`, `eval_score=0.95`, `source="sql"`.
+- The trace records `3d_sql` with the SQL, row count, and source tables.
+
+The lane is **defensive** (`_safe_sql`): any exception — no candidate tables, bad SQL, empty result — is caught, nothing is added, and the RAG lane proceeds unchanged. This is automatic fallback, not failure. (See the **Tables and SQL** page for the table store and schema.)
+
+### Numeric — headline-total rescue
+
+`numeric_lookup.find_numeric()` rescues a document's **headline numbers** (grand totals, `X produced in 2023 = 3,939,517`) that live in number-dense *text* rather than a grid. Such chunks embed poorly and are deliberately quality-penalised, so the exact figure gets buried.
+
+It fires only when `retrieval.numeric_lane` is on, the SQL lane added nothing (`3d_sql` not in steps), and the question is numeric/aggregate. It scans every chunk that contains a real number (`\d{1,3}(?:,\d{3})+|\d{4,}`) and scores it by **prefix-stemmed** content-token overlap (a generic morphology bridge so "manufactured" matches "manufacturing"):
+
+- requires `overlap >= 0.45`
+- `+0.25` for a year match (or `-0.15` mismatch) when the question names a year
+- `+0.30` when a query term matches the source-name (e.g. "per AFMER")
+- `+0.12` for `[DOC SUMMARY` anchors or chunks containing "total"
+
+The best matches (score ≥ 0.5, capped at 3) are injected as `numeric` hits; if a match is already present its `eval_score` is raised instead. Adds nothing on no match.
+
+### Global — community map-reduce (with global→local fallback)
+
+When `plan.mode == "global"` **and** community summaries have been built, `GlobalAnswerAgent.answer()` runs a true GraphRAG-style **map-reduce** over the most-relevant communities (`store.relevant(question, top_k=8)`):
+
+- **MAP** — the *cheap* model answers the question from **each** community briefing independently, replying `NONE` for irrelevant ones (offline: the briefing itself is the partial).
+- **REDUCE** — the *strong* model aggregates the partials into one corpus-wide, source-traced answer citing communities as `[Cn]`.
+
+Every citation resolves back to community member `chunk_ids` for provenance. Confidence is `min(1.0, 0.4 + 0.1·n_citations)`.
+
+> **Global→local fallback.** If the map-reduce can't answer (no relevant communities, or `_insufficient()` on the result), the pipeline drops to the local hybrid lane instead of refusing. This recovers specific-data questions (e.g. "most common X") that route global but whose answer lives in a document table. The fallback is recorded as `global_fallback` in the trace.
+
+In **mixed** mode the global lane is not used wholesale; instead the top-3 community summaries enrich the local answer as `graph_paths`.
+
+### Corrective — reformulate and retry
+
+`CorrectiveRetriever.improve()` (`adaptive.py`, CRAG-style) makes retrieval self-correcting. After evaluation, `is_weak()` checks the evidence (`top eval_score < retrieval.weak_top` (default `0.45`), or fewer than 3 hits). If weak, the question is **reformulated** (`reformulate()` — an LLM synonym/expansion rewrite when online; a deterministic content-token query offline), retrieval runs again, new hits are merged, and the merged set is **re-evaluated against the original question**. Capped at `retrieval.corrective_max_retries` (default `1`) and config-gated by `retrieval.corrective`.
+
+The same machinery powers the **post-generation retry** (`6b_retry`): if the final answer is an "insufficient context" refusal, one full second request runs with a reformulated query, keeping whichever answer actually answers.
+
+### Multi-hop — find the bridge fact first
+
+`MultiHopPlanner` (`adaptive.py`, Self-Ask style) handles bridge/comparison questions. It is **LLM-gated** (offline → no-op) and only runs when `retrieval.multi_hop` is on and the question has at least `retrieval.multi_hop_min_words` words (default `10`).
+
+`decompose()` asks the model to split the question into 2–3 sequential sub-questions where later hops reference earlier answers as `{hop1}`/`{hop2}`. `run()` executes the hops in order: each hop retrieves + evaluates + produces a short intermediate answer (≤ 20 words), substitutes prior answers into later hops, and merges all hop evidence into the final context. The `[HOP n] question → answer` chain is shown to the generator and recorded as `2b_multihop`. Capped at `MAX_HOPS = 3`.
+
+### Comparison fan-out — retrieve BOTH sides
+
+`is_comparison()` / `comparison_targets()` (`structured.py`) detect "compare A and B", "A vs B", "which is higher" patterns and generically extract the compared entities (US states first, then 4-digit years, then capitalized proper-noun phrases). The pipeline then runs **one extra retrieval per target** (with the target prepended to the query) and merges, so both sides of the comparison are guaranteed to be in context. Recorded as `3b_comparison`.
+
+### Web research — agentic, on-demand augmentation
+
+`WebResearchAgent` (`web_research.py`) augments thin local evidence for event/news-oriented questions. It is fully no-op unless `web_search.enabled` and a provider (Tavily) is available. The loop:
+
+1. **DECIDE** (`should_augment`) — triggers on news intent (`NEWS_WORDS`) and/or thin local evidence (fewer than 3 hits or top `eval_score < web_search.insufficient_conf`, default `0.45`).
+2. **SEARCH** — `engine.web_search.search(question, max_results)`.
+3. **JUDGE** each result on three axes:
+   - **relevance** — keyword overlap ≥ `min_relevance` (default `0.30`), raised `1.5×` for low-credibility hosts; or a tier-discounted provider score
+   - **novelty** — skipped if cosine similarity to the existing corpus ≥ `novelty_threshold` (default `0.88`)
+   - **worth** — an optional LLM judge rejecting ads/navigation/paywalls/spam (`judge_with_llm`)
+
+   A `_domain_tier()` credibility weight rates `.gov`/`.mil` highest and blog hosts lowest.
+4. **INGEST** only worthy results into the `news` corpus (idempotent by URL, capped at `max_ingest_per_query`, default `3`).
+5. The pipeline then **re-retrieves** the `news` corpus, re-evaluates, and merges the new hits.
+
+Every step is logged in the returned decision record (`4b_web_research` in the trace) so the augmentation is explainable. (See the **Web Crawling** page for the crawler and ingest pipeline.)
 
 ---
 
-## Question Type → Lanes That Fire
+## Question type → lane routing
 
-The lanes are additive: a single question commonly fires several. The table below maps the dominant intent/mode to the lanes that typically participate.
+A quick reference for which lanes a question is likely to exercise. Multiple lanes commonly fire at once; the table shows the dominant routing.
 
-| Question type | Example | Lanes that fire |
-|---|---|---|
-| Cell lookup | "What city is EMCO INC in?" | vector+BM25, **table_row** (deterministic, pinned cell) |
-| Aggregate / count | "How many dealers in Texas?" | **SQL** → (fallback) numeric, vector+BM25, table reranked |
-| Headline total | "Total firearms manufactured in 2023?" | **numeric** (when SQL empty), vector+BM25, table reranked |
-| Which-is-highest / multi-row | "Which state reported the most?" | vector+BM25, **whole-table expansion**, SQL |
-| Cross-year / comparison | "Compare 2022 vs 2024 exports" | **comparison fan-out** (+ multi-hop), vector+BM25, whole-table |
-| Fact | "What is the time-to-crime figure?" | vector+BM25, numeric |
-| Relationship | "How is dealer X connected to Y?" | **graph (bfs/ppr)** + community context (mixed mode) |
-| Pattern | "Patterns across trafficking cases" | **graph (ppr)** + community context (mixed mode) |
-| Timeline | "Trend in thefts since 2018" | vector+BM25, **graph**, metadata/year filter |
-| Multi-doc / sensemaking | "Common themes across all reports" | **global community map-reduce** (local fallback) |
-| Visual | "What does the chart on p.12 show?" | vector+BM25 with visual boost, chart/figure VLM summary |
-| Bridge | "Find the top importer, then its origin country" | **multi-hop** decomposition + the above |
-| Event / news | "Latest ruling on this rule" | **web research** (Tavily → news corpus) + vector+BM25 |
-| Weak evidence (any) | (anything that retrieves thin) | **corrective retry** (reformulate + re-retrieve) |
-| Out-of-corpus | (no supporting evidence) | refusal — grounding-verify + `_insufficient` guard |
+| Question shape | Intent | Mode | Primary lanes |
+| --- | --- | --- | --- |
+| "What is the address of EMCO INC?" | `entity` | mixed | Table-row (deterministic), vector+BM25, graph |
+| "Which row has the highest total?" | `table` | local/mixed | SQL, table-row, whole-table expansion, vector |
+| "How many firearms were produced in 2023?" | `table` | mixed | SQL → numeric (fallback), reranker table-guarantee |
+| "What is the grand total reported?" | `fact`/`table` | local | Numeric (when SQL empty), vector+BM25 |
+| "Compare exports for 2022 vs 2023" | `table` | mixed | Comparison fan-out, SQL, year-boosted vector |
+| "How is dealer X connected to case Y?" | `relationship` | mixed | Graph (PPR or BFS) + community context |
+| "What patterns recur across dealers?" | `pattern` | mixed | Graph + community enrichment |
+| "What are the common themes across all documents?" | `multi`/`global` | global | Community map-reduce (→ local fallback) |
+| "Show me the timeline of incidents since 2019" | `timeline` | local | Metadata-filtered vector + graph |
+| "Find the manufacturer of the gun used in case Z, then its export volume" | `fact` | local | Multi-hop chaining + vector |
+| "What does this chart show?" | `visual` | local | Visual-boosted vector, `visual` corpus |
+| "What's the latest news on incident X?" | `fact` | local | Web research → news corpus → vector |
 
-> All lane toggles live under the `retrieval` config block: `hybrid`, `graph_retriever`, `graph_hops`, `sql_lane`, `numeric_lane`, `corrective` (+ `corrective_max_retries`), `multi_hop` (+ `multi_hop_min_words`), `evaluate`, `rerank`, `llm_refine`, `visual_boost`, `min_confidence`, and `default_top_k`. Web research is governed by the separate `web_search` block.
-
-To see exactly which lanes fired for a given question, pass `trace: true` to `POST /query` (or `--trace` on the CLI) and inspect the per-stage `trace` object — including `3_retrieval.graph_mode`, `3d_sql`, `3e_numeric`, `4b_corrective`, `4b_web_research`, `5b_whole_table`, and `timings_ms`.
+> Intent and mode are first decided offline by heuristics, then optionally refined by the LLM when `llm_refine` is enabled. The lanes themselves are config-gated, so the routing above degrades gracefully: with no LLM key, no community build, and `web_search` disabled, every question still answers on the deterministic hybrid + table-row + SQL + numeric lanes.
 
 ---
-📖 [Docs Home](Home.md) · [User Manual](../USER_MANUAL.md) · [Architecture](Architecture.md)
+
+## Configuration
+
+All knobs live under the `retrieval`, `reranker`, `web_search`, and `subagents` blocks. Defaults (from `atf_graphrag/config.py`):
+
+```json
+{
+  "retrieval": {
+    "default_top_k": 15,
+    "graph_hops": 2,
+    "hybrid": true,
+    "evaluate": true,
+    "rerank": true,
+    "llm_refine": true,
+    "graph_retriever": "bfs",
+    "sql_lane": true,
+    "numeric_lane": true,
+    "corrective": true,
+    "corrective_max_retries": 1,
+    "weak_top": 0.45,
+    "multi_hop": true,
+    "multi_hop_min_words": 10,
+    "visual_boost": 1.05,
+    "min_confidence": 0.10
+  },
+  "reranker": { "provider": "local", "model": "openai/gpt-4o-mini" },
+  "web_search": {
+    "provider": "offline",
+    "enabled": false,
+    "auto": true,
+    "corpus": "news",
+    "max_results": 5,
+    "min_relevance": 0.30,
+    "novelty_threshold": 0.88,
+    "min_content_chars": 200,
+    "max_ingest_per_query": 3,
+    "judge_with_llm": true,
+    "insufficient_conf": 0.45
+  }
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `retrieval.default_top_k` | Candidates carried into generation (raised to 15 for diverse 30+ doc corpora) |
+| `retrieval.graph_hops` | BFS subgraph expansion depth |
+| `retrieval.hybrid` | Enable BM25 fusion alongside dense vectors |
+| `retrieval.graph_retriever` | `bfs` (subgraph) or `ppr` (Personalized PageRank for relationship/pattern) |
+| `retrieval.sql_lane` / `numeric_lane` | Toggle the SQL and numeric-rescue lanes |
+| `retrieval.corrective` / `corrective_max_retries` | Reformulate-and-retry on weak evidence + post-generation refusal retry |
+| `retrieval.weak_top` | Top `eval_score` below which evidence is "weak" |
+| `retrieval.multi_hop` / `multi_hop_min_words` | LLM multi-hop decomposition gate + minimum question length |
+| `retrieval.visual_boost` | Score boost for table/chart/figure on table/visual intent |
+| `retrieval.min_confidence` | Floor for keeping evaluated hits |
+| `reranker.provider` | `local` (cross-feature linear), `llm`, or `bedrock` |
+| `web_search.*` | Master switch and judging thresholds for on-demand augmentation |
+
+> Configuration profiles ship under `config/` (`settings.local.json`, `settings.hybrid.json`, `settings.oss.json`, the AWS/Bedrock variants, …). The active profile is selected via the `ATF_PROFILE` environment variable, and any external provider keys are read from env (`ATF_API_TOKEN`, the parser via `ATF_PARSER`, the web-search key, etc.). See the **Configuration Reference** page for the full schema.
+
+---
+
+## Tracing a query
+
+Pass `trace=True` to `Retriever.answer()` to get the full decision record. Each numbered key mirrors a pipeline stage, `timings_ms` holds per-stage wall time, and the retrieval/rerank stages expose ranked `chunk_id`/`doc_id` lists so the evaluation harness can compute recall@k, NDCG, and MRR against a golden set without changing the `Answer` shape used by the UI.
+
+```python
+from atf_graphrag.engine import Engine
+from atf_graphrag.retrieval.pipeline import Retriever
+
+eng = Engine.load()                 # uses the ATF_PROFILE settings profile
+out = Retriever(eng).answer(
+    "Which state reported the highest total in 2023?", trace=True)
+
+print(out["answer"], out["confidence"])
+print(out["trace"]["3_retrieval"]["graph_mode"])      # bfs | ppr | none
+print(out["trace"]["3_retrieval"]["table_row_matches"])
+print(out["trace"]["5_reranking"]["reranker"])        # linear | provider name
+print(out["trace"]["timings_ms"])
+```
+
+See the **Evaluation** page for how these trace fields feed the offline scoring harness, and the **Architecture** page for how the retriever fits into the wider system.

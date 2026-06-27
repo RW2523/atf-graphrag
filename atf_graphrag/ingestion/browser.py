@@ -18,7 +18,7 @@ import importlib.util
 from typing import Optional
 
 _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-       "(KHTML, like Gecko) Chrome/123.0 Safari/537.36 ATF-GraphRAG-Crawler/1.0")
+       "(KHTML, like Gecko) Chrome/123.0 Safari/537.36 IntelliGraphRAG-Crawler/1.0")
 
 # Markers that mean "this HTML is a JS shell or an anti-bot interstitial, not
 # the real content" — used to decide when to escalate a static fetch to render.

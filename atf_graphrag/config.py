@@ -144,7 +144,7 @@ DEFAULTS: Dict[str, Any] = {
         "render_wait_ms": 0,       # extra settle time after networkidle
         "render_timeout_ms": 30000,
         "min_static_words": 80,    # below this visible-word count -> render
-        "user_agent": "ATF-GraphRAG-Crawler/1.0",
+        "user_agent": "IntelliGraphRAG-Crawler/1.0",
     },
 
     # ---- Retrieval --------------------------------------------------------

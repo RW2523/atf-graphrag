@@ -1,916 +1,1121 @@
 # IntelliGraphRAG — User Manual
 
-> **IntelliGraphRAG** (short: *IntelliGraph*) · Version **1.0.0** · Python **3.9+**
+> **IntelliGraphRAG** (short: **IntelliGraph**) is an intelligent, configuration-driven
+> GraphRAG platform: graph-grounded retrieval with **cell-level precision** over
+> documents, tables, and the web. Every component — language model, embeddings, vector
+> store, graph store, parser, reranker, guardrail — is swappable through *providers* and
+> *profiles*, so the same code runs entirely offline on your laptop or fully managed on
+> AWS, with no change to the application logic.
 >
-> An intelligent, configurable GraphRAG platform — graph-grounded retrieval with cell-level precision over documents, tables, and the web.
+> **Repository:** <https://github.com/RW2523/intelligraphrag> · **Python 3.9+** · stdlib-core
+>
+> IntelliGraphRAG was built and validated end-to-end on a large U.S. government firearms
+> & explosives regulatory dataset. That corpus is referenced throughout only as the
+> *example validation dataset* — the platform itself is completely domain-agnostic and
+> carries no built-in knowledge of any subject area.
 
-This is the comprehensive, end-to-end user manual: install it, configure it, feed it
-documents, ask hard questions, and operate it in production. Every component is
-swappable by configuration, so the same engine runs entirely on your laptop
-(stdlib-only core) or on a fully AWS-native stack.
-
-> **A note on naming.** The product is **IntelliGraphRAG**. It was built and
-> validated on a large U.S. government document corpus (ATF firearms/explosives
-> publications), so you will occasionally see *ATF* referenced as the **example /
-> validation dataset** and as a configuration prefix (`ATF_*` environment
-> variables). IntelliGraphRAG itself is **domain-agnostic** — point it at any corpus.
+This is the definitive end-to-end manual. It explains every layer of the system in depth.
+For focused deep-dives, each chapter cross-links to a companion page in the
+[project wiki](wiki/Home.md) (the wiki source lives under `docs/wiki/`).
 
 ---
 
 ## Table of Contents
 
-1. [Introduction & Concepts](#1-introduction--concepts)
-2. [Installation](#2-installation)
-3. [Configuration & Profiles](#3-configuration--profiles)
-4. [Running the App](#4-running-the-app)
-5. [Ingesting Data](#5-ingesting-data)
-6. [Asking Questions](#6-asking-questions)
-7. [Working with Tables](#7-working-with-tables)
-8. [The Knowledge Graph & Explorer](#8-the-knowledge-graph--explorer)
-9. [Operations](#9-operations)
-10. [Evaluation](#10-evaluation)
-11. [Security & Governance](#11-security--governance)
-12. [AWS-Native Deployment Summary](#12-aws-native-deployment-summary)
-13. [Troubleshooting & Where to Get More](#13-troubleshooting--where-to-get-more)
+1.  [Introduction & Core Concepts](#1-introduction--core-concepts)
+2.  [Architecture Overview](#2-architecture-overview)
+3.  [Installation & Environments](#3-installation--environments)
+4.  [Configuration & Profiles](#4-configuration--profiles)
+5.  [The Provider Layer](#5-the-provider-layer)
+6.  [The Ingestion Layer](#6-the-ingestion-layer)
+7.  [The Knowledge Layer](#7-the-knowledge-layer)
+8.  [The Retrieval Layer](#8-the-retrieval-layer)
+9.  [Web Ingestion](#9-web-ingestion)
+10. [The Web UI Tour](#10-the-web-ui-tour)
+11. [Using It Day-to-Day](#11-using-it-day-to-day)
+12. [The HTTP API](#12-the-http-api)
+13. [CLI & Scripts](#13-cli--scripts)
+14. [Operations](#14-operations)
+15. [Security & Governance](#15-security--governance)
+16. [Deployment](#16-deployment)
+17. [Evaluation](#17-evaluation)
+18. [Troubleshooting & FAQ](#18-troubleshooting--faq)
 
 ---
 
-## 1. Introduction & Concepts
+## 1. Introduction & Core Concepts
 
-### 1.1 What "GraphRAG" means here
+### What "GraphRAG" means here
 
-Classic Retrieval-Augmented Generation (RAG) embeds your documents, finds the
-nearest chunks to a question, and hands them to an LLM. That works for "find a
-paragraph that sounds like the answer," but it falls down on:
+Retrieval-Augmented Generation (RAG) answers a question by retrieving relevant text and
+asking a language model to write a grounded answer over it. Plain RAG retrieves *chunks*
+by semantic similarity, which works for prose but fails on two things that matter in real
+documents: **structured tables** (where a single cell is the answer) and **relationships
+that span documents** (where the answer is a connection, not a passage).
 
-- **Precise numbers** — "How many firearms were manufactured in 2023?" — where the
-  answer lives in one **cell** of a **table**, not a paragraph.
-- **Relationships** — "Which forms reference the same statute?" — where the answer
-  is a **path through a graph**, not a single chunk.
-- **Corpus-wide questions** — "Summarize the major themes across all reports" —
-  where no single chunk contains the answer.
+IntelliGraphRAG is **GraphRAG** because it augments classic vector retrieval with a
+**typed knowledge graph** and a **SQL-queryable table store**, and routes each question to
+whichever combination of retrieval strategies (called **lanes**) can actually answer it.
+The result is graph-grounded retrieval that can quote an exact table cell, compute an
+aggregate over every row across multiple years, traverse "who is connected to whom"
+through entities, and synthesize corpus-wide themes — all with a citation on every claim.
 
-IntelliGraphRAG combines several retrieval strategies ("lanes") under one query
-pipeline so each kind of question is routed to the machinery that answers it best:
-vector + keyword search, a typed **knowledge graph**, a dedicated **table store**
-with deterministic cell lookup and text-to-SQL, a numeric-rescue lane, and
-community summaries for global questions. Every answer carries **citations** and a
-**lane trace** so you can see exactly how it was derived.
+### Corpuses
 
-### 1.2 Core building blocks
+A **corpus** is a named, independently-stored collection of indexed content. The default
+set is:
 
-| Concept | What it is |
-|---|---|
-| **Corpus** | A named bucket of content. Defaults: `pdf`, `web`, `connected`, `visual`, `news`. You choose a corpus when you ingest, and you can query across all of them. |
-| **Chunk** | A structure-aware slice of a document with a `content_type` (`text`, `table`, `chart`, `figure`, `list`). Tables are kept **row-atomic** with the header repeated so a single row never loses its column meaning. |
-| **Vector store** | Holds chunk embeddings + payload (text, provenance, and `table_data`). Provider-swappable: `local`, `qdrant`, `opensearch`. |
-| **Knowledge graph** | Typed entities and relations extracted from the corpus, plus Leiden communities and per-community summaries. Provider-swappable: `local`, `neo4j`, `neptune`. |
-| **Table store** | A SQLite database of every extracted table (`tables` + `rows` + `categories`) that powers cell-level lookup, SQL aggregation, and cross-year consolidation. |
-| **Lane** | One retrieval strategy. The pipeline runs several in parallel and fuses the evidence (see [§6](#6-asking-questions)). |
-| **Profile** | A named configuration layer — `local`, `hybrid`, `aws`, `oss` — that swaps providers wholesale. |
+| Corpus       | Typical contents                                              |
+|--------------|--------------------------------------------------------------|
+| `pdf`        | PDFs and office/text documents (the default ingest target)   |
+| `web`        | Pages crawled from a site's `sitemap.xml`                     |
+| `connected`  | Document collections you want retrieved as a group           |
+| `visual`     | Images, charts, and scanned pages ingested via vision         |
+| `news`       | On-demand web-research results (current events/cases)         |
 
-### 1.3 Design philosophy
+Each corpus has its own vector store; the knowledge graph and table store span all of
+them. A query can be **scoped** to one or more corpuses (programmatically or by phrasing)
+or left to the corpus-selection agent to choose automatically.
 
-- **Stdlib-only core.** The HTTP API (`http.server`) and HTTP client (`urllib`)
-  use only the Python standard library, so the app *starts anywhere* with just
-  Python installed. `numpy`, `pypdf`, `requests`, `bs4`, `sentence-transformers`,
-  and friends are **optional accelerators** — install them for speed and quality,
-  but the engine degrades gracefully without them.
-- **Everything is swappable.** Providers (LLM, vision, embeddings, reranker,
-  vector store, graph store, blob store, parser, guardrail) are chosen by config.
-  Profiles bundle a coherent set.
-- **Provenance everywhere.** Tables carry `table_data`, chunks carry source name /
-  page / document id, and answers cite the cells and chunks they used.
-- **Validated.** 304 automated tests; a 50-question end-to-end evaluation harness
-  scoring ~0.86 overall with 100% refusal accuracy.
+### The multi-lane idea
+
+There is no single retrieval algorithm that is best for every question. A "what city is
+EMCO INC in?" question needs an **exact table-row** lookup; "how many pistols were made in
+2023?" needs a **SQL aggregate** or a **numeric** rescue; "how is dealer X connected to
+manufacturer Y?" needs **graph traversal**; "what are the recurring themes across all
+reports?" needs **community summaries**. IntelliGraphRAG runs a **query-understanding**
+step that classifies intent, then activates the right lanes, merges their evidence,
+re-ranks it, and only then generates an answer. See §8 for the full lane catalog.
+
+### The knowledge graph
+
+During ingestion, every chunk's entities (manufacturers, sellers, buyers, firearm types,
+incident types, locations, case references, plus generic entities) are resolved to
+canonical nodes and connected. Typed relationships extracted by the language model carry
+high weight; co-occurrence between remaining pairs is added at a lower weight. Surface
+variants ("S&W", "Smith & Wesson") collapse to one node so relationships link **across
+documents**. Tight clusters are detected (Leiden communities) and given short LLM
+briefings, which power corpus-wide "sensemaking" answers. See §7.2.
+
+### The table store
+
+Every extracted table is parsed into an addressable `table_data` grid and promoted into a
+**SQLite** store with full provenance (document, page, year, title, source chunk). Tables
+of the same kind across documents/years are consolidated into **categories** so
+cross-year questions see every edition. Tabular questions can then be answered by **SQL
+computed over all rows**, not by hoping the right fragment was retrieved. See §7.1.
+
+### Citations & grounding
+
+Every answer carries structured **citations** — source name, page, corpus, content type,
+table title, and the underlying chunk id. For numeric questions the generator is required
+to **quote the exact source row or value verbatim** before stating a number, and a
+**grounding-verifier** subagent checks that every number in the answer appears in the
+cited context (re-generating once, then caveating and cutting confidence if violations
+remain). This is what makes the platform's numbers trustworthy.
+
+> See also: [Glossary](wiki/Glossary.md) for every term used in this manual.
 
 ---
 
-## 2. Installation
+## 2. Architecture Overview
 
-### 2.1 Prerequisites
+The system is a layered stack. The **engine** (`atf_graphrag/engine.py`) is the single
+object that the API, indexer, and retriever all share; it constructs every swappable
+component from configuration via **provider factories**. Swapping a profile or a single
+provider changes only what the factories build — nothing downstream changes.
 
-- **Python 3.9 or newer.**
-- Git (to clone the repository).
-- Optional: an [OpenRouter](https://openrouter.ai) API key for full LLM
-  generation and graph extraction. Without a key, the app runs in **offline
-  (extractive) mode** — retrieval still works, answers are quoted from sources.
+```
+                          ┌──────────────────────────────────────────────┐
+                          │                  API / UI                     │
+                          │  http.server JSON API  +  single-page web UI  │
+                          │  (Chat · KB · Upload · Graph · Config ·       │
+                          │   Debug · AWS Native · /graph/view explorer)  │
+                          └───────────────────────┬──────────────────────┘
+                                                  │
+                  ┌───────────────────────────────┴───────────────────────────────┐
+                  │                          ENGINE                                 │
+                  │  wires providers + stores from config (one shared object)       │
+                  └───────┬───────────────────────────────────────────────┬────────┘
+                          │                                                 │
+          ┌───────────────┴───────────────┐               ┌────────────────┴───────────────┐
+          │        PROVIDER FACTORY        │               │            STORES               │
+          │  make_llm / make_vision /      │               │  vector  (local|qdrant|         │
+          │  make_embedder / make_reranker │               │           opensearch)           │
+          │  make_parser / make_guardrail  │               │  graph   (local|neo4j|neptune)  │
+          │  make_*_store / make_web_search│               │  blob    (local|s3)             │
+          │  → configured backend, else    │               │  table   (SQLite, per root)     │
+          │     graceful local fallback    │               └─────────────────────────────────┘
+          └───────────────┬───────────────┘
+                          │
+   ┌──────────────────────┴──────────────────────┐     ┌───────────────────────────────────┐
+   │                INGESTION                      │     │       SUBAGENT QUALITY GATES       │
+   │  parse → chunk → metadata → embed →           │◄───►│  parse_quality · chunk_gate ·      │
+   │  vector upsert + graph build + table promote  │     │  metadata_audit · index_audit ·    │
+   │  (parsers: docling | advanced | textract |    │     │  graph_quality · grounding_verify  │
+   │   bedrock | bda;  VLM for charts/scans)       │     │  (gates BETWEEN every stage)       │
+   └──────────────────────┬──────────────────────┘     └───────────────────────────────────┘
+                          │
+   ┌──────────────────────┴────────────────────────────────────────────────────────────────┐
+   │                                     RETRIEVAL                                            │
+   │  query understanding → corpus selection → [multi-hop] → multi-lane retrieve →            │
+   │  evaluate → [SQL] [numeric] → [corrective] [web-research] → rerank →                     │
+   │  whole-table expansion → generation (citations) → [retry] → grounding verify             │
+   │  lanes: vector+BM25 · graph (BFS/PPR) · table-row · text-to-SQL · numeric ·              │
+   │         global/community · corrective · multi-hop · web research                         │
+   └─────────────────────────────────────────────────────────────────────────────────────────┘
+```
 
-### 2.2 Quick start (core only)
+### The engine
+
+`Engine.__init__` builds the intelligence layer (`llm`, `embedder`, `vision`, `reranker`),
+the safety layer (`guardrail`), the ingestion layer (`parser`, optional AWS-native
+`entity_extractor`, `web_search`), and the storage layer (per-corpus vector stores built
+lazily via `vstore(corpus)`, plus `graph` and `blob`). It also exposes `commit()`
+(persist every store), `stats()`, and `set_api_key()` — which applies a browser-supplied
+key and rebuilds the LLM/vision providers so generation switches from offline to online
+**without a restart** (embeddings stay local to keep the vector space consistent).
+
+### The provider factory
+
+`atf_graphrag/providers/__init__.py` holds one `make_<component>()` factory per swappable
+component. Each returns the configured backend when its dependency and credentials are
+present, and otherwise **degrades gracefully to the local/offline default with a one-line
+warning** — so "no key / no network" still runs. This single pattern is what makes
+profiles work. See §5.
+
+### Subagent quality gates
+
+Between every pipeline stage sits a small **subagent** that enforces quality (all on by
+default, each toggleable under `subagents` in config):
+
+| Gate              | Boundary            | What it does                                                |
+|-------------------|---------------------|-------------------------------------------------------------|
+| `parse_quality`   | parse → chunk       | Detects silently-bad parser output and re-parses via fallback |
+| `chunk_gate`      | chunk → index       | Blocks junk (URL-only, nav timestamps, TOC) from the index  |
+| `metadata_audit`  | enrich → index      | Per-document coverage report                                 |
+| `index_audit`     | index → store       | Round-trip retrieval probe (is the doc actually findable?)   |
+| `graph_quality`   | graph → community   | Junk-rate + typed-edge statistics                            |
+| `grounding_verify`| generate → answer   | Every number in the answer must appear in cited context      |
+
+> Deep-dive: [Architecture](wiki/Architecture.md).
+
+---
+
+## 3. Installation & Environments
+
+### The stdlib-core philosophy
+
+The core runs on **nothing but the Python standard library** — `http.server` for the API,
+`urllib` for HTTP, `sqlite3` for the table store, `json`/`re` everywhere. Heavier
+libraries (`numpy`, `pypdf`, `sentence-transformers`, `bs4`, `playwright`, …) are
+**optional accelerators**: the provider factories and loaders detect them at runtime and
+use them when present, falling back to a pure-stdlib path otherwise. This means a fresh
+clone runs immediately, and you add capability by installing only what you need.
+
+### Quick start
 
 ```bash
-git clone <your-repo-url> intelligraphrag
+git clone https://github.com/RW2523/intelligraphrag
 cd intelligraphrag
-
-python3 -m venv .venv && source .venv/bin/activate
-
-# Core dependencies (numpy, pypdf, requests, bs4, sentence-transformers, ...)
-pip install -r requirements.txt
-
-# Start the server + web UI
-python -m atf_graphrag serve
+python -m atf_graphrag serve        # API + web UI at http://localhost:8077
 ```
 
-Then open **http://localhost:8077**.
+Open <http://localhost:8077>, optionally paste an OpenRouter key in the browser, load the
+bundled sample, and start asking questions. No key is required to run — generation
+degrades to an offline path.
 
-> Even with **no** dependencies installed, `python -m atf_graphrag serve` will
-> start — the core falls back to dependency-free implementations (deterministic
-> hashing embeddings, stdlib HTTP, extractive answers). Installing
-> `requirements.txt` is strongly recommended for real use.
+### Optional dependency groups
 
-### 2.3 Optional dependency groups
+Install groups as you need them (see `requirements.txt` and `requirements-aws.txt`):
 
-| Group | Install | Adds |
-|---|---|---|
-| **Core accelerators** | `pip install -r requirements.txt` | numpy vectors, `pypdf`/PyMuPDF + pdfplumber parsing, `sentence-transformers` embeddings, `bs4` web extraction |
-| **AWS-native** | `pip install -r requirements-aws.txt` | `boto3` + Bedrock / Textract / BDA / Neptune / OpenSearch / Qdrant / S3 / DynamoDB clients |
-| **Docling parser** | `pip install docling` | DocLayNet layout + TableFormer structured-table parsing (the default `parser.provider`, with automatic fallback to `advanced` when not installed) |
-| **JS-rendered websites** | see below | headless-browser rendering for bot-protected / JavaScript sites |
+| Capability                         | Packages                              | Enables                                              |
+|------------------------------------|---------------------------------------|-----------------------------------------------------|
+| Faster vector math                 | `numpy`                               | Accelerated embedding/cosine ops                    |
+| Basic PDF text                     | `pypdf`                               | Lightweight PDF text extraction                     |
+| Advanced PDF + tables              | `pymupdf` (fitz) + `pdfplumber`       | The `advanced` parser: fast text + table extraction |
+| Structured tables (default parser) | `docling`                             | DocLayNet layout + TableFormer structured tables    |
+| Local neural embeddings            | `sentence-transformers`               | `all-MiniLM-L6-v2` (384-dim) embeddings             |
+| HTML parsing                       | `bs4` + `lxml`                        | Clean web extraction + HTML-table → markdown        |
+| JS-rendered pages                  | `playwright` + `playwright install chromium` | Headless rendering for client-rendered sites |
+| Leiden communities                 | `leidenalg` + `igraph` (or `graspologic`) | Tight community detection                       |
+| Graph algorithms                   | `networkx`                            | Community detection + PPR graph retrieval           |
+| AWS-native backends                | `boto3` (+ `requirements-aws.txt`)    | Bedrock, Textract, BDA, S3, Neptune, OpenSearch     |
 
-### 2.4 Playwright (for JavaScript-heavy or bot-protected sites)
+> Each optional group is *additive*. If a configured provider's dependency is missing, the
+> factory logs `[providers] … unavailable … falling back to local default` and continues.
 
-The web crawler (see [§5.3](#53-ingesting-websites-via-sitemap)) fetches pages
-with the stdlib HTTP client by default, which handles ordinary server-rendered
-HTML. For sites that render content client-side with JavaScript, install a
-headless browser:
+### Docker & docker-compose
+
+A `Dockerfile` and `docker-compose.yml` are provided for a reproducible container:
 
 ```bash
-pip install playwright
-playwright install chromium
+docker compose up        # builds the image and serves on the configured port
 ```
 
-> Plain static crawling needs nothing beyond the core. Only add Playwright if a
-> target site returns near-empty HTML to a simple fetch.
+The compose file is the starting point for the `hybrid`/`aws` profiles (mount your config
+and pass credentials via environment). See §16 for deployment specifics and
+[Deployment & AWS](wiki/Deployment-and-AWS.md).
 
-### 2.5 Docker
-
-A `Dockerfile` and `docker-compose.yml` are included:
-
-```bash
-# Build and run with compose
-docker compose up --build
-
-# Or build the image directly
-docker build -t intelligraphrag .
-docker run -p 8077:8077 \
-  -e OPENROUTER_API_KEY=sk-or-v1-... \
-  -v "$PWD/storage:/app/storage" \
-  intelligraphrag
-```
-
-Mount a host volume at `/app/storage` to persist the vector / graph / blob stores
-and the table database across container restarts.
+> Full walkthrough: [Installation & Quickstart](wiki/Installation-and-Quickstart.md).
 
 ---
 
-## 3. Configuration & Profiles
+## 4. Configuration & Profiles
 
-### 3.1 How configuration is layered
+### The 4-layer precedence
 
-Settings come from `atf_graphrag/config.py` and are merged **lowest priority
-first**:
+Settings are merged from lowest to highest priority (`atf_graphrag/config.py`):
 
-```text
-1. DEFAULTS              (atf_graphrag/config.py — the "local" profile)
-2. config/settings.json              (optional, applies to all profiles)
-3. config/settings.<profile>.json    (optional, profile-specific)
-4. environment variables             (ATF_*, OPENROUTER_*, AWS_*, TAVILY_*)
+```
+1. DEFAULTS                        (in config.py — the local/open-source profile)
+2. config/settings.json            (optional, applies to every profile)
+3. config/settings.<profile>.json  (optional, profile = local | hybrid | aws | oss)
+4. environment variables           (ATF_* and OPENROUTER_* / AWS_* / TAVILY_*)
 ```
 
-Later layers override earlier ones via a deep merge, so you only specify the keys
-you want to change. `config/settings.json` and the per-profile files are optional;
-the engine runs on `DEFAULTS` alone.
+Layers 1–3 are deep-merged (nested dicts merge key-by-key); environment variables are
+applied last and win. The active profile comes from `ATF_PROFILE`, else `settings.json`'s
+`profile`, else `local`.
 
-### 3.2 Profiles
+### Profiles
 
-The active profile is set by the `ATF_PROFILE` environment variable (or the
-`profile` key in config). Profiles select coherent provider sets:
+| Profile  | Intent                                                                          |
+|----------|--------------------------------------------------------------------------------|
+| `local`  | Default. OpenRouter (or offline) models + all-local stores. Runs anywhere.     |
+| `oss`    | Fully open-source backends (e.g. Qdrant + Neo4j) with no managed dependencies. |
+| `hybrid` | Mix of local and managed components (e.g. local stores + Bedrock generation).  |
+| `aws`    | Fully AWS-native: Bedrock + Textract/BDA + S3 + Neptune/OpenSearch.            |
 
-| Profile | Typical providers |
-|---|---|
-| **`local`** (default) | OpenRouter LLM/vision; `sentence_transformer` embeddings; local vector / graph / blob stores. Runs entirely on your machine. |
-| **`hybrid`** | Mix cloud models with local storage (e.g. cloud LLM, local vectors), or vice-versa. |
-| **`aws`** | Bedrock LLM/vision/embeddings; Qdrant/OpenSearch vectors; Neptune/Neo4j graph; S3 blobs; DynamoDB catalog; Bedrock Guardrails. |
-| **`oss`** | Fully open-source / self-hosted stack. |
+Each profile is just a `config/settings.<profile>.json` overriding the relevant provider
+blocks. Because the engine reads only the merged config, switching profiles never touches
+application code.
 
-```bash
-ATF_PROFILE=local python -m atf_graphrag serve     # default
-ATF_PROFILE=aws   python -m atf_graphrag serve     # AWS-native
-```
+### Environment variables
 
-### 3.3 Key environment variables
+| Variable             | Effect                                                                         |
+|----------------------|--------------------------------------------------------------------------------|
+| `ATF_PROFILE`        | Select the active profile (`local`/`hybrid`/`aws`/`oss`).                        |
+| `ATF_DATA_DIR`       | Storage root for all stores (default `./storage`).                              |
+| `ATF_LLM_MODEL`      | Override the LLM model id.                                                      |
+| `ATF_VISION_MODEL`   | Override the vision model id.                                                   |
+| `ATF_EMBED_PROVIDER` | Override the embeddings provider.                                               |
+| `ATF_PARSER`         | Override the ingestion parser (`docling`/`advanced`/`textract`/`bedrock`/`bda`).|
+| `ATF_PORT`           | API server port (default 8077).                                                |
+| `ATF_API_TOKEN`      | Bearer token required on POST endpoints (see §15).                              |
+| `ATF_PREVIEW_ROOTS`  | Extra directories to resolve original files for KB preview.                     |
+| `ATF_WEB_SEARCH`     | Set to `0` to force-disable web research even when a Tavily key is present.     |
+| `OPENROUTER_API_KEY` | OpenRouter key for LLM/vision/embeddings.                                       |
+| `TAVILY_API_KEY`     | Setting this **auto-enables** on-demand web research (provider → `tavily`).      |
+| `AWS_*`              | Standard AWS credential/region variables, read at provider call-time.          |
 
-| Variable | Purpose |
-|---|---|
-| `ATF_PROFILE` | Active profile: `local` \| `hybrid` \| `aws` \| `oss`. |
-| `OPENROUTER_API_KEY` | Key for OpenRouter LLM / vision / embeddings. |
-| `ATF_API_TOKEN` | Bearer token required on POST endpoints (see [§11](#11-security--governance)). |
-| `ATF_DATA_DIR` | Where stores live (default `./storage`). |
-| `ATF_PARSER` | Force a parser: `docling` \| `advanced` \| `textract` \| `bedrock` \| `bda`. Overrides config. |
-| `ATF_PORT` | Override the listen port (default `8077`). |
-| `ATF_LLM_MODEL` / `ATF_VISION_MODEL` | Override model ids. |
-| `ATF_EMBED_PROVIDER` | Override embeddings provider. |
-| `PREVIEW_ROOTS` (legacy `ATF_PREVIEW_ROOTS`) | Extra directories the document preview may read original files from. |
-| `TAVILY_API_KEY` | Enables on-demand web research (auto-enables the `tavily` provider unless `ATF_WEB_SEARCH=0`). |
-| `AWS_*` | Standard AWS credentials/region for the `aws` profile. |
+### Setting the model key: browser vs environment
 
-> **Secrets** (`OPENROUTER_API_KEY`, AWS keys) are read at **provider call-time**,
-> not baked into a config file — so they never get written to disk by the app.
+There are two ways to supply the OpenRouter key:
 
-### 3.4 Top-level configuration sections
+- **Environment** — set `OPENROUTER_API_KEY` before `serve`. Persistent, good for servers.
+- **Browser** — paste the key (and optionally a model id) into the Configuration tab; the
+  UI calls `POST /api/key`, which sets a **runtime, in-memory** key and rebuilds the
+  LLM/vision providers immediately. The runtime key **takes priority over the env var**
+  and is not persisted to disk by default. This is the fastest way to go from offline to
+  online without a restart.
 
-A condensed map of the most-used keys (full defaults are in
-`atf_graphrag/config.py`):
+> Full key-by-key reference: [Configuration Reference](wiki/Configuration-Reference.md).
 
-```jsonc
+---
+
+## 5. The Provider Layer
+
+Every swappable component is constructed in `atf_graphrag/providers/__init__.py`. The
+factory rule is uniform: **try the configured backend; on missing dependency/credentials,
+warn once and fall back to the local default.** Below, each provider with its options.
+
+### LLM (`make_llm`)
+
+All chat/generation. Providers: `openrouter` (OpenAI-compatible, default when a key is
+set), `bedrock` (Amazon Bedrock Converse; passes guardrail config through inline), and
+`offline` (deterministic degraded fallback when no key/network). Options: `model`,
+`base_url`, `temperature`, `max_tokens`, plus **model tiering** — `cheap_model` (used for
+high-volume steps: per-chunk extraction, community summaries, map-reduce MAP) and
+`strong_model` (final synthesis). Both default to `model`.
+
+### Vision (`make_vision`)
+
+Multimodal extraction of images, charts, and scanned pages. Providers: `openrouter`,
+`bedrock`, `offline`. Used by the advanced parser and by `index_visual`.
+
+### Embeddings (`make_embedder`)
+
+Providers: `sentence_transformer` (local neural, default — `all-MiniLM-L6-v2`, 384-dim),
+`local` (dependency-free deterministic hashing, the ultimate offline fallback),
+`openrouter`, and `bedrock`. Options: `model`, `dim`, `batch_size`. Embeddings stay local
+even when a browser key is supplied, to keep the vector space consistent with already-
+indexed content.
+
+### Reranker (`make_reranker`)
+
+Providers: `local` (cross-feature linear blend, default), `llm` (LLM listwise rerank),
+`bge` (cross-encoder, if installed), `bedrock`. A provider reranker may return an
+authoritative reordering; otherwise the linear blend stands.
+
+### Vector store (`make_vector_store`)
+
+Per-corpus. Providers: `local` (file-backed, default), `qdrant`, `opensearch`. Option:
+`path`.
+
+### Graph store (`make_graph_store`)
+
+Providers: `local` (file-backed, default), `neo4j`, `neptune`. Neo4j reads
+`uri`/`user`/`password` from env when selected.
+
+### Blob store (`make_blob_store`)
+
+Providers: `local` (default), `s3`. Holds metadata/manifest blobs.
+
+### Parser (`make_parser`)
+
+Ingestion document parsing. Providers: `docling` (DocLayNet + TableFormer structured
+tables — default; ~4.2 s/page; falls back to `advanced` if not installed), `advanced`
+(fast PyMuPDF + pdfplumber), `textract` (AWS structured/OCR), `bedrock` (foundation-model
+parsing), `bda` (Amazon Bedrock Data Automation; needs `bda.bucket` + `project_arn`). See
+§6.1.
+
+### Guardrail (`make_guardrail`)
+
+Content safety over LLM I/O. Providers: `none` (no-op pass-through, default), `local`
+(regex PII redaction + denied-terms blocklist), `bedrock` (Amazon Bedrock Guardrails, with
+optional Automated Reasoning). See §15.
+
+### Web search (`make_web_search`) & entity extractor (`make_entity_extractor`)
+
+`web_search`: `offline` (no-op, default) or `tavily` (needs `TAVILY_API_KEY`) — powers the
+web-research lane (§8.9). `entity_extractor`: returns `None` unless
+`ingestion.extraction.provider = "comprehend"` (AWS-native NER+PII), in which case callers
+use it instead of LLM extraction.
+
+### Selection & fallback in practice
+
+For example, with `vector_store.provider = "qdrant"` but no Qdrant reachable,
+`make_vector_store` catches the exception, prints the fallback warning, and returns
+`LocalVectorStore`. The indexer and retriever are oblivious — they call the same
+`upsert`/`search` interface either way. This is the mechanism behind "configure once, run
+anywhere."
+
+---
+
+## 6. The Ingestion Layer
+
+Pipeline: **parse → structure-aware chunk → metadata enrich → embed → vector upsert +
+graph build + table promote**, with subagent gates between stages. Driven by
+`atf_graphrag/indexing/indexer.py`.
+
+### 6.1 Parsing
+
+The configured parser provider returns a uniform `(page_no, text)` contract:
+
+- **`docling`** (default) — DocLayNet layout detection + **TableFormer** for structured
+  tables, producing high-fidelity markdown tables.
+- **`advanced`** — PyMuPDF for fast text + **pdfplumber** for table extraction; preserves a
+  VLM cache and a scanned-page fallback.
+- **`textract` / `bedrock` / `bda`** — AWS-native parsing (structured/OCR, foundation-model,
+  and Bedrock Data Automation respectively).
+
+Override the parser per-run with `ATF_PARSER` (e.g. `ATF_PARSER=advanced`). Pages that are
+empty or look scanned trigger the **VLM fallback** (`_ocr_or_vision`): the page is rendered
+to a PNG at 150 DPI and sent to the vision model with an instruction to extract all text,
+tables as `| col | col |` rows, and chart data values/labels. The `parse_quality` subagent
+re-parses silently-bad output via the fallback parser.
+
+A year is extracted from the filename (e.g. `afmer_2022.pdf`) so date-filtered queries
+route correctly even when the body lacks an explicit date.
+
+### 6.2 Structure-aware chunking
+
+`atf_graphrag/ingestion/chunker.py` classifies each block as `text`, `table`, `chart`,
+`figure`, or `list`, returning `(section_heading, chunk_text, content_type)` triples:
+
+- **Tables** are kept **row-atomic**: the chunker greedily absorbs the whole contiguous
+  table, prefixes it with `[TABLE: heading]`, and splits large tables **between row
+  groups** (never mid-row), repeating the header in each piece for context.
+- **Charts/figures** get `[CHART]` / `[FIGURE]` prefixes; their descriptions are **never
+  truncated** (the tail holds data values) — they split at sentence boundaries keeping the
+  prefix.
+- **Lists** are kept whole; prose uses a sentence-snapping sliding window with overlap
+  (`chunk_size` 900, `chunk_overlap` 150 by default).
+- A real table row is distinguished from number-dense prose (markdown rows, or short
+  multi-column lines with 2+ numeric fields and 2+-space gaps), so number-heavy paragraphs
+  are not misclassified.
+- Micro-chunks (< 40 chars) are dropped.
+
+VLM-extracted visual content carries an inline `[VLM …]` marker so the chunker preserves its
+content type, and web-extracted tables arrive as `[EXTRACTED TABLE]` markdown (§9).
+
+### 6.3 Indexing
+
+For each chunk (`_index_text`):
+
+1. **Document-scoped dedup** — a hash keyed on `corpus:document_id:` drops repeated pages
+   *within* a document but **keeps** identical text across *different* documents (the same
+   table row in the 2024 and 2025 editions both stay retrievable, each with its own
+   provenance).
+2. **Table parsing** — for `table` chunks, `parse_table` (markdown first, then columnar)
+   produces the `table_data` grid, and `table_title_from` records a title.
+3. **Content typing** — `table`/`chart`/`figure` chunks set `visual_content_type`; VLM-
+   derived blocks are tagged vision-extracted with the model name.
+4. **Metadata enrichment** — `enrich_metadata` fills typed fields (manufacturers, sellers,
+   buyers, firearm/incident type, location, case reference, US state, report type, dates).
+5. **`chunk_gate` subagent** — junk never enters the index (tables, VLM output, and the
+   doc-summary anchor are protected).
+6. **Context-prepended embeddings** — `table`/`chart`/`figure` chunks **and** number-dense
+   text chunks are embedded with a prepended `[doc title · year · section/table title]`
+   context so near-identical rows across years separate in vector space. The **raw text is
+   kept** for display and BM25; only the embedding sees the prefix.
+7. **Vector upsert + graph build** — the chunk and its vector are stored and the graph is
+   updated (§7.2).
+
+A **document-summary anchor** chunk is injected per file (first-page text, flattened to
+prevent re-splitting) so headline totals are findable.
+
+#### The `table_data` shape
+
+```json
 {
-  "profile": "local",
-  "llm":         { "provider": "openrouter|bedrock|offline", "model": "openai/gpt-4o-mini",
-                   "cheap_model": "", "strong_model": "", "temperature": 0.1,
-                   "max_tokens": 1024, "offline_fallback": true },
-  "vision":      { "provider": "openrouter|bedrock|offline", "model": "openai/gpt-4o-mini" },
-  "embeddings":  { "provider": "sentence_transformer|local|openrouter|bedrock",
-                   "model": "all-MiniLM-L6-v2", "dim": 384 },
-  "reranker":    { "provider": "local|llm|bedrock" },
-  "vector_store":{ "provider": "local|qdrant|opensearch", "path": "storage/vectors" },
-  "graph_store": { "provider": "local|neo4j|neptune", "path": "storage/graph" },
-  "blob_store":  { "provider": "local", "path": "storage/blobs" },
-  "ingestion":   { "chunk_size": 900, "chunk_overlap": 150,
-                   "ocr": { "provider": "auto" },
-                   "parser": { "provider": "docling" },
-                   "orchestrator": "sequential|langgraph",
-                   "llm_extraction": "off|auto|on",
-                   "llm_extraction_auto_max_pages": 40,
-                   "auto_enrich": true,
-                   "extraction": { "provider": "llm|comprehend" } },
-  "subagents":   { "parse_quality": true, "chunk_gate": true, "metadata_audit": true,
-                   "index_audit": true, "graph_quality": true, "grounding_verify": true },
-  "guardrails":  { "provider": "none|local|bedrock", "enabled": false,
-                   "redact_pii": true, "denied_terms": [] },
-  "web":         { "sitemaps": [], "max_pages": 50, "crawl_delay": 1.0,
-                   "respect_robots": true, "ingest_linked_pdfs": true, "pdf_corpus": "pdf" },
-  "retrieval":   { "default_top_k": 15, "graph_hops": 2, "hybrid": true,
-                   "graph_retriever": "bfs|ppr", "sql_lane": true, "numeric_lane": true,
-                   "corrective": true, "multi_hop": true, "min_confidence": 0.10 },
-  "graph":       { "communities": { "enabled": false, "max_cluster_size": 10,
-                                    "min_community_size": 3 } },
-  "corpora":     ["pdf", "web", "connected", "visual", "news"],
-  "web_search":  { "provider": "offline|tavily", "enabled": false, "auto": true,
-                   "corpus": "news" },
-  "server":      { "host": "127.0.0.1", "port": 8077, "auth_token": "",
-                   "preview_roots": [] }
+  "columns": ["State", "2022", "2023"],
+  "rows": [
+    ["Texas",   "1,234", "1,310"],
+    ["Florida", "987",   "1,002"]
+  ],
+  "n_rows": 2,
+  "n_cols": 3,
+  "format": "markdown"
 }
 ```
 
-### 3.5 Setting the OpenRouter key (browser or environment)
+`format` is `"markdown"` or `"columnar"`. If a header row is all-numeric, synthetic
+`col1..colN` names are used. This grid is what the table-row lane, the SQL lane, and the
+generator's verbatim-quote requirement all read from.
 
-**Option A — environment variable (recommended for servers):**
+#### Vector payload + provenance
 
-```bash
-export OPENROUTER_API_KEY=sk-or-v1-...
-python -m atf_graphrag serve
-```
+Each stored chunk carries its text, `embed_text`, `corpus`, `content_type`,
+`document_id`/`document_title`/`source_name`/`file_name`, `page_number`, `source_type`,
+`source_url`, `document_date`, `extraction_method` (text/vision/table_extraction/sql/web),
+`extraction_summary`, `table_data`, `table_title`, typed entity fields, `us_state`,
+`report_type`, and a `confidence`. This is the provenance that surfaces in citations.
 
-**Option B — from the browser (handy for a quick start):** open the **Configuration**
-tab in the web UI, paste your key into *OpenRouter API key*, and click **Save**.
-This calls `POST /api/key` and sets the key **in memory only** for the running
-process. A runtime key set this way **takes priority over** the environment
-variable. The sidebar shows a green dot next to *API key* when one is active.
-
-> Without a key, the app runs in **offline (extractive) mode**: retrieval and
-> table lookup still work, but answers are quoted directly from the sources
-> instead of being synthesized by an LLM.
-
-### 3.6 `run.sh`
-
-`./run.sh` is a convenience launcher: it `cd`s into the repo, loads a `.env` file
-if present, prints the active profile, and runs `python3 -m atf_graphrag serve`.
-
-```bash
-# .env
-ATF_PROFILE=local
-OPENROUTER_API_KEY=sk-or-v1-...
-ATF_API_TOKEN=choose-a-long-random-string
-```
-
-```bash
-./run.sh
-```
+> Deep-dives: [Ingestion & Parsing](wiki/Ingestion-and-Parsing.md) ·
+> [Tables & SQL](wiki/Tables-and-SQL.md).
 
 ---
 
-## 4. Running the App
+## 7. The Knowledge Layer
 
-### 4.1 The module CLI
+### 7.1 The SQLite table store
 
-Everything is driven through `python -m atf_graphrag <command>`:
+`atf_graphrag/indexing/table_store.py` promotes every chunk's `table_data` into SQLite with
+full provenance. Schema:
 
-```bash
-python -m atf_graphrag serve                         # HTTP API + web UI at :8077
-python -m atf_graphrag ingest <path|dir> [corpus]    # index a file or directory
-python -m atf_graphrag visual <image> [corpus]       # vision ingestion of an image
-python -m atf_graphrag query "<question>" [--trace]  # ask from the command line
-python -m atf_graphrag stats                         # engine statistics
-python -m atf_graphrag demo                          # ingest bundled sample + run queries
+```sql
+tables(id, doc, page, year, title, columns, n_rows, chunk_id,
+       search_blob, category, cat_conf)
+rows(table_id, idx, cells)              -- one row per source row, cells = JSON array
+categories(category, n_tables, years, confidence, name, reason, summary)
 ```
 
-The default corpus for `ingest` is `pdf`; for `visual` it is `visual`.
+- **Build** (`build`) scans every corpus's payloads for `table_data` and inserts a `tables`
+  row plus its `rows`. It runs automatically and rebuilds when the corpus table count
+  changes (`get_store`).
+- **Cross-document category consolidation** (`consolidate`) groups same-kind tables across
+  documents/years by a **signature** (title + filename + non-`col` column names + width,
+  with years/numbers removed). A table joins a category only when its signature overlaps
+  the seed **≥ 0.55 Jaccard AND the column count matches**; otherwise it stays standalone.
+  **No rows are ever physically merged** — the category is a label that lets retrieval pull
+  every year of a family and lets SQL `GROUP BY year` across them.
+- **LLM catalog summaries** (`summarize_categories`) generate a `{name, reason, summary}`
+  for the largest categories (cached; offline → no-op). These feed the SQL prompt and the
+  `/api/tables/categories` inspection endpoint, and are filled lazily when a candidate's
+  category has no catalog entry yet.
 
-### 4.2 Starting the server
+The store's `find_tables` ranks candidates by token overlap (title + doc + columns + sample
+cells) with a year-match boost, then expands to sibling tables of the same category from
+other years so cross-year questions see every edition. `query` is the text-to-SQL lane
+(§8.5).
 
-```bash
-$ python -m atf_graphrag serve
-[IntelliGraphRAG] profile=local llm=openrouter embeddings=sentence_transformer ...
-[IntelliGraphRAG] WARNING: no API auth token set and CORS is open — local dev only.
-[IntelliGraphRAG] listening on http://127.0.0.1:8077
-```
+### 7.2 The typed knowledge graph
 
-> If you set a profile that requires auth before deployment, the server **refuses
-> to start** an unauthenticated, CORS-open API — set `ATF_API_TOKEN` (or
-> `server.auth_token`) to proceed. See [§11](#11-security--governance).
+#### Ontology
 
-### 4.3 The web UI tour
+`atf_graphrag/extraction/ontology.py` defines a **closed ontology** of 7 entity types
+(`person`, `organization`, `location`, `firearm`, `manufacturer`, `incident`, `case`) and 8
+relationship types (`MANUFACTURED_BY`, `SOLD_BY`, `PURCHASED_BY`, `LOCATED_IN`,
+`INVOLVED_IN`, `TRACED_TO`, `OCCURRED_AT`, `ASSOCIATED_WITH`). The extraction prompt
+constrains the model to these types and validates output with Pydantic, dropping anything
+out-of-ontology. Each entity and relation also carries a one-clause **description**, which
+flows onto graph nodes/edges and into community briefings. Calibration rules forbid using
+dates as entities or making the document itself a relation endpoint.
 
-Open **http://localhost:8077**. The left sidebar shows the live provider/model and
-API-key status; the navigation tabs are:
+#### Parallel typed extraction
 
-```text
-◆ IntelliGraphRAG — Knowledge Console
-┌──────────────────┬─────────────────────────────────────────────────────────┐
-│ 💬 Chat          │  Ask questions across your documents. Answers stream      │
-│ 📚 Knowledge Base│  with citations + an expandable lane trace.               │
-│ ↑  Upload        │                                                           │
-│ ⎇  Graph         │  [chunks: 12,480]  [graph nodes: 3,901]  [communities: 47]│
-│ 🧰 Configuration │                                                           │
-│ 🐛 Debug         │  > How many firearms were manufactured in 2023?           │
-│ ☁  AWS Native    │                                                           │
-└──────────────────┴─────────────────────────────────────────────────────────┘
-```
+Typed entity/relation extraction runs per chunk when a model is configured. The mode is
+`ingestion.llm_extraction`: `off` (co-occurrence graph only), `on` (every chunk), or `auto`
+(only documents ≤ `llm_extraction_auto_max_pages`, default 40, so bulk uploads stay fast
+while small/connected sets get rich extraction). Post-ingest, `auto_enrich` runs a
+journaled background typed-graph enrichment over **new** chunks. Existing corpora can be
+enriched in parallel via the Graph tab / `POST /api/graph/enrich`.
 
-| Tab | What it does |
-|---|---|
-| **Chat** (Ask) | The main question box. Type a question, get a grounded answer with citations and a collapsible trace showing which lanes fired. |
-| **Knowledge Base** (Documents) | Every ingested document, aggregated from the vector store: chunk count, content-type mix (text/table/chart), corpus, page span, extraction method, ingest time. Click a row to preview the original file; filter with the search box; load a saved **seed** in one click. |
-| **Upload** | Drag-and-drop or pick files/folders, choose the target corpus, sync vs. async mode, and the LLM-extraction level (`off`/`auto`/`on`). Posts to `/api/upload`. |
-| **Graph** | The in-app knowledge-graph view; the full standalone Explorer is at **`/graph/view`** (see [§8](#8-the-knowledge-graph--explorer)). |
-| **Configuration** | Set the OpenRouter key, view providers/models, apply config blocks, and toggle extraction. |
-| **Debug** | Run **one file** through every pipeline stage (parse → chunk → index → graph → communities → query) on an isolated temp engine, with timing, so you can see exactly what happens. Your main corpus is untouched. |
-| **AWS Native** | The one-click AWS control plane: Plan → Provision → Smoke → Teardown (see [§12](#12-aws-native-deployment-summary)). |
+#### Entity resolution
+
+`atf_graphrag/extraction/entity_resolution.py` collapses surface variants to one canonical
+node so relationships link across documents. Two layers: a **deterministic** `normalise`
+(lowercase, `&`→`and`, strip corporate suffixes, alias table) that yields stable keys
+across runs, and an **incremental fuzzy** resolver (difflib ratio ≥ 0.88, blocked by
+type+prefix for speed). `canonical(name, type)` is called before any node/edge creation.
+
+#### Graph construction
+
+In `_build_graph`, typed relations (weight 2, carrying descriptions) take precedence;
+co-occurrence edges (weight 1) are added **only** between pairs without a typed relation —
+keeping the graph from becoming a dense low-signal clique.
+
+#### Leiden communities + summaries
+
+`atf_graphrag/graph/communities.py` clusters the typed graph into communities (preference
+order: **graspologic hierarchical Leiden → leidenalg/igraph Leiden → networkx Louvain**),
+keeps communities ≥ `min_community_size` (default 3), and writes a short LLM briefing per
+cluster (`{name, summary}`) with member entities, relations, and **source chunk_ids** so
+every discovered pattern traces back to documents. Summaries are cached by a hash of the
+member set (zero new LLM calls for unchanged clusters). The whole build is gated behind
+`graph.communities.enabled` (it costs one LLM call per cluster). An optional Phase-A
+**pruning** step drops weak, untyped edges between obscure nodes before clustering.
+
+#### Node verify / prune
+
+`atf_graphrag/graph/verify.py` and `pruning.py` provide LLM-assisted entity verification
+and noise pruning to keep the graph clean (junk nodes removed, weak edges dropped),
+reported by the `graph_quality` subagent.
+
+> Deep-dive: [Knowledge Graph](wiki/Knowledge-Graph.md).
 
 ---
 
-## 5. Ingesting Data
+## 8. The Retrieval Layer
 
-IntelliGraphRAG routes each source to the right pipeline automatically. You can
-ingest from the CLI, by HTTP, or via the Upload tab.
+`atf_graphrag/retrieval/pipeline.py` orchestrates a small state machine. Full flow:
 
-### 5.1 PDFs and other files
-
-**CLI:**
-
-```bash
-# A single file into the default 'pdf' corpus
-python -m atf_graphrag ingest reports/afmer-2023.pdf
-
-# A whole directory (recursive) into a named corpus
-python -m atf_graphrag ingest ./Rag_Dataset pdf
+```
+query understanding → corpus selection → [global short-circuit] → [multi-hop] →
+multi-lane retrieve → evaluate → [SQL lane] → [numeric lane] → [corrective] →
+[web-research] → rerank → whole-table expansion → generation → [retry] →
+grounding verify
 ```
 
-**HTTP:**
+**Query understanding** (`QueryUnderstandingAgent`) classifies *intent*
+(`fact`/`entity`/`relationship`/`pattern`/`timeline`/`table`/`visual`/`multi`) and *mode*
+(`local`/`mixed`/`global`) from keyword heuristics, with optional LLM refinement (gated by
+`retrieval.llm_refine`). Domain hints (manufacture/export/import/pmf/trace/theft/arson/
+explosives/selling) are stored for scoring. **Corpus selection** (`CorpusSelectionAgent`)
+honors an explicit programmatic pin (`plan.filters["corpus"]`), then a corpus named in the
+question, then topic heuristics, else all available corpuses. **Evaluation**
+(`EvaluationAgent`) scores each hit (similarity + token overlap + completeness + metadata/
+content-type bonuses × source quality × chunk confidence) and drops weak evidence below
+`min_confidence`. **Reranking** (`RerankingAgent`) blends eval score with query coverage
+and a decisive boost for parsed tables on numeric questions, guaranteeing at least one
+structured-table chunk reaches generation. **Generation** (`GenerationAgent`) builds a
+cited context (rendering tables from `table_data` and charts from their VLM summary) and,
+for numeric questions, enforces an `EVIDENCE:` quote-then-answer format.
 
-```bash
-curl -s http://localhost:8077/ingest \
-  -H 'Content-Type: application/json' \
-  -d '{"path": "/abs/path/report.pdf", "corpus": "pdf"}'
-```
+### 8.1 Vector + BM25 lane
 
-**Web UI:** the **Upload** tab — drag files in, pick the corpus, choose **Sync**
-(wait for each file) or **Async** (queue a background job for large batches), and
-set the LLM-extraction level.
+The base lane (`RetrievalAgent.retrieve`). Dense vector search (top_k×3) is fused with
+**BM25** keyword search (top_k×2, weighted 0.75). Tables/charts/figures get a small
+`visual_boost` on table/visual intent. A **chunk-quality** filter penalizes nav/TOC/URL/
+summary chunks; a **year-boost** rewards year-matched docs (+30%) and penalizes wrong-year
+(−20%) and undated (−15%) docs; a **small-doc boost** compensates short documents for
+TF-IDF disadvantage; **domain boosts** rescue documents that semantics routinely
+mis-route. Results are de-duplicated by chunk id, tie-broken by chunk id (reproducible),
+and **source-diversity capped** (3 per source, 6 for corpora with ≥15 sources).
 
-**What happens under the hood:**
+### 8.2 Graph lane (BFS / PPR)
 
-1. **Parse.** The configured parser turns the file into structured text.
-   - `docling` (default) — DocLayNet layout + TableFormer for structured tables.
-     Falls back to `advanced` if Docling isn't installed.
-   - `advanced` — fast PyMuPDF text + pdfplumber tables + a vision model (VLM) for
-     charts and scanned pages. Tables are emitted as `[EXTRACTED TABLE]` markdown,
-     charts as `[VLM CHART]`; VLM results are cached per `(file, page, index)`.
-   - `textract` / `bedrock` / `bda` — AWS parsing options.
-   - `ATF_PARSER=<provider>` overrides the config for one run.
-2. **Chunk.** Structure-aware chunking (`chunk_size` 900, `chunk_overlap` 150)
-   tags each chunk with a `content_type` and keeps tables **row-atomic** with the
-   header repeated.
-3. **Index.** Tables are parsed into `table_data` (`columns`, `rows`, `n_rows`,
-   `n_cols`); embeddings are **context-prepended** (`[doc title year section]` +
-   text) for tables, charts, figures, and number-dense text so a bare row of
-   numbers still embeds with its meaning. Dedup is document-scoped.
-4. **Graph + tables.** Typed entities/relations are extracted into the graph, and
-   every table is registered in the table store.
+Activated for relationship/pattern/entity/timeline intents (`plan.use_graph`). Two modes
+(`retrieval.graph_retriever`):
 
-> **Tip — LLM extraction level.** `auto` (the default) extracts entities only from
-> documents up to `llm_extraction_auto_max_pages` (40), which keeps bulk ingest
-> fast; `on` extracts from every document for the richest graph; `off` skips it.
-> With `auto_enrich` on, new chunks get typed-graph enrichment in the background
-> after ingest.
+- **BFS** (default) — seeds on query entity nodes, expands the subgraph by `graph_hops`
+  (default 2), and adds reachable chunks. **Typed-edge** chunks enter at score 0.65;
+  co-occurrence-only chunks at 0.5. Typed, labelled relationship paths are surfaced as
+  evidence ("KNOWN RELATIONSHIP PATHS").
+- **PPR** — Personalized PageRank (HippoRAG-style, needs `networkx`) for
+  relationship/pattern queries: seeds on query entities, ranks chunks by centrality, and
+  injects them into a 0.50–0.70 band. Falls back to BFS if `networkx` is absent.
 
-### 5.2 Images and charts (visual ingestion)
+### 8.3 Deterministic table-row lane
 
-For standalone images, screenshots, or chart exports, use vision ingestion. The
-image is described by the vision model and indexed into the `visual` corpus.
+`atf_graphrag/retrieval/table_lookup.py` answers "any cell in any row" exactly, where
+embeddings/BM25 cannot. It extracts **row keys** from the question (proper-noun runs,
+quoted strings, license-style numbers), uses an inverted **RowIndex** over `table_data`
+string cells to find candidate chunks containing every key token, then scans rows with
+**contiguity-aware scoring**: tokens forming a contiguous run inside one cell (the name
+phrase) outrank all-tokens-in-one-cell, which outranks scattered cross-column matches
+(penalized). A **name-phrase** signal (keeping `&` and single-letter tokens, e.g.
+`R & R SPORTING ARMS`) breaks ties toward the exact-name row. Matches are injected as
+high-score `table_row` hits with the exact row pinned into `extraction_summary` so the
+generator quotes the cell.
 
-```bash
-python -m atf_graphrag visual ./charts/production-by-year.png visual
-```
+### 8.4 Numeric lane
 
-**HTTP:**
+`atf_graphrag/retrieval/numeric_lookup.py` rescues headline totals living in number-dense
+**text** (e.g. `3,939,517 TOTAL`) that embed poorly and get buried. For numeric/aggregate
+questions where the SQL lane produced nothing, it scans for chunks that carry a real big
+number and strongly match the question's stemmed content terms, boosting year-matched and
+source-name-matched chunks and summary anchors, and injects the best as top evidence. Adds
+nothing on no match.
 
-```bash
-curl -s http://localhost:8077/ingest_visual \
-  -H 'Content-Type: application/json' \
-  -d '{"image": "/abs/path/chart.png", "corpus": "visual"}'
-```
+### 8.5 Text-to-SQL lane
 
-### 5.3 Ingesting websites via sitemap
+The table store's `query` (§7.1). For table/aggregate questions it materializes the best
+candidate tables as in-memory temp tables (`t1..tN`, columns `c1..cM` + `doc/page/year`),
+gives the LLM the schema + catalog summaries + sample rows, and asks for **one SQLite
+SELECT**. The result is guarded: **SELECT-only**, no `insert/update/delete/drop/alter/
+attach/pragma/create`, must parse, execute, and return non-empty — otherwise it returns
+`None` and the RAG lane proceeds unchanged. The computed rows are injected as the top
+`[SQL RESULT]` evidence with provenance and the SQL text.
 
-Web ingestion is **sitemap-driven, never random scraping**. Point the crawler at
-a site root or a `sitemap.xml` URL and it discovers the listed pages, fetches each
-one politely, extracts title/headings/date/content, and queues any **linked PDFs**
-into the PDF pipeline. HTML `<table>` elements are converted to an
-`[EXTRACTED TABLE]` markdown block so that **crawled tables become cell-queryable**
-through the same `table_data` → table store → deterministic cell-lookup path as
-PDF tables.
+### 8.6 Global / community lane
 
-**Crawl a site or sitemap with the CLI (`scripts/crawl_site.py`):**
+For global/sensemaking questions (mode `global`, only when communities are built),
+`GlobalAnswerAgent` runs a true **map-reduce** over community summaries: the **cheap** model
+produces a per-community partial answer (or `NONE`); the **strong** model reduces the
+partials into one corpus-wide, source-traced answer. If the map-reduce can't answer
+(insufficient/refusal), the pipeline **falls back to the local lane** instead of refusing.
+Mode `mixed` runs the local lane *and* enriches it with community context.
 
-```bash
-# Site root: discovers the sitemap (explicit .xml, robots.txt Sitemap:, or /sitemap.xml)
-python scripts/crawl_site.py https://www.atf.gov/
+### 8.7 Corrective retry lane
 
-# A sitemap URL, capped at 200 pages, with rendering decided per-page
-python scripts/crawl_site.py https://www.atf.gov/sitemap.xml --max 200 --render auto
+`CorrectiveRetriever` (`adaptive.py`): when evaluated evidence is **weak** (top score <
+`weak_top` 0.45, or < 3 hits), the question is reformulated (LLM rewrite with synonyms/
+expansions; deterministic keyword fallback offline) and retrieval runs again, merging and
+re-evaluating (1 round by default). A separate **post-generation retry** fires when the
+answer itself reads as an "insufficient context" refusal: one full second pass with a
+reformulated query, keeping whichever answer actually answers.
 
-# A fully client-rendered site: force headless-browser rendering on every page
-python scripts/crawl_site.py https://example.gov/ --render always
-```
+### 8.8 Multi-hop lane
 
-CLI flags (each overrides the matching `web` config key for this run):
+`MultiHopPlanner` (`adaptive.py`): for long/complex questions (≥ `multi_hop_min_words`),
+the LLM decomposes bridge/comparison questions into 2–3 sequential sub-questions where
+later hops reference earlier answers as `{hop1}`/`{hop2}`. Each hop retrieves and produces a
+short intermediate answer; all hop evidence merges into the final context and the hop chain
+is shown to the generator and in the trace.
 
-| Flag | Effect |
-|---|---|
-| `--max N` | Cap pages per sitemap (overrides `web.max_pages`). |
-| `--render auto\|always\|never` | Rendering mode (overrides `web.render`). |
-| `--delay S` | Polite delay in seconds between requests (overrides `web.crawl_delay`). |
-| `--no-robots` | Ignore `robots.txt` (sets `respect_robots=false`). |
-| `--corpus C` | Target corpus for crawled pages (default `web`). |
-| `--save` | Commit the index and write an updated seed after the crawl. |
+### 8.9 Web-research lane
 
-Crawl behavior is governed by the `web` config section (`atf_graphrag/config.py`):
+`WebResearchAgent` (`web_research.py`): on-demand corpus augmentation. When a question is
+news/event-oriented **and** local evidence is thin, it searches the web (Tavily), **judges**
+each result (relevance with credibility weighting, embedding-novelty vs the existing
+corpus, and an optional LLM worthiness judge), ingests only worthy results into the `news`
+corpus (idempotent by URL), then re-retrieves and merges. Off by default; never fires
+unless enabled and needed. See §9 for the related batch web crawler.
 
-| Key | Default | Meaning |
-|---|---|---|
-| `web.sitemaps` | `[]` | Sitemap URLs to crawl. |
-| `web.max_pages` | `50` | Cap on pages discovered per sitemap. |
-| `web.crawl_delay` | `1.0` | Polite delay (seconds) between requests; the larger of this and any `robots.txt` crawl-delay is honored. |
-| `web.respect_robots` | `true` | Honor `robots.txt` (per host, fail-open if unreachable). |
-| `web.ingest_linked_pdfs` | `true` | Download linked PDFs and index them into `web.pdf_corpus`. |
-| `web.pdf_corpus` | `"pdf"` | Corpus for linked PDFs. |
-| `web.corpus` | `"web"` | Corpus that crawled pages land in. |
-| `web.render` | `"auto"` | Headless-browser rendering: `auto` (static, render only when a page looks JS-shelled), `always` (render every page), `never` (static only). |
-| `web.render_wait_ms` | `0` | Extra settle time after `networkidle` before reading the rendered DOM. |
-| `web.render_timeout_ms` | `30000` | Per-page render timeout. |
-| `web.min_static_words` | `80` | In `auto` mode, a static page below this visible-word count triggers a render. |
-| `web.user_agent` | `"ATF-GraphRAG-Crawler/1.0"` | User-Agent sent on fetches and matched against `robots.txt`. |
+### Question-type → lane map
 
-How it works (`atf_graphrag/ingestion/crawler.py`):
+| Question kind                                 | Primary lane(s)                          |
+|-----------------------------------------------|------------------------------------------|
+| "What city is EMCO INC in?" (one cell)        | Deterministic table-row                  |
+| "How many pistols made in 2023?" (aggregate)  | Text-to-SQL → numeric fallback           |
+| "Grand total exported" (headline figure)      | Numeric                                   |
+| "Compare TX vs LA" (both sides)               | Comparison fan-out + whole-table expand  |
+| "How is dealer X linked to manufacturer Y?"   | Graph (BFS/PPR)                           |
+| "Profile of <entity>"                         | Graph + vector                           |
+| "Recurring themes across all reports"         | Global / community map-reduce            |
+| "Timeline of incidents since 2015"            | Vector + metadata (year filter) + graph  |
+| "Latest news on case Z"                       | Web research → news corpus               |
+| General prose fact                            | Vector + BM25                            |
 
-- **Sitemap discovery** resolves the sitemap from the input: an explicit `.xml` URL
-  is used as-is, otherwise `robots.txt` is read for `Sitemap:` directives, otherwise
-  it falls back to `/sitemap.xml`. A `<sitemapindex>` (sitemap of sitemaps) is
-  followed recursively into its child sitemaps; a `<urlset>` yields its `<loc>` page
-  URLs (with a `<loc>` regex fallback if the XML won't parse).
-- **robots.txt** is checked per host via `urllib.robotparser`; disallowed URLs are
-  skipped, and the crawler **fails open** (allows) if robots can't be fetched.
-- **Rate limiting** sleeps `max(crawl_delay, robots-crawl-delay)` between pages.
-- **Rendering** (`make_fetcher`) tries a static HTTP GET first and escalates to a
-  Playwright headless Chromium render when the page is JS-shelled or bot-blocked;
-  it falls back to whatever it can get and only fails if both paths fail.
-- **HTML tables** are turned into `[EXTRACTED TABLE]` markdown by `web_extract.py`
-  (BeautifulSoup, with a regex fallback when `bs4` is absent) so they flow through
-  the same structured-table pipeline as PDF tables and stay cell-queryable.
-- **Linked PDFs** are resolved to absolute URLs, deduped across pages, downloaded
-  to a temp file, and run through the normal PDF pipeline.
-
-> **JavaScript-rendered sites.** Static fetching handles server-rendered HTML with
-> no extra dependencies. To actually render client-side / bot-protected pages under
-> `--render auto` or `--render always`, install Playwright (see
-> [§2.4](#24-playwright-for-javascript-heavy-or-bot-protected-sites)):
->
-> ```bash
-> pip install playwright && playwright install chromium
-> ```
->
-> Playwright is **optional**: when it is not installed the crawler prints a note and
-> degrades to static fetch.
-
-> **On-demand web research.** Separately from crawling, IntelliGraphRAG can
-> augment a query with live web search (Tavily) into the `news` corpus when the
-> local corpus is thin — see `web_search` in config. It is **off by default** and
-> never fires unless enabled **and** needed. Set `TAVILY_API_KEY` to turn it on.
+> Deep-dive: [Retrieval Lanes](wiki/Retrieval-Lanes.md).
 
 ---
 
-## 6. Asking Questions
+## 9. Web Ingestion
 
-### 6.1 Three ways to ask
+Structured, polite web ingestion via `sitemap.xml` — never random scraping
+(`atf_graphrag/ingestion/crawler.py`).
 
-**Web UI (Chat tab):** type a question and read the answer. Expand the trace to
-see which lanes fired and the citations to jump to sources.
+### Sitemap discovery + sitemapindex recursion
 
-**HTTP — the main endpoint:**
+`find_sitemaps` resolves sitemap URLs: if the URL is itself a `.xml` sitemap, use it; else
+read `robots.txt` for `Sitemap:` directives; else fall back to `/sitemap.xml`.
+`discover_sitemap` follows a `<sitemapindex>` (a sitemap of sitemaps) **recursively** into
+its child sitemaps (depth-limited), and yields page URLs from each `<urlset>`.
+
+### robots + rate limiting
+
+`RobotsPolicy` checks `robots.txt` per host with **fail-open** semantics (if it can't be
+fetched/parsed, fetching is allowed, per RFC) and honors crawl-delay. A configurable polite
+`crawl_delay` (default 1.0 s) is enforced between requests.
+
+### HTML tables → cell-queryable markdown
+
+`atf_graphrag/ingestion/web_extract.py` extracts content with BeautifulSoup when available
+(regex fallback otherwise). Every HTML `<table>` is rendered to a GitHub-flavored markdown
+table **with a header separator row** and emitted as an `[EXTRACTED TABLE]` block, so the
+same `parse_markdown_table` path used for PDFs produces `table_data` — making crawled web
+tables **cell-queryable** by the table-row and SQL lanes.
+
+### Playwright headless render modes
+
+`atf_graphrag/ingestion/browser.py` renders JS/bot-protected pages with headless Chromium.
+The fetcher honors `web.render`:
+
+- **`auto`** (default) — static fetch first; render only when the page looks JS-shelled
+  (visible word count below `min_static_words`, default 80).
+- **`always`** — always render (slow; for fully client-rendered sites).
+- **`never`** — static fetch only.
+
+Tunables: `render_wait_ms`, `render_timeout_ms`, `min_static_words`, `user_agent`. Rendering
+is best-effort: a missing browser binary or failure falls back to static content. Install
+with `pip install playwright && playwright install chromium`.
+
+### `scripts/crawl_site.py`
 
 ```bash
-curl -s http://localhost:8077/query \
-  -H 'Content-Type: application/json' \
-  -d '{"question": "How many firearms were manufactured in 2023?", "trace": true}'
+python scripts/crawl_site.py <url> \
+  [--max N]                  # max pages (default: config web.max_pages)
+  [--render auto|always|never] \
+  [--delay SECONDS]          # polite delay between requests
+  [--no-robots]              # ignore robots.txt
+  [--corpus NAME]            # target corpus (default: web)
+  [--save]                   # commit + save updated seed after crawl
 ```
 
-Response shape:
+Linked PDFs can be queued into the `pdf` corpus (`web.ingest_linked_pdfs`).
 
-```jsonc
+> Deep-dive: [Web Crawling](wiki/Web-Crawling.md).
+
+---
+
+## 10. The Web UI Tour
+
+The single-page UI (`atf_graphrag/api/ui.py`) is served at the API root (default
+<http://localhost:8077>). Tabs:
+
+- **Chat** — ask questions; answers render with inline `[n]` citations, an expandable
+  citation list (source, page, content type, table title), and an optional lane **trace**.
+- **Knowledge Base** — browse indexed documents per corpus, inspect chunk counts, and open
+  an original-file **preview** (resolved from the uploads dir and `preview_roots`; files are
+  read locally and never copied off-machine).
+- **Upload** — choose files or a folder to ingest; live per-page progress via the async job
+  manager (parsing → indexing, page X/Y, chunk counts).
+- **Graph** — build/enrich the typed graph and communities, run verify/prune, and inspect
+  graph + community stats. Launches the standalone explorer.
+- **Configuration** — set the OpenRouter key + model in the browser (`POST /api/key`),
+  switch providers/blocks, and apply config changes.
+- **Debug** — a step-by-step single-file pipeline inspector: **Parsed → Ingested → Chunks →
+  Indexed**, plus per-stage query inspection (`/api/debug/parse|chunk|index|graph|
+  communities|query`).
+- **AWS Native** — the one-click AWS control plane: credentials, validate, plan, apply,
+  smoke-test, revert, inventory/provision/teardown, and Bedrock RAG evaluation.
+
+### The graph explorer at `/graph/view`
+
+A self-contained D3 force-directed viewer (`atf_graphrag/viz/graph_template.py`), served at
+`/graph/view` (and `/graph`). It loads the top entities (`/graph/top`) and the full export
+(`/graph/export`) so you can pan/zoom the typed graph, see node types, and follow
+relationships visually.
+
+---
+
+## 11. Using It Day-to-Day
+
+### Ingesting
+
+**Files / folders** — drag into the Upload tab, or:
+
+```bash
+python -m atf_graphrag ingest /path/to/file.pdf            # → pdf corpus
+python -m atf_graphrag ingest /path/to/folder connected    # recursive, → connected
+```
+
+Directory ingest recurses all subfolders, keys each file by its relative path (so same-named
+files in different folders stay distinct), and skips hidden files.
+
+**Images** — `python -m atf_graphrag visual chart.png visual` runs vision extraction into
+the `visual` corpus.
+
+**Sites** — `python scripts/crawl_site.py https://example.com/sitemap.xml --save` (§9).
+
+### Asking questions
+
+- **UI** — type in Chat; toggle the trace to see which lanes fired.
+- **HTTP** — `POST /query` (§12).
+- **CLI** — `python -m atf_graphrag query "your question" --trace`.
+
+### Table questions IntelliGraph is built for
+
+- **Cell lookup** — "What city is EMCO INC located in?" → deterministic table-row lane.
+- **Aggregate** — "How many rifles were exported in total?" → SQL/numeric lane.
+- **Cross-year** — "Compare 2025 vs 2026 production" → category expansion pulls both
+  editions; whole-table expansion reconstructs full tables.
+- **Comparison** — "Which state had more, TX or LA?" → comparison fan-out retrieves both
+  sides; the generator quotes each row it compares.
+
+### Reading citations and the lane trace
+
+Every answer returns `citations` (each with `ref`, `source`, `page`, `corpus`, `url`,
+`chunk_id`, `confidence`, `content_type`, `table_title`). With `trace: true`, the response
+includes a step-by-step `trace`: query understanding, corpus selection, multi-hop,
+retrieval counts (with `graph_mode` and `table_row_matches`), evaluation, SQL/numeric
+injections, corrective/web-research decisions, reranking scores, whole-table expansion,
+generation confidence, grounding verification, and per-stage `timings_ms`.
+
+---
+
+## 12. The HTTP API
+
+JSON over `http.server` (`atf_graphrag/api/server.py`); the same routes can be served by
+FastAPI in production. POST endpoints require a bearer token in non-local profiles (§15).
+Grouped endpoints:
+
+- **Query / ingest** — `POST /query`, `POST /ingest`, `POST /ingest_visual`,
+  `POST /api/upload`, `POST /api/chunk`.
+- **Status / read** — `GET /api/status`, `/health`, `/stats`, `/api/documents`,
+  `/api/subagents/reports`, `/api/jobs`, `/api/jobs/active`, `/api/jobs/<id>`,
+  `/api/backups`, `/api/config/blocks`, `/graph/top`, `/graph/export`, `/graph/view`.
+- **Knowledge build** — `POST /api/communities/build`, `/api/reclassify`,
+  `/api/tables/build`, `/api/tables/categories`, `/api/graph/enrich`,
+  `/api/graph/enrich/status`, `/api/graph/verify`.
+- **Operations** — `POST /api/clear`, `/api/backup`, `/api/restore`, `/api/seed/save`,
+  `/api/seed/restore`, `/api/jobs/<id>/cancel`.
+- **Config** — `POST /api/key`, `/api/config/extraction`, `/api/config/apply`.
+- **Debug** — `POST /api/debug/parse|chunk|index|graph|communities|query`.
+- **AWS** — `POST /api/aws/credentials|validate|apply|smoke|revert|rag-eval|inventory|
+  plan|provision|teardown`, `GET /api/aws/status`.
+
+### `POST /query`
+
+Request:
+
+```json
 {
-  "answer": "In 2023, ... firearms were manufactured ...",
-  "citations": [ { "source_name": "afmer-2023.pdf", "page_number": 4, "content_type": "table" } ],
-  "mode": "table_row",
-  "trace": { "3d_sql": false, "3b_table_row": true, "... per-lane diagnostics ...": "..." }
+  "question": "How many pistols were manufactured in 2023?",
+  "trace": true,
+  "corpus": "pdf"
 }
 ```
 
-**CLI:**
+Response (abridged):
 
-```bash
-python -m atf_graphrag query "Which forms reference 27 CFR 478?" --trace
+```json
+{
+  "question": "How many pistols were manufactured in 2023?",
+  "answer": "EVIDENCE:\n- [1] (afmer_2023.pdf, p.4) \"Pistols | 217,691\"\nANSWER: 217,691 pistols were manufactured in 2023 [1].",
+  "confidence": 0.86,
+  "citations": [
+    {"ref": 1, "source": "afmer_2023.pdf", "page": 4, "corpus": "pdf",
+     "content_type": "table", "table_title": "Annual Pistol Production",
+     "chunk_id": "…", "confidence": 0.95}
+  ],
+  "graph_paths": [],
+  "evidence_count": 6,
+  "intent": "table",
+  "mode": "local",
+  "incomplete": false,
+  "web_research": {"triggered": false},
+  "trace": { "1_query_understanding": "…", "3d_sql": {"sql": "SELECT …"}, "timings_ms": {} }
+}
 ```
 
-### 6.2 The retrieval pipeline (what happens to your question)
-
-```text
-question
-  │
-  ▼ query understanding ─ classify intent (cell? aggregate? relationship? global?)
-  ▼ corpus selection    ─ which corpora are relevant
-  ▼ multi-lane retrieval ┐
-  │   • vector + BM25 hybrid          (general semantic + keyword)
-  │   • graph (bfs | ppr)             (relationship / pattern questions)
-  │   • table_row                     (deterministic cell lookup)
-  │   • sql                           (text-to-SQL over the table store)
-  │   • numeric                       (rescue headline totals from number-dense text)
-  │   • global / community            (corpus-wide questions via Leiden summaries)
-  │   • corrective                    (weak evidence -> reformulate + retry)
-  │   • multi-hop                     (decompose bridge / comparison questions)
-  │   • web research (optional)       (Tavily into 'news' when local is thin)
-  │                     ┘
-  ▼ evaluation  ─ score evidence (table_row/sql floored to ≥0.72)
-  ▼ reranking   ─ order best-first (guarantees a table chunk for numeric questions)
-  ▼ whole-table expansion ─ pull the full table around a matched cell
-  ▼ generation  ─ synthesize the answer with citations + an EVIDENCE section
-                  quoting exact cells for numeric questions
-```
-
-### 6.3 Reading citations and the lane trace
-
-- **Citations** — every answer lists the chunks it used: source name, page number,
-  and content type (`text` / `table` / `chart`). In the UI, click a citation to
-  preview the original page; numbers in the answer are grounded against these.
-- **`mode`** — the dominant lane that produced the answer (e.g. `table_row`,
-  `sql`, `graph`, `vector`).
-- **`trace`** — per-lane diagnostics. Keys like `3d_sql`, `3b_table_row`, and
-  `3e_numeric` tell you which lanes fired and what they returned. This is the same
-  data the Chat tab renders in the expandable trace panel.
-
-> **A grounded refusal is a feature.** If the corpus doesn't contain the answer,
-> IntelliGraphRAG says so up front rather than guessing. In the 50-question eval,
-> refusal accuracy is 100%.
+> Full endpoint list with request/response shapes: [API Reference](wiki/API-Reference.md).
 
 ---
 
-## 7. Working with Tables
+## 13. CLI & Scripts
 
-Tables are where most RAG systems quietly fail and where IntelliGraphRAG is
-strongest. Every extracted table is stored twice: as **row-atomic chunks** in the
-vector store (with `table_data`) and as rows in the dedicated **table store**
-(`indexing/table_store.py`), a SQLite database:
+### Module CLI (`python -m atf_graphrag <command>`)
 
-```text
-tables(id, doc, page, year, title, columns, n_rows, chunk_id, search_blob, category, cat_conf)
-rows(table_id, idx, cells)
-categories(...)
-```
+| Command                              | Action                                            |
+|--------------------------------------|---------------------------------------------------|
+| `serve`                              | Start the HTTP API + web UI                       |
+| `ingest <path\|dir> [corpus]`        | Index a file or directory (default corpus `pdf`)  |
+| `visual <image> [corpus]`            | Vision ingestion of an image (default `visual`)   |
+| `query "<question>" [--trace]`       | Ask a question; `--trace` prints the lane trace   |
+| `stats`                              | Print engine stats (profile, models, corpus counts)|
+| `demo`                               | Ingest bundled sample data and run sample queries |
 
-### 7.1 Cell-level lookups
+### The `scripts/` toolbox
 
-For "what is the value for X in year Y" questions, the **table_row** lane does a
-deterministic cell lookup with **contiguity-aware locality scoring**: a query
-whose name-phrase appears in a single cell beats one that bleeds tokens across
-columns, and distinctive names get a name-phrase fallback. The matched row is
-pinned into the answer's evidence so the exact cell is quoted.
+| Script               | Purpose                                                              |
+|----------------------|---------------------------------------------------------------------|
+| `build_kb.py`        | Full end-to-end knowledge-base rebuild (every stage)                |
+| `finish_kb.py`       | Run the LLM stages skipped during ingest (e.g. blocked by key caps) |
+| `crawl_site.py`      | Crawl a site/sitemap into the web corpus (§9)                       |
+| `export_corpus.py`   | Export the **parsed** corpus to portable JSONL (the expensive part) |
+| `import_corpus.py`   | Import a portable corpus JSONL into the current deployment          |
+| `reload_corpus.py`   | Full corpus reload                                                  |
+| `eval_50.py`         | 50-question end-to-end evaluation across every lane (§17)           |
+| `eval_15_structured.py`, `eval_atf_25.py`, `eval_full.py` | Additional eval harnesses |
+| `backfill_tables.py` | Backfill the table store from existing chunks                       |
+| `publish_wiki.py`    | Publish `docs/` into the GitHub Wiki tab and keep it in sync        |
+| `demo.py`            | The bundled demo used by `python -m atf_graphrag demo`             |
 
-> *Q:* "How many pistols did manufacturer X report in 2022?"
-> → table_row finds the exact cell; the answer quotes it and cites the table.
-
-### 7.2 SQL and aggregate questions
-
-For sums, counts, rankings, and grouped totals, the **sql** lane runs
-**text-to-SQL** over the table store (in-memory SQLite). It is locked down:
-**SELECT-only**, with a forbidden-keyword guard, and it **falls back to RAG** on
-any failure — so a malformed query never breaks the answer.
-
-> *Q:* "Which five states had the most explosives licensees?"
-> → sql aggregates and ranks across the relevant table.
-
-### 7.3 Cross-year comparisons
-
-`consolidate()` groups same-kind tables across documents and years (Jaccard
-similarity ≥ 0.55 on columns + matching column count), so a question that spans
-multiple annual reports can be answered from a unified view.
-`summarize_categories()` builds an LLM **catalog** of table categories you can
-browse via the Tables endpoints.
-
-> *Q:* "How did production change from 2021 to 2023?"
-> → consolidation lines up the per-year tables; the answer compares the cells.
-
-### 7.4 What makes a good table question
-
-- **Name the specifics:** the metric, the entity, and the year/period
-  ("manufactured **pistols** by **manufacturer X** in **2023**").
-- **For aggregates, say so:** "total", "how many", "top 5", "average", "by state".
-- **For comparisons, name both sides:** "compare 2021 **and** 2023".
-- The reranker **guarantees a table chunk** reaches the LLM for numeric questions,
-  and the generator emits an **EVIDENCE** section quoting the exact cells — so you
-  can verify the number against the source.
+> Deep-dive: [CLI & Scripts](wiki/CLI-and-Scripts.md).
 
 ---
 
-## 8. The Knowledge Graph & Explorer
+## 14. Operations
 
-During ingestion, typed entities and relations are extracted into the knowledge
-graph using an ontology (`graph/enrich.py`). A verification pass
-(`graph/verify.py`) prunes junk with rule + LLM checks, **entity resolution**
-merges duplicates (difflib + blocking + union-find), and **Leiden community
-detection** groups related entities into clusters with LLM-written summaries.
+### Seeds (save / restore)
 
-### 8.1 Why the graph matters
+A **seed** is a named, frozen, reloadable KB state (vectors + graph + communities). Multiple
+seeds coexist — e.g. `old` and `new` — and either can be restored on demand. Each seed is a
+zip plus a `.meta.json` sidecar with document/graph stats and a human note, under
+`storage/backups/` (`POST /api/seed/save`, `/api/seed/restore`).
 
-The **graph** lane answers questions that aren't in any single chunk:
+### Backup / restore
 
-- **Relationship / pattern** questions use `bfs` (breadth-first) or `ppr`
-  (personalized PageRank) traversal — set `retrieval.graph_retriever`.
-- **Global / corpus-wide** questions use the **community summaries** instead of
-  individual chunks.
+`atf_graphrag/api/backup.py` snapshots the vector index + knowledge graph (+
+communities/manifest) into a single zip under `storage/backups/` and restores it
+(`POST /api/backup`, `/api/restore`, `GET /api/backups`). Cloud stores use their own native
+backup; this covers the local/default profile.
 
-### 8.2 The Explorer
+### Corpus export / import (parse-once, serve-cheap)
 
-Open the standalone graph Explorer at **http://localhost:8077/graph/view** (the
-**Graph** tab embeds a view too). It renders the entity graph interactively. If
-nothing appears, the graph is empty — ingest documents first. Community building
-is gated behind `graph.communities.enabled` (it costs one LLM call per cluster);
-trigger a build from the API (`POST /api/communities/build`) or the
-`scripts/build_kb.py` rebuild.
+`export_corpus.py` writes the **parsed** corpus (the expensive-to-produce part) to portable
+JSONL; `import_corpus.py` loads it into another deployment's stores. This lets you parse
+once on a capable machine and serve cheaply elsewhere without re-running parsing/extraction.
 
----
+### Clear & jobs
 
-## 9. Operations
+`POST /api/clear` wipes the stores (guarded by the durability layer below). Long ingests run
+as **async jobs** with live progress and cancellation (`/api/jobs`, `/api/jobs/active`,
+`/api/jobs/<id>`, `/api/jobs/<id>/cancel`).
 
-### 9.1 Backups
+### The durability layer
 
-```bash
-# Snapshot the current stores (timestamped)
-curl -s -X POST http://localhost:8077/api/backup
+Three mechanisms protect against data loss:
 
-# List backups
-curl -s http://localhost:8077/api/backups
-
-# Restore one
-curl -s -X POST http://localhost:8077/api/restore \
-  -H 'Content-Type: application/json' -d '{"name": "20260627_101500"}'
-```
-
-A backup flushes in-memory state first, then archives the vector / graph / blob
-stores and the table database.
-
-### 9.2 Seeds (save / restore a ready-made KB)
-
-A **seed** is a portable snapshot of a fully ingested + indexed knowledge base.
-Save the current KB as a named seed, then restore it in one click later — ideal
-for demos and for "parse-once, serve-cheap" workflows.
-
-```bash
-# Save the current KB as a seed (default name 'new')
-curl -s -X POST http://localhost:8077/api/seed/save \
-  -H 'Content-Type: application/json' \
-  -d '{"name": "afmer-2023", "note": "full Docling+VLM rebuild"}'
-
-# List seeds
-curl -s http://localhost:8077/api/seeds
-
-# Restore a seed (clears current data, then loads the seed)
-curl -s -X POST http://localhost:8077/api/seed/restore \
-  -H 'Content-Type: application/json' -d '{"name": "afmer-2023"}'
-```
-
-In the Knowledge Base tab, pick a seed from the dropdown and click **⚡ Load
-seed**.
-
-### 9.3 Corpus export / import (parse-once, serve-cheap)
-
-Parsing a large corpus is the expensive step. Export a parsed corpus to a portable
-bundle and re-import it elsewhere without re-parsing:
-
-```bash
-python scripts/export_corpus.py   # write a portable corpus bundle
-python scripts/import_corpus.py   # load it into another instance
-python scripts/reload_corpus.py   # refresh in place
-```
-
-### 9.4 Clear
-
-```bash
-curl -s -X POST http://localhost:8077/api/clear
-```
-
-Removes vectors, graph, and blobs (a fresh start). Pair with a seed restore to
-reset to a known-good state.
-
-### 9.5 Jobs
-
-Async ingestion runs as background jobs (durable, with a PID storage lock so two
-writers can't corrupt the local stores):
-
-```bash
-curl -s http://localhost:8077/api/jobs           # all jobs
-curl -s http://localhost:8077/api/jobs/active     # currently running
-curl -s http://localhost:8077/api/jobs/<job-id>   # one job's status
-curl -s -X POST http://localhost:8077/api/jobs/<job-id>/cancel
-```
-
-### 9.6 Full rebuild
-
-`scripts/build_kb.py` does an end-to-end rebuild in one durable job: clear stores
-→ recursive ingest (charts → VLM, context-prepend embedding) → typed-graph
-enrichment → node verify → Leiden communities → table store + catalog → save as
-the `new` seed. `scripts/finish_kb.py` runs the post-ingest LLM stages and is
-**resumable**. `scripts/backfill_tables.py` rebuilds the table store from existing
-chunks.
-
-> **Durability built in:** a storage epoch guard (`StaleWriteError`), a PID
-> storage lock, and atomic commits prevent corruption from concurrent or
-> interrupted writes.
+- **Epoch guard** (`storage_epoch.py`) — every restore/clear/build writes a fresh UUID to
+  `<root>/.epoch`. Each store records the epoch it loaded under, and `commit()` re-reads the
+  file and **refuses to write** when the epoch changed underneath it (raising
+  `StaleWriteError`), killing the stale-writer clobber class.
+- **PID lock** (`storage_lock.py`) — a `.writer.lock` makes the storage root single-writer:
+  any second writer (server or batch script) refuses to start, so a script can never write
+  over a running server.
+- **Atomic commit** — store commits write to a temp file and `os.replace` it, so a commit is
+  all-or-nothing.
 
 ---
 
-## 10. Evaluation
+## 15. Security & Governance
 
-IntelliGraphRAG ships a 50-question end-to-end evaluation harness that exercises
-**every retrieval lane**.
+### Bearer auth
+
+`server.auth_token` (or env `ATF_API_TOKEN`) gates POST endpoints with
+`Authorization: Bearer <token>`. Empty = open (local dev only). **Set a token before any
+non-local deployment.** Non-local profiles should always run with auth enabled.
+
+### Guardrails
+
+`guardrails.provider`:
+
+- **`none`** — pass-through (default).
+- **`local`** — regex **PII redaction** (`redact_pii`) and a **denied-terms** blocklist over
+  LLM input/output.
+- **`bedrock`** — Amazon **Bedrock Guardrails** (`guardrail_id` + `guardrail_version`),
+  applied inline by the Bedrock Converse LLM, with optional policy-assessment `trace` and
+  **Automated Reasoning** policy checks.
+
+The guardrail runs over the final answer in generation (no-op unless `enabled`).
+
+### Grounding verification
+
+The `grounding_verify` subagent (§2) requires every number in a numeric answer to appear in
+the cited context, re-generates once on violation, and otherwise appends an explicit caveat
+and cuts confidence — preventing fabricated figures.
+
+### Provenance
+
+Every citation traces to a `chunk_id`, source file, and page; community findings trace to
+member chunk_ids; SQL/numeric/table-row evidence carries the exact computed query or matched
+row. Nothing is asserted without a traceable source.
+
+### Local-only file handling
+
+Original-file previews are resolved from the uploads directory and configured
+`preview_roots`; files are **read locally and never copied off-machine**. In the local
+profile, no document content leaves the host except, when configured, the text sent to a
+remote LLM/embeddings endpoint.
+
+> See also: [Configuration Reference](wiki/Configuration-Reference.md) (guardrails,
+> auth keys).
+
+---
+
+## 16. Deployment
+
+| Profile  | Models                | Stores                         | Use                          |
+|----------|-----------------------|--------------------------------|------------------------------|
+| `local`  | OpenRouter / offline  | All local (files + SQLite)     | Laptop, demos, air-gapped    |
+| `hybrid` | Mixed (e.g. Bedrock)  | Local stores + managed pieces  | Cost/perf middle ground      |
+| `aws`    | Bedrock               | S3 + Neptune/OpenSearch        | Fully managed production     |
+
+**Docker** — build and run via `docker-compose.yml` (§3); mount your `config/` and pass
+credentials by environment. **AWS** — the AWS Native tab and `/api/aws/*` endpoints provide
+a **one-click control plane** (validate → plan → apply → smoke-test → revert, plus
+inventory/provision/teardown and Bedrock RAG evaluation).
+
+> Deep-dive: [Deployment & AWS](wiki/Deployment-and-AWS.md) — the one-click AWS control
+> plane, IAM, and Bedrock-native setup.
+
+---
+
+## 17. Evaluation
+
+The **50-question harness** (`scripts/eval_50.py`) exercises **every retrieval lane** —
+aggregate/ranking (SQL), cell lookup (table-row), headline figures (numeric), relationships
+(graph), cross-year/comparison, sensemaking (community), and extra fact coverage.
+
+Run it:
 
 ```bash
-python scripts/eval_50.py
+python scripts/eval_50.py        # writes scripts/eval_50_report.json
 ```
 
-The questions span: `cell`, `aggregate`, `cross-year`, `comparison`, `fact`,
-`relationship`, `pattern`, `timeline`, `multi-doc`, `visual`, and `refusal`. Each
-question records correctness and which lane fired; results are written to
-`scripts/eval_50_report.json`.
+### Reading the scorecard
 
-### 10.1 Reading the scorecard
+The report includes:
 
-```text
-================================================================
-       overall_ok: 0.86          ← all questions (answerable + refusals)
-    answerable_ok: 0.88          ← non-refusal questions only
-         cell_ok: 0.9x           ← cell-level lookups
-      refusal_ok: 1.0            ← refusals correctly refused (100%)
-          by_kind: {cell: 9/10, aggregate: 5/6, ...}   ← score per question kind
-      lanes_fired: {sql: 6, table_row: 8, graph: 5, ...}  ← coverage tally
-        elapsed_s: 142.0
-           misses: ["<first 55 chars of each missed question>"]
-================================================================
-```
+- **`overall_ok`** — overall correctness (target ~**0.90**).
+- **`by_kind`** — per-question-kind pass rate (e.g. `aggregate: 7/8`).
+- **`lanes_fired`** — a tally of which lane answered each question (sql / numeric /
+  table_row / graph / global / vector …), so you can confirm **lane coverage** — every lane
+  should fire on the questions it owns.
+- Per-question lines (`OK`/`XX`, kind, hit, lane) and a `misses` list for failures.
 
-- **overall_ok ≈ 0.86**, every lane fires, refusals **100%**.
-- `by_kind` shows correctness per question type so you can spot a weak category.
-- `lanes_fired` confirms each lane is actually being exercised.
+Use it after any change to retrieval, parsing, or the table/graph layers to catch
+regressions and verify each lane still contributes.
 
-Other harnesses: `scripts/eval_full.py`, `scripts/eval_15_structured.py`,
-`scripts/eval_atf_25.py`.
+> Deep-dive: [Evaluation](wiki/Evaluation.md).
 
 ---
 
-## 11. Security & Governance
+## 18. Troubleshooting & FAQ
 
-### 11.1 Authentication
+A few common cases (the wiki page has the full list):
 
-POST endpoints accept an optional **Bearer token**. Set it via `ATF_API_TOKEN` or
-`server.auth_token`:
+- **"Answers are generic / it says it has no info."** No model key is set — generation is on
+  the offline fallback. Add an OpenRouter key (browser or `OPENROUTER_API_KEY`).
+- **"A configured backend isn't being used."** Check the console for a
+  `[providers] … unavailable … falling back to local default` line; install the missing
+  dependency or fix credentials.
+- **"Tables aren't being found by cell."** Confirm the parser produced `table_data` (Debug
+  tab → Chunks), and that the table store rebuilt (`POST /api/tables/build`).
+- **"Communities/global answers are empty."** Community build is gated — enable
+  `graph.communities.enabled` and build via the Graph tab or `POST /api/communities/build`.
+- **"A write failed with `StaleWriteError`."** A stale writer was blocked by the epoch guard
+  (§14) — restart the writer against the current storage root.
 
-```bash
-export ATF_API_TOKEN="$(openssl rand -hex 24)"
-python -m atf_graphrag serve
-```
-
-```bash
-curl -s http://host:8077/query \
-  -H "Authorization: Bearer $ATF_API_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"question": "..."}'
-```
-
-- **Empty token** → auth disabled (fine for local dev; the server prints a
-  warning).
-- A configured token is **required** on POST endpoints; requests without a
-  matching `Authorization: Bearer <token>` get `401`.
-
-> The server **refuses to start** an unauthenticated, CORS-open API in
-> deployment-oriented configurations — set a token before deploying.
-
-### 11.2 Guardrails
-
-The `guardrails` section governs content safety over LLM input/output:
-
-- `provider`: `none` | `local` | `bedrock`.
-- `redact_pii` (local): regex-based PII redaction.
-- `denied_terms` (local): a blocklist.
-- Bedrock: managed **Guardrails** + **Automated Reasoning** policy checks, with
-  optional `trace` returning policy assessments.
-
-### 11.3 Grounding verification & provenance
-
-- The **grounding_verify** subagent checks that numbers in the answer match the
-  cited sources — a number that isn't in the evidence won't ship.
-- **Citations** accompany every answer; numeric answers include an EVIDENCE
-  section quoting exact cells.
-- **Provenance** (source name, page, document id, extraction method) is carried
-  through ingest, indexing, and retrieval.
-- In the **preview**, original files are read **locally** and never copied off the
-  machine.
-
-### 11.4 Layer-boundary subagents
-
-Quality gates run between pipeline stages (all toggleable under `subagents`):
-`parse_quality`, `chunk_gate` (junk never enters the index), `metadata_audit`,
-`index_audit` (round-trip retrieval probe), `graph_quality`, and
-`grounding_verify`.
+> Full guide: [Troubleshooting & FAQ](wiki/Troubleshooting-and-FAQ.md).
 
 ---
 
-## 12. AWS-Native Deployment Summary
-
-The `aws` profile runs the same engine on managed AWS services: **Bedrock** for
-LLM / vision / embeddings, **Qdrant or OpenSearch** for vectors, **Neptune or
-Neo4j** for the graph, **S3** for blobs, **DynamoDB** for the catalog, **SSM** for
-config, **Bedrock Guardrails + Automated Reasoning** for governance, **Bedrock
-Data Automation** for parsing, and managed **RAG Evaluation**.
-
-A one-click control plane in the **AWS Native** tab (and the `/api/aws/*`
-endpoints) walks the lifecycle:
-
-```text
-Plan  →  Provision  →  Smoke  →  Teardown
-```
-
-All resources are tagged `Project=graphrag`. Install AWS dependencies with
-`pip install -r requirements-aws.txt`.
-
-> Full step-by-step provisioning, IAM, and architecture details live in the
-> deployment wiki:
-> [AWS Native Setup](wiki/Deployment-and-AWS.md) ·
-> [Deployment Playbook](wiki/Deployment-and-AWS.md) ·
-> [Bedrock-Native](wiki/Deployment-and-AWS.md).
-
----
-
-## 13. Troubleshooting & Where to Get More
-
-| Symptom | Likely cause / fix |
-|---|---|
-| Answers are quoted, not synthesized | No LLM key — set `OPENROUTER_API_KEY` or paste a key in **Configuration**. |
-| `401 unauthorized` on POST | A token is configured — send `Authorization: Bearer <ATF_API_TOKEN>`. |
-| Server refuses to start | Unauthenticated + CORS-open in a deploy config — set `ATF_API_TOKEN`. |
-| Tables not found / weak numeric answers | Rebuild the table store: `POST /api/tables/build` or `python scripts/backfill_tables.py`. |
-| Docling too slow on CPU | Use the fast path: `ATF_PARSER=advanced python -m atf_graphrag ingest ...`. |
-| Website returns empty content | JS-rendered site — install Playwright (see [§2.4](#24-playwright-for-javascript-heavy-or-bot-protected-sites)). |
-| Graph / Explorer is empty | Ingest documents first; build communities with `POST /api/communities/build`. |
-| "could not fetch sitemap (offline?)" | Network/URL issue — the crawler fails safe and returns no pages. |
-| `StaleWriteError` / lock errors | Another writer is active or a previous run was interrupted — wait for the job to finish or clear the stale PID lock. |
-| Port already in use | Set `ATF_PORT` to a free port. |
-
-### Where to get more
-
-- **Debug tab** — run one file through every stage with timing to see exactly
-  where something goes wrong.
-- **`python -m atf_graphrag stats`** — engine counts and active providers.
-- **Wiki** — deeper guides on architecture, deployment, and configuration.
-
----
-
-📖 [Docs Home](wiki/Home.md) · [User Manual](USER_MANUAL.md) · [Architecture](wiki/Architecture.md) · [AWS Native Setup](wiki/Deployment-and-AWS.md)
+*IntelliGraphRAG · <https://github.com/RW2523/intelligraphrag> · See the
+[wiki](wiki/Home.md) for component deep-dives.*

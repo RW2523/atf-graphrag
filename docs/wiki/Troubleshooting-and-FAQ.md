@@ -1,24 +1,31 @@
 # Troubleshooting & FAQ
 
-Practical fixes for the issues people actually hit when running **IntelliGraphRAG**,
-plus straight answers to the questions everyone asks first (data privacy, offline
-operation, adding a corpus or provider, cheap re-ingestion).
+Practical fixes for the issues people actually hit running **IntelliGraphRAG**
+(short: **IntelliGraph**), plus straight answers to the questions everyone asks
+first — data privacy, offline operation, adding a corpus or provider, and cheap
+re-ingestion.
 
-IntelliGraphRAG is designed to **degrade gracefully**: the stdlib-only core runs
-with nothing but Python, and every component is swappable by config. Most "errors"
-below are really the platform falling back to a free, local path — this page tells
-you when that is expected and how to upgrade to the full experience.
+IntelliGraph is built to **degrade gracefully**. The core HTTP API is pure Python
+stdlib (`atf_graphrag/api/server.py`), and every component is swappable by config.
+Most "errors" below are really the platform falling back to a free, local path —
+this page tells you when that fallback is *expected*, and how to upgrade to the
+full experience when you want it.
 
-> **First move for almost any problem:** start the server and read its banner.
+> **First move for almost any problem: read the startup banner.**
+>
 > ```bash
 > python -m atf_graphrag serve
 > ```
+>
 > ```text
 > [IntelliGraphRAG] profile=local llm=offline embeddings=local OPENROUTER_API_KEY=MISSING (offline fallback)
+> [IntelliGraphRAG] WARNING: no API auth token set and CORS is open — fine for local dev; set ATF_API_TOKEN before any non-local deploy.
+> [IntelliGraphRAG] listening on http://127.0.0.1:8077
 > ```
-> That one line tells you the active profile, which LLM/embeddings are wired, and
+>
+> That banner tells you the active profile, which LLM/embeddings are wired, and
 > whether your OpenRouter key was picked up. `GET /api/status` returns the same
-> facts as JSON (`key_set`, `llm_extraction`, `web_search`, provider wiring).
+> facts as JSON (`key_set`, `llm_extraction`, `web_search`, plus provider wiring).
 
 ---
 
@@ -26,78 +33,102 @@ you when that is expected and how to upgrade to the full experience.
 
 ### Offline LLM / no OpenRouter key (degraded mode)
 
-**Symptom:** answers are prefixed with `[offline-mode answer — set OPENROUTER_API_KEY
-for full generation]`, or the banner shows `llm=offline`.
+**Symptom.** Answers are prefixed with
+`[offline-mode answer — set OPENROUTER_API_KEY for full generation]`, or the
+banner shows `llm=offline` and `OPENROUTER_API_KEY=MISSING (offline fallback)`.
 
-**Cause:** no OpenRouter key is set, the network is unavailable, or the LLM call
-failed. The OpenRouter provider degrades to the deterministic `OfflineLLM` responder
-(`atf_graphrag/providers/llm.py`). Offline mode is **extractive** — it stitches an
-answer from retrieved context and never invents facts — so quality is lower but the
-system stays usable and grounded.
+**Cause.** No OpenRouter key is set, the network is unavailable, or a live LLM call
+failed. The default `local` profile configures the `openrouter` provider, but with
+no key the factory (`atf_graphrag/providers/__init__.py` → `make_llm`) returns the
+deterministic `OfflineLLM` responder. Offline mode is **extractive** — it stitches
+an answer from the retrieved context block and never invents facts — so answers
+are lower quality but still grounded and citable.
 
-**Fix — supply a key (any one works):**
+**Fix — supply a key (any one path works):**
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...      # environment (preferred)
-./run.sh                                  # run.sh loads .env then serves
+./run.sh                                 # run.sh loads .env, then serves
 ```
 
-or set it from the browser UI (stored in memory only by default):
+or set it from the browser UI / API at runtime (in-memory only by default):
 
 ```bash
 curl -X POST localhost:8077/api/key -d '{"key":"sk-or-..."}'
 ```
 
-The key resolves via `Settings.openrouter_key()` (runtime key → `OPENROUTER_API_KEY`
-env). To **stay offline on purpose**, set `llm.provider` to `offline` in
-`config/settings.json` — no key needed, no network calls.
+The key resolves via `Settings.openrouter_key()` — a runtime key set through the UI
+takes priority over the `OPENROUTER_API_KEY` environment variable.
 
-> The `llm.offline_fallback` flag (default `true`) controls whether OpenRouter
-> drops to offline on failure. Set it `false` if you would rather see the error
-> than a degraded answer.
+> **Two related knobs:**
+> - To **stay offline on purpose**, set `llm.provider` to `offline` in
+>   `config/settings.json`. No key, no network calls, fully deterministic.
+> - `llm.offline_fallback` (default `true`) controls whether the `openrouter`
+>   provider drops to offline *on failure*. Set it `false` if you would rather see
+>   the raw error than a silently degraded answer.
+>
+> When a live OpenRouter call fails and the fallback fires, you will see a
+> `[llm] OpenRouter failed (...); using offline fallback.` line in the log.
 
 ### Playwright not installed → static-fetch fallback for web pages
 
-**Symptom:** JavaScript-heavy or bot-protected pages crawl with little/no text;
-log shows the page was fetched but extraction was thin.
+**Symptom.** JavaScript-heavy or bot-protected pages crawl with little or no text;
+the page is fetched but extraction is thin or empty. No crash.
 
-**Cause:** the web crawler (`atf_graphrag/ingestion/crawler.py`) fetches pages over
-the stdlib `urllib` HTTP client by default. That returns the **static HTML only** —
-it does not execute JavaScript. The optional headless-render path (Playwright) is
-what renders JS before extraction; if Playwright is not installed, the crawler
-falls back to the static fetch automatically. This is expected behaviour, not a
-crash — content stays empty rather than failing the crawl.
+**Cause.** The headless-render path lives in `atf_graphrag/ingestion/browser.py` and
+uses **Playwright** (headless Chromium) to run a page's JavaScript and return the
+final DOM. Playwright is an **optional dependency**: it is imported lazily, and
+every entry point degrades gracefully. `playwright_available()` checks whether the
+package is importable, and `render_html()` **returns `None` rather than raising**
+when Playwright — or its browser binary — is missing, or on any navigation error.
+The crawler then falls back to the plain static fetch, which returns the static
+HTML only and does not execute JavaScript. This is by design.
 
-**Fix:**
+The crawler decides when a static fetch is too thin to be the real page via
+`needs_render()`, which flags HTML that is empty, contains anti-bot/JS-challenge
+markers (e.g. `captcha`, `just a moment`, `checking your browser`,
+`/cdn-cgi/challenge`), or has fewer than `min_static_words` visible words
+(default 80).
+
+**Fix — install Playwright and the Chromium binary (both steps required):**
 
 ```bash
 pip install playwright
 python -m playwright install chromium
 ```
 
-Then enable rendering in the `web` block (`render: auto` renders only when the
-static fetch looks thin; `always` forces it; `never` keeps the fast static path).
-For purely static sites, the default `urllib` fetch is faster and needs no extra
-install.
+Then set the render mode in the `web` config block:
 
-> Web ingestion is sitemap-driven (`sitemap.xml` discovery + `sitemapindex`
-> recursion), honours `robots.txt`, and rate-limits between requests. Linked PDFs
-> are queued into the `pdf` pipeline. CLI: `python scripts/crawl_site.py`.
+| `web.render` | Behaviour |
+| --- | --- |
+| `auto` (default) | Static fetch first; render **only** when the page looks JS-shelled or blocked. |
+| `always` | Always render. Slowest; needed for fully client-rendered sites. |
+| `never` | Static fetch only; never launch a browser. Fastest for static sites. |
 
-### Document preview not rendering (PREVIEW_ROOTS)
+> Installing the `playwright` pip package but **not** the Chromium binary is a
+> common trap: `playwright_available()` returns `True`, but the render still fails
+> at runtime and falls back to static. Always run `playwright install chromium`.
 
-**Symptom:** the Documents tab shows chunks and metadata, but **"source file
-unavailable"** / **"page preview unavailable"**, or `/api/document/file` returns
-404.
+### Document preview not rendering (`PREVIEW_ROOTS`)
 
-**Cause:** original source files **never leave your machine** and are not copied
-into the index — IntelliGraphRAG only stores chunks + provenance. To render a PDF
-page or serve the original, the server must locate the file on disk. It searches
-`_preview_roots()` (`atf_graphrag/api/server.py`): the `PREVIEW_ROOTS` env var, the
-configured `server.preview_roots`, and the uploads directory. If your originals
-live elsewhere, none of those roots contain them.
+**Symptom.** The Documents tab shows chunks and metadata, but the preview reports
+**"source file unavailable"** / **"page preview unavailable"**, or
+`/api/document/file` and `/api/document/page` return `404`.
 
-**Fix — point a preview root at your documents (`:`-separated, like `$PATH`):**
+**Cause.** Original source files **never leave your machine** and are **never copied
+into the index** — IntelliGraph stores only chunks plus provenance. To serve the
+original file or render a PDF page, the server must first *locate the file on disk*.
+`_resolve_source_file()` searches the directories returned by `_preview_roots()`
+(`atf_graphrag/api/server.py`):
+
+1. the `PREVIEW_ROOTS` environment variable (`:`-separated, like `$PATH`),
+2. the configured `server.preview_roots` list,
+3. the uploads directory under the storage root (always searched).
+
+If your originals live outside all of those roots, the lookup fails and you get the
+404 — even though the chunks indexed fine.
+
+**Fix — point a preview root at your documents:**
 
 ```bash
 export PREVIEW_ROOTS="/data/corpus/pdfs:/mnt/archive/reports"
@@ -109,143 +140,188 @@ or persist it in config:
 { "server": { "preview_roots": ["/data/corpus/pdfs"] } }
 ```
 
-> The legacy variable **`ATF_PREVIEW_ROOTS`** is still honoured for backward
-> compatibility; `PREVIEW_ROOTS` takes precedence. Files uploaded through the UI
-> are always previewable (the uploads dir is a preview root automatically).
-> Page-image preview also needs PyMuPDF (`pip install pymupdf`) — without it,
-> `/api/document/page` returns 404 even when the file resolves.
+> **Notes:**
+> - The legacy variable **`ATF_PREVIEW_ROOTS`** is still honoured for backward
+>   compatibility; `PREVIEW_ROOTS` takes precedence when both are set.
+> - Files uploaded through the UI are always previewable — the uploads dir is a
+>   preview root automatically.
+> - **Page-image** preview (`/api/document/page`) additionally needs PyMuPDF
+>   (`pip install pymupdf`). Without it, the page render returns empty bytes and
+>   the route 404s even when the file itself resolves. Serving the **raw file**
+>   (`/api/document/file`) does not need PyMuPDF.
 
 ### Storage lock / `StaleWriteError`
 
-IntelliGraphRAG has **two independent durability guards** that can surface as
-errors. Both exist to prevent silent data loss — they are working as designed.
+IntelliGraph has **two independent durability guards** that can surface as errors.
+Both exist to prevent silent data loss — when you see them, they are working as
+designed, not malfunctioning.
 
-**1. Single-writer storage lock** (`atf_graphrag/storage_lock.py`)
-
-```text
-[IntelliGraphRAG] REFUSING TO START: storage root '…/storage' is locked by
-live process 12345. Stop it before starting another writer (or remove
-…/storage/.writer.lock if that PID is dead).
-```
-
-A PID lockfile (`.writer.lock`) makes the storage root single-writer, so a server
-and a batch write-script (e.g. `reload_corpus.py`, graph enrichment) can never
-clobber each other.
-
-- **If the named PID is alive:** stop it first. Don't run two writers at the same
-  storage root.
-- **If the PID is dead** (e.g. after a hard kill): delete the stale lockfile and
-  restart.
-
-```bash
-rm /Users/you/.../storage/.writer.lock
-```
-
-**2. `StaleWriteError`** (`atf_graphrag/storage_epoch.py`)
+#### 1. Single-writer storage lock (`atf_graphrag/storage_lock.py`)
 
 ```text
-refusing stale store commit: storage epoch changed (a1b2c3d4→e5f6a7b8) —
-the data was restored or cleared after this writer loaded.
+[IntelliGraphRAG] REFUSING TO START: storage root '…/storage' is locked by live
+process 12345. Stop it before starting another writer (or remove …/storage/.writer.lock
+if that PID is dead).
 ```
 
-Every clear/restore/rebuild bumps a UUID epoch in `.epoch`. A writer that loaded
-under the old epoch is refused at commit so it can't overwrite freshly restored
-data with stale in-memory state. **Fix:** re-open the store / restart the affected
-process (or re-run the script) so it loads under the current epoch. After a restore
-or clear, queued jobs and staged uploads are purged for the same reason — re-enqueue
-work created before the restore.
+A PID lockfile named `.writer.lock` makes the storage root **single-writer**. Both
+the HTTP server *and* any batch write-script (corpus reload, graph enrichment)
+acquire the same lock, so two writers can never clobber each other at the same
+storage root. On startup, `acquire_storage_lock()` checks whether the recorded PID
+is still alive (`os.kill(pid, 0)`); a live holder blocks the new writer, a dead
+holder is overwritten.
+
+- **If the named PID is alive:** stop that process first. Do not run two writers
+  against the same storage root.
+- **If the PID is dead** (e.g. after a hard `kill -9` or crash that skipped the
+  `atexit` cleanup): the lock is stale. Delete it and restart.
+
+  ```bash
+  rm /path/to/storage/.writer.lock
+  ```
+
+#### 2. `StaleWriteError` (`atf_graphrag/storage_epoch.py`)
+
+```text
+refusing stale store commit: storage epoch changed (a1b2c3d4→e5f6a7b8) — the data
+was restored or cleared after this writer loaded. Re-open the store to continue.
+```
+
+The cross-process lock cannot catch a **same-process** stale writer: a resumed job
+thread or a lingering engine reference holding *old* in-memory state, committing it
+wholesale over *newer* on-disk data after a restore or clear. The epoch guard
+closes that gap. Every clear/restore/rebuild writes a fresh UUID to a `.epoch` file
+(`bump_epoch()`); each store records the epoch it loaded under, and `commit()`
+re-reads the file and **refuses to write** when the epoch moved
+(`check_epoch()` raises `StaleWriteError`) — so it logs loudly instead of silently
+destroying data.
+
+**Fix.** Re-open the store / restart the affected process (or re-run the script) so
+it loads under the current epoch. Writers attached to the live engine always match;
+only genuinely stale writers are blocked.
+
+> After any restore or clear, IntelliGraph also **purges queued jobs and staged
+> uploads** (`_invalidate_writers_and_jobs()` in the server), because that work
+> referenced pre-restore reality and must not resume over the new state. Re-enqueue
+> any ingestion you started before the restore.
 
 ### Empty answers / refusals
 
-**Symptom:** the model answers "I don't have enough information" / returns no
-citations, or `incomplete: true` in the trace.
+**Symptom.** The model answers "I don't have enough information", returns no
+citations, or the trace shows `incomplete: true`.
 
-This is often **correct behaviour** — IntelliGraphRAG refuses rather than
-hallucinate (refusals score 100% in the eval harness). But check these causes:
-
-| Cause | Check | Fix |
-| --- | --- | --- |
-| Thin / empty corpus | `GET /api/documents` → `total_documents` | Ingest more: `python -m atf_graphrag ingest <dir>` |
-| Offline LLM | banner / `key_set` in `/api/status` | Set `OPENROUTER_API_KEY` (see above) |
-| Question outside the corpus | run with `--trace` | Enable web research (Tavily) or ingest the source |
-| Evidence below floor | `min_confidence` (default `0.10`) in `retrieval` | Lower it slightly, or improve the corpus |
+This is frequently **correct behaviour** — IntelliGraph refuses rather than
+hallucinate. But it can also point at a real gap. Run with the trace and check the
+table below:
 
 ```bash
 python -m atf_graphrag query "your question" --trace
 ```
 
-The trace shows which lanes fired (vector/BM25, graph, table_row, sql, numeric,
-community), what was kept after evaluation, and the grounded citations. If no lane
-returns evidence, the refusal is expected.
+| Likely cause | How to check | Fix |
+| --- | --- | --- |
+| Thin / empty corpus | `GET /api/documents` → `total_documents` | Ingest more: `python -m atf_graphrag ingest <dir> <corpus>` |
+| Offline LLM (extractive) | banner, or `key_set` in `GET /api/status` | Set `OPENROUTER_API_KEY` (see the offline section above) |
+| Question outside the corpus | `--trace` shows no lane returned evidence | Enable web research (Tavily), or ingest the missing source |
+| Evidence below the floor | `retrieval.min_confidence` (default `0.10`) | Lower it slightly, or improve corpus coverage |
 
-### Slow Docling parsing on CPU
+The trace shows which retrieval lanes fired (vector + BM25, graph, table-row, SQL,
+numeric, community), what survived the evaluation gate, and the grounded citations.
+If **no lane returns evidence**, the refusal is the expected, safe outcome — do not
+"fix" it by forcing an answer.
 
-**Symptom:** ingestion crawls; each page takes seconds.
+### Slow Docling parsing on CPU (`ATF_PARSER=advanced`)
 
-**Cause:** the default parser is **Docling** (DocLayNet layout + TableFormer table
-model) — highest-fidelity structured tables but ~4.2s/page, and slow on CPU-only
-machines. If Docling isn't installed it already auto-falls-back to `advanced`.
+**Symptom.** Ingestion crawls; each page takes seconds.
 
-**Fix — switch to the fast local parser** (PyMuPDF + pdfplumber + VLM):
+**Cause.** The default document parser is **Docling** (DocLayNet layout model +
+TableFormer table model). It produces the highest-fidelity structured tables but
+costs roughly **~4.2 s/page**, which is slow on CPU-only machines. If Docling is not
+installed, the parser already auto-falls-back to the `advanced` provider; the slow
+case is when Docling *is* installed and running on CPU.
+
+**Fix — switch to the fast local parser for the run** (PyMuPDF + pdfplumber):
 
 ```bash
 export ATF_PARSER=advanced
-python -m atf_graphrag ingest <dir>
+python -m atf_graphrag ingest <dir> <corpus>
 ```
 
-`ATF_PARSER` overrides `ingestion.parser.provider` for the run. `advanced` is
+The `ATF_PARSER` environment variable overrides `ingestion.parser.provider` for the
+process (accepts `docling | advanced | textract | bedrock | bda`). `advanced` is
 dramatically faster on CPU with strong text and table extraction; reserve `docling`
-for documents where table-structure fidelity matters most.
+for the documents where table-structure fidelity matters most. You can also set it
+per-document in the Debug tab without touching the main corpus.
+
+> The Compose-your-RAG panel lists the parser cost hints:
+> `docling/advanced=local · textract/bda/bedrock=per-page (ingest only)`. Parser is
+> a **runtime** block, so switching it takes effect immediately — but it only
+> affects **new** ingests, not already-parsed chunks.
 
 ### AWS auth / region issues
 
-**Symptom:** Bedrock/Textract/Neptune calls fail; the AWS tab shows missing
-credentials; or a provider silently fell back to local (a `[fallback]` warning in
-the log).
+**Symptom.** Bedrock / Textract / Neptune calls fail, the AWS tab shows missing
+credentials, or a provider silently fell back to local with a
+`[providers] … provider '<x>' unavailable (…); falling back to local default.`
+warning in the log.
 
 **Causes & fixes:**
 
-- **No credentials:** export `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
-  (and `AWS_SESSION_TOKEN` if using STS), or set `AWS_PROFILE`. Check via
-  `GET /api/aws/status` (`credentials`) or `POST /api/aws/validate`.
-- **Wrong region:** set `AWS_REGION` / `AWS_DEFAULT_REGION`. The AWS control plane
-  defaults to `us-east-1`; pass `region` explicitly in `/api/aws/*` calls.
-- **Model not enabled:** enable the Bedrock model in your region's console first.
-- **Provider fell back to local:** the factory (`providers/__init__.py`) catches
-  setup failures and falls back rather than crashing — read the `[fallback]`
-  warning to see which component and why.
+- **No credentials.** Export `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (plus
+  `AWS_SESSION_TOKEN` if using STS), or set `AWS_PROFILE`. Verify via
+  `GET /api/aws/status` (the `credentials` block) or `POST /api/aws/validate`.
+- **Wrong region.** Set `AWS_REGION` or `AWS_DEFAULT_REGION`. The AWS control plane
+  defaults to `us-east-1`; you can also pass `region` explicitly in any
+  `POST /api/aws/*` request body.
+- **Model not enabled.** Enable the Bedrock model in your region's console before
+  first use — Bedrock model access is opt-in per account/region.
+- **Provider fell back to local.** The provider factories catch setup failures and
+  degrade rather than crash. Read the `[providers]` warning line to see exactly
+  which component degraded and why, then fix that component's credentials/region.
 
-### Port 8077 already in use
+> A non-`local` profile is treated as a real deployment. Beyond credentials, it
+> **requires an API auth token** (see the next section) before it will serve.
 
-**Symptom:** `OSError: [Errno 48] Address already in use` on `serve`.
+### Port already in use
 
-**Cause:** another process (often a previous IntelliGraphRAG run) holds port 8077.
+**Symptom.**
 
-**Fix — find and stop it, or change the port:**
+```text
+OSError: [Errno 48] Address already in use
+```
+
+on `serve`.
+
+**Cause.** Another process — often a previous IntelliGraph run — already holds the
+port (default `8077`).
+
+**Fix — find and stop it, or move to a different port:**
 
 ```bash
 lsof -i :8077                 # find the PID, then: kill <pid>
-export ATF_PORT=8090          # or run on a different port
+export ATF_PORT=8090          # or just run on another port
 python -m atf_graphrag serve
 ```
 
 `ATF_PORT` overrides `server.port` (default `8077`); `server.host` defaults to
-`127.0.0.1`. If the old process still holds the **storage lock**, see
-`StaleWriteError` / storage-lock above.
+`127.0.0.1`. If the old process is gone but you **also** see a storage-lock refusal,
+the previous run left a stale `.writer.lock` — see the storage-lock section above.
 
 ### Auth token required for non-local profiles
 
-**Symptom:**
+**Symptom.**
 
 ```text
-[IntelliGraphRAG] REFUSING to start: profile 'aws' requires auth. Set
-ATF_API_TOKEN (or server.auth_token) before deploying.
+[IntelliGraphRAG] REFUSING to start: profile 'aws' requires auth. Set ATF_API_TOKEN
+(or server.auth_token) before deploying. Use profile 'local' for unauthenticated
+local development.
 ```
 
-**Cause:** `serve()` is **fail-closed** — any non-`local` profile is treated as a
-deployment and refuses to serve an unauthenticated, CORS-open API.
+**Cause.** `serve()` is **fail-closed**: any non-`local` profile is treated as a
+deployment and refuses to serve an unauthenticated, CORS-open API. (On the `local`
+profile a missing token is a warning, not a refusal.)
 
-**Fix — set a bearer token:**
+**Fix — set a bearer token, then start:**
 
 ```bash
 export ATF_API_TOKEN="$(openssl rand -hex 24)"
@@ -253,9 +329,9 @@ ATF_PROFILE=aws python -m atf_graphrag serve
 ```
 
 Clients then send `Authorization: Bearer <token>` on every `POST`. The token may
-also live in `server.auth_token`; `ATF_API_TOKEN` takes precedence. On the `local`
-profile a token is **optional** (you get a warning, not a refusal) — fine for local
-dev, never for a deployment.
+instead live in `server.auth_token`; the `ATF_API_TOKEN` environment variable takes
+precedence. `GET` routes (status, documents, health) stay open; only mutating
+`POST` routes are gated.
 
 ---
 
@@ -264,38 +340,43 @@ dev, never for a deployment.
 ### Is my data sent anywhere?
 
 **Your documents stay local.** Original files are never copied into the index and
-never leave the machine in preview — the server reads them in place from your
-`PREVIEW_ROOTS`. What does go out, only when you enable it, is **LLM/embedding/
-vision text** to your configured provider:
+never copied off the machine for preview — the server reads them in place from your
+configured preview roots. What *can* leave the machine, **only when you enable a
+remote provider**, is the LLM / embedding / vision **text** sent to that provider:
 
-- **OpenRouter** (default `local` profile) — prompts + retrieved context for
-  generation; embeddings/reranking can run fully local.
-- **Bedrock** (`aws`/`hybrid` profiles) — same calls, inside your AWS account.
-- **Tavily** — only if you turn on web research, and only the search query.
+- **OpenRouter** (default `local` profile) — prompts plus retrieved context for
+  generation. Embeddings and reranking can run fully local, so often *only*
+  generation text leaves.
+- **Bedrock** (`aws` / `hybrid` profiles) — the same calls, but inside your own AWS
+  account.
+- **Tavily** — only if you turn on web research, and only the search query goes out.
 
-Every answer carries citations; guardrails can redact PII and block denied terms;
-the `grounding_verify` subagent checks that numbers match sources.
+Every answer carries citations; the optional guardrails can redact PII and block
+denied terms; and the `grounding_verify` subagent checks that numbers in the answer
+match the cited sources. For a zero-egress posture, use the all-local stack below.
 
 ### Can it run fully offline?
 
-**Yes.** The core is stdlib-only. Set the `oss`/`local` stack to all-local
-providers:
+**Yes.** The HTTP core is stdlib-only. Wire every block to a local/offline provider:
 
 ```json
 {
-  "llm":        { "provider": "offline" },
-  "embeddings": { "provider": "local" },
-  "vision":     { "provider": "offline" },
-  "reranker":   { "provider": "local" },
+  "llm":          { "provider": "offline" },
+  "embeddings":   { "provider": "local" },
+  "vision":       { "provider": "offline" },
+  "reranker":     { "provider": "local" },
   "vector_store": { "provider": "local" },
   "graph_store":  { "provider": "local" }
 }
 ```
 
-With no `OPENROUTER_API_KEY` the LLM auto-degrades to the extractive offline
-responder, so retrieval, the graph, tables, and citations all work without a
-network. Generation quality is lower (extractive, not abstractive) — that is the
-trade-off for zero external calls.
+With no `OPENROUTER_API_KEY` set, the LLM auto-degrades to the extractive offline
+responder anyway, so retrieval, the knowledge graph, tables, and citations all work
+with no network at all. The trade-off is generation quality: offline answers are
+*extractive* (stitched from context) rather than *abstractive*. The
+`sentence_transformer` embeddings provider runs locally too, but `embeddings:
+local` is the dependency-free deterministic-hashing fallback if you want zero model
+downloads.
 
 ### How do I add a new corpus or provider?
 
@@ -304,32 +385,36 @@ trade-off for zero external calls.
 ```json
 { "corpora": ["pdf", "web", "connected", "visual", "news", "policies"] }
 ```
+
 ```bash
 python -m atf_graphrag ingest ./policy_docs policies
 ```
 
-**New / swapped provider** — every block is config-driven. Set `<block>.provider`
-and (for runtime-safe blocks: `llm`, `vision`, `reranker`, `parser`, `ocr`,
-`guardrails`) it takes effect immediately; in the UI use **Compose your RAG**
-(`POST /api/config/apply`).
+**New / swapped provider** — every block is config-driven. Set `<block>.provider`,
+and for the **runtime-safe** blocks (`llm`, `vision`, `reranker`, `parser`, `ocr`,
+`guardrails`) the change takes effect immediately. In the UI use the
+**Compose your RAG** panel, which calls `POST /api/config/apply` and rebinds the
+live engine without a restart.
 
 > Changing **embeddings**, **vector_store**, or **graph_store** changes the data
-> space — you must **re-ingest or re-import** the corpus afterward
-> (`needs_reingest` in the apply response tells you which). See the
+> *space* — you must **re-ingest or re-import** the corpus afterward. The apply
+> response lists exactly which blocks need it in `needs_reingest`. See the
 > [Configuration Reference](Configuration-Reference.md) for every key.
 
 ### How do I re-ingest cheaply (seeds / export)?
 
-Parsing is the expensive step — so **parse once, restore many times.**
+Parsing is by far the expensive step, so the rule is **parse once, restore many
+times.**
 
-- **Seeds** — snapshot a fully ingested+indexed KB and one-click restore it:
+- **Seeds** — snapshot a fully ingested + indexed KB and one-click restore it:
 
   ```bash
   curl -X POST localhost:8077/api/seed/save    -d '{"name":"new"}'
   curl -X POST localhost:8077/api/seed/restore -d '{"name":"new"}'
   ```
 
-  Restore wipes the current data and loads the snapshot — instant, no re-parse.
+  Restore wipes the current data and loads the snapshot **instantly, with no
+  re-parse**. List available seeds with `GET /api/seeds`.
 
 - **Portable corpus export/import** — move a parsed corpus between machines without
   re-parsing:
@@ -340,9 +425,16 @@ Parsing is the expensive step — so **parse once, restore many times.**
   python scripts/reload_corpus.py   # rebuild stores from the bundle
   ```
 
-This makes spinning up a fresh environment (or a demo) seconds, not hours. For a
-full rebuild from raw files use `scripts/build_kb.py`; run the resumable
-post-ingest LLM stages with `scripts/finish_kb.py`.
+This turns spinning up a fresh environment (or a demo) into seconds instead of
+hours. For a full rebuild from raw files use `python scripts/build_kb.py`; run the
+resumable post-ingest LLM stages with `python scripts/finish_kb.py`.
+
+> Batch write-scripts acquire the **same** single-writer storage lock as the
+> server, so stop the server before running one against the same storage root (or
+> point it at a different `ATF_DATA_DIR`).
 
 ---
-📖 [Docs Home](Home.md) · [User Manual](../USER_MANUAL.md) · [Architecture](Architecture.md)
+
+📖 [Docs Home](Home.md) · [Installation & Quickstart](Installation-and-Quickstart.md) · [Configuration Reference](Configuration-Reference.md) · [Architecture](Architecture.md)
+
+🔗 Repo: <https://github.com/RW2523/intelligraphrag>
