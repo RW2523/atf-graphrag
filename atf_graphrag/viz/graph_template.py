@@ -7,7 +7,7 @@ connection is verifiable. Type filters + name search included.
 """
 
 GRAPH_VIEW_HTML = r"""<!doctype html>
-<html><head><meta charset="utf-8"><title>ATF GraphRAG — Explorer</title>
+<html><head><meta charset="utf-8"><title>GraphRAG — Explorer</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
   body{margin:0;font:14px system-ui,Segoe UI,Arial;background:#0f1117;color:#e6e6e6}
@@ -21,7 +21,7 @@ GRAPH_VIEW_HTML = r"""<!doctype html>
   h3{margin:6px 0}.src{font-size:12px;color:#9fb0c9;word-break:break-all}
 </style></head><body>
 <div id="bar">
-  <strong>ATF GraphRAG Explorer</strong>
+  <strong>GraphRAG Explorer</strong>
   <input id="search" placeholder="search entity…" size="20">
   <select id="typeFilter"><option value="">all types</option></select>
   <span id="stats" class="muted"></span>

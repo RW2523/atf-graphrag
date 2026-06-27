@@ -241,10 +241,12 @@ def _document_detail(corpus: str, doc_id: str, name: str = "",
 
 def _preview_roots() -> list:
     """Directories to resolve original source files for preview: env override
-    (ATF_PREVIEW_ROOTS, ':'-separated) + configured server.preview_roots + the
-    uploads dir. Original files never leave the user's machine."""
+    (PREVIEW_ROOTS, ':'-separated; legacy ATF_PREVIEW_ROOTS still honoured) +
+    configured server.preview_roots + the uploads dir. Original files never
+    leave the user's machine."""
     roots = []
-    env = os.environ.get("ATF_PREVIEW_ROOTS", "")
+    env = (os.environ.get("PREVIEW_ROOTS")
+           or os.environ.get("ATF_PREVIEW_ROOTS", ""))
     roots += [r for r in env.split(os.pathsep) if r]
     roots += list(_engine.settings.get("server", {}).get("preview_roots", []) or [])
     roots.append(os.path.join(_storage_root(), "uploads"))

@@ -471,9 +471,9 @@ class ControlPlane:
     ORDER = ["s3", "dynamodb", "ssm", "guardrail", "bda_project",
              "opensearch_serverless", "neptune_analytics"]
 
-    def __init__(self, region: str = "us-east-1", project: str = "atf-graphrag"):
+    def __init__(self, region: str = "us-east-1", project: str = "graphrag"):
         self.region = region or "us-east-1"
-        self.project = project or "atf-graphrag"
+        self.project = project or "graphrag"
         self.account_id = self._account_id()
         self._by_key = {c.key: c for c in [
             S3Buckets(self), DynamoCatalog(self), SsmConfig(self), Guardrail(self),
@@ -486,7 +486,7 @@ class ControlPlane:
             return ""
 
     def tags(self) -> Dict[str, str]:
-        return {PROJECT_TAG_KEY: self.project, "ManagedBy": "atf-graphrag-console"}
+        return {PROJECT_TAG_KEY: self.project, "ManagedBy": "graphrag-console"}
 
     def tagset(self) -> List[Dict[str, str]]:
         return [{"Key": k, "Value": v} for k, v in self.tags().items()]

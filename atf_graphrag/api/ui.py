@@ -8,7 +8,7 @@ INDEX_HTML = r'''<!doctype html>
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ATF GraphRAG — Console</title>
+<title>GraphRAG — Console</title>
 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 <style>
 :root{
@@ -254,7 +254,7 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
 </head>
 <body>
 <aside class="side">
-  <div class="brand"><div class="logo">&#9670;</div><div>ATF GraphRAG<small>Knowledge Console</small></div></div>
+  <div class="brand"><div class="logo">&#9670;</div><div>GraphRAG<small>Knowledge Console</small></div></div>
   <nav class="nav">
     <button data-view="chat" class="active"><span class="ico">&#128172;</span> Chat</button>
     <button data-view="kb"><span class="ico">&#128218;</span> Knowledge Base</button>
@@ -493,7 +493,7 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
         <label>Vector store<select id="aws-vs" onchange="awsVsFields()"><option value="opensearch">OpenSearch</option><option value="qdrant">Qdrant</option></select></label>
         <label id="aws-vs-ep-l">OpenSearch host<input id="aws-vs-ep" placeholder="https://search-xxx.us-east-1.es.amazonaws.com"/></label>
         <label id="aws-vs-key-l" style="display:none">Qdrant API key<input id="aws-vs-key" type="password" placeholder="optional"/></label>
-        <label>Index/collection prefix<input id="aws-vs-prefix" value="atf"/></label>
+        <label>Index/collection prefix<input id="aws-vs-prefix" value="kb"/></label>
       </div>
       <div class="awsgrid" style="margin-top:6px">
         <label>Graph store<select id="aws-gs" onchange="awsGsFields()"><option value="neptune">Neptune</option><option value="neo4j">Neo4j</option></select></label>
@@ -502,7 +502,7 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
         <label id="aws-gs-uri-l" style="display:none">Neo4j URI<input id="aws-gs-uri" placeholder="bolt://host:7687"/></label>
       </div>
       <div class="awsgrid" style="margin-top:6px">
-        <label>S3 bucket<input id="aws-s3" placeholder="my-atf-bucket"/></label>
+        <label>S3 bucket<input id="aws-s3" placeholder="my-kb-bucket"/></label>
         <label>S3 prefix<input id="aws-s3prefix" placeholder="rag/"/></label>
       </div>
     </div>
@@ -543,9 +543,9 @@ select{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size
 
     <div class="card">
       <h3 style="margin:0 0 4px">4 &middot; Provision / tear down the AWS-native stack</h3>
-      <p style="color:var(--muted);margin:0 0 10px;font-size:13px">Create the managed resources (S3, DynamoDB, SSM, Bedrock Guardrail, OpenSearch Serverless, Neptune Analytics) from here — or <b>delete everything</b> in one click to stop paying when you're done. Resources are tagged <code>Project=atf-graphrag</code>. Run <b>Plan</b> first.</p>
+      <p style="color:var(--muted);margin:0 0 10px;font-size:13px">Create the managed resources (S3, DynamoDB, SSM, Bedrock Guardrail, OpenSearch Serverless, Neptune Analytics) from here — or <b>delete everything</b> in one click to stop paying when you're done. Resources are tagged <code>Project=graphrag</code>. Run <b>Plan</b> first.</p>
       <div class="awsgrid" style="margin-bottom:8px">
-        <label>Stack project tag<input id="aws-proj" value="atf-graphrag"/></label>
+        <label>Stack project tag<input id="aws-proj" value="graphrag"/></label>
         <label>Region<input id="aws-proj-region" value="us-east-1"/></label>
       </div>
       <div class="actions" style="justify-content:flex-start;flex-wrap:wrap">
@@ -851,7 +851,7 @@ function renderDoc(det){
     $('#doc-pgbar').style.display='flex'; showPage(DOCPAGE);
   }else{
     $('#doc-pgwrap').innerHTML='<div class="noprev">Original file not found on disk for preview.<br><br>'+
-      'Set <b>ATF_PREVIEW_ROOTS</b> to the folder you ingested from (or re-upload) to enable page rendering.<br><br>'+
+      'Set <b>PREVIEW_ROOTS</b> to the folder you ingested from (or re-upload) to enable page rendering.<br><br>'+
       'All parsing / ingestion / indexing detail is shown on the right.</div>';
   }
   // ---- Parsed ----
@@ -1614,7 +1614,7 @@ async function dbgQuery(btn){
 }
 // ---- AWS provision / teardown control plane ----
 function _provBody(action){return JSON.stringify({
-  action, project:($('#aws-proj').value||'atf-graphrag').trim(),
+  action, project:($('#aws-proj').value||'graphrag').trim(),
   region:($('#aws-proj-region').value||'us-east-1').trim()});}
 function _provOut(html){$('#aws-prov').innerHTML=html;}
 async function awsPlan(action){
@@ -1643,7 +1643,7 @@ async function awsProvision(){
   }catch(e){_provOut('<span class="bad">Provision failed: '+esc(''+e)+'</span>');}
 }
 async function awsTeardown(){
-  if(!confirm('DELETE every AWS resource tagged Project=atf-graphrag — S3 buckets (and contents), DynamoDB, SSM, Guardrail, OpenSearch Serverless collection, and the Neptune Analytics graph? This stops all charges and CANNOT be undone.'))return;
+  if(!confirm('DELETE every AWS resource tagged Project=graphrag — S3 buckets (and contents), DynamoDB, SSM, Guardrail, OpenSearch Serverless collection, and the Neptune Analytics graph? This stops all charges and CANNOT be undone.'))return;
   if(!confirm('Final confirmation: permanently delete the AWS-native stack now?'))return;
   _provOut('<span class="muted">Tearing down (reverse order)&hellip;</span>');
   try{const r=await fetch('/api/aws/teardown',{method:'POST',headers:{'Content-Type':'application/json'},body:_provBody('teardown')}).then(r=>r.json());
