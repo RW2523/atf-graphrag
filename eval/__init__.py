@@ -1,4 +1,4 @@
-"""Evaluation harness for ATF-GraphRAG.
+"""Evaluation harness for IntelliGraphRAG.
 
 Pure-Python ranking metrics (recall@k, NDCG@k, MRR) plus a single self-written
 LLM faithfulness judge. RAGAS is intentionally NOT the foundation — these
