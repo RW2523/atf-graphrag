@@ -116,9 +116,35 @@ def _get_index(vs) -> RowIndex:
     return idx
 
 
-def _row_matches(row, key: List[str]) -> bool:
-    joined = " | ".join(str(c) for c in row).upper()
-    return all(t in joined for t in key)
+def _cell_contiguous(cell: str, key: List[str]) -> bool:
+    """True if the key tokens form a contiguous run inside the cell (only
+    non-alphanumeric characters between them) — i.e. they ARE the cell's name
+    phrase, not scattered words that happen to co-occur."""
+    pat = r"[^A-Z0-9]+".join(re.escape(t) for t in key)
+    return re.search(pat, cell.upper()) is not None
+
+
+def _row_match_quality(row, key: List[str]) -> Optional[Tuple[str, float]]:
+    """If the row satisfies the key, return (row_text, locality_bonus); else None.
+
+    Locality is decisive for precision. A key like ["PHOENIX","ARMS"] is
+    satisfied BOTH by the real "PHOENIX ARMS" name cell and by an unrelated
+    "NORTH STAR ARMS ... | PHOENIX | AZ" row where the tokens land in different
+    columns (name fragment + city). The old whole-row AND treated these as
+    equal, so the true row drowned among false cross-column bleeds. We rank:
+    tokens contiguous in ONE cell  >>  all tokens in one cell  >>  scattered
+    across cells (a likely false match, penalised)."""
+    cells = [str(c) for c in row]
+    row_text = " | ".join(cells)
+    single = next((c for c in cells
+                   if all(t in c.upper() for t in key)), None)
+    if single is not None:
+        if len(key) < 2 or _cell_contiguous(single, key):
+            return row_text, 0.06          # name-phrase match — strongest signal
+        return row_text, 0.03              # all tokens in one cell, not adjacent
+    if all(t in row_text.upper() for t in key):
+        return row_text, -0.05             # cross-column bleed — weak, penalised
+    return None
 
 
 def find_rows(question: str, engine, corpora: List[str],
@@ -146,21 +172,25 @@ def find_rows(question: str, engine, corpora: List[str],
                     continue
                 p = vs._payloads.get(cid) or {}
                 td = p.get("table_data") or {}
-                matched: Optional[str] = None
+                # pick the BEST-locality row in the chunk, not the first that
+                # happens to satisfy the key (a scatter row could precede the
+                # real name-cell row).
+                best: Optional[Tuple[str, float]] = None
                 for row in (td.get("rows") or []):
-                    if _row_matches(row, key):
-                        matched = " | ".join(str(c) for c in row)
-                        break
-                if not matched:
+                    q = _row_match_quality(row, key)
+                    if q is not None and (best is None or q[1] > best[1]):
+                        best = q
+                if best is None:
                     continue
+                matched, locality = best
                 seen_chunks.add(cid)
-                # base score by key specificity; metadata year-match boost
-                score = 0.86 + 0.02 * min(len(key), 4)
+                # base score by key specificity + locality + year-match boost
+                score = 0.86 + 0.02 * min(len(key), 4) + locality
                 src = (p.get("source_name") or "") + " " + (p.get("document_date") or "")
                 if qyear:
                     score += 0.04 if qyear in src else -0.03
                 chunk = vs.get(cid)
                 if chunk is not None:
-                    out.append((chunk, matched, round(min(score, 0.98), 3)))
+                    out.append((chunk, matched, round(min(score, 0.99), 3)))
     out.sort(key=lambda x: -x[2])
     return out[:max_hits]
