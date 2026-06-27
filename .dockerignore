@@ -1,0 +1,25 @@
+# Keep the build context small and the image clean.
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Local data, indexes, and secrets — never bake into the image
+storage/
+data/
+Rag_Dataset/
+eval/
+.env
+*.log
+
+# Dev-only material not needed at runtime
+tests/
+docs/
+*.md
+!README.md
+scripts/*.json

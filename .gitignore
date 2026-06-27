@@ -17,3 +17,9 @@ eval/report.json
 
 # Secrets
 .env
+
+# Eval run artifacts (regenerable)
+eval_results*.json
+scripts/eval_*_report.json
+scripts/eval_50_report.json
+scripts/eval_15_structured.json
