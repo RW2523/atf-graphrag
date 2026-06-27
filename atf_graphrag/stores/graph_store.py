@@ -170,8 +170,13 @@ class LocalGraphStore:
         s, d = self._norm(src), self._norm(dst)
         if not s or not d or s == d:
             return
-        self.add_entity(src, chunk_id=chunk_id, corpus=corpus)
-        self.add_entity(dst, chunk_id=chunk_id, corpus=corpus)
+        # Only create the edge if BOTH endpoints are valid entities. add_entity
+        # returns "" for junk names (e.g. "unknown") — without this guard the
+        # edge + adjacency would reference a node that doesn't exist, which later
+        # crashes path_labeled (KeyError) and pollutes traversal.
+        if not (self.add_entity(src, chunk_id=chunk_id, corpus=corpus) and
+                self.add_entity(dst, chunk_id=chunk_id, corpus=corpus)):
+            return
         key = (s, d)
         is_typed = rel not in self._GENERIC_RELS
         e = self.edges.get(key)
@@ -276,11 +281,13 @@ class LocalGraphStore:
         nodes_path = self._path_ids(a, b, max_hops)
         if not nodes_path:
             return ""
-        parts = [self.nodes[nodes_path[0]].get("label", nodes_path[0])]
+        # .get() guards: a path node may be absent from self.nodes if adjacency
+        # references a key pruned by node-verify (stale edge) — never KeyError.
+        parts = [self.nodes.get(nodes_path[0], {}).get("label", nodes_path[0])]
         for u, v in zip(nodes_path, nodes_path[1:]):
             rel = (self.edges.get((u, v)) or self.edges.get((v, u))
                    or {}).get("rel", "related_to")
-            parts.append(f"--{rel}--> {self.nodes[v].get('label', v)}")
+            parts.append(f"--{rel}--> {self.nodes.get(v, {}).get('label', v)}")
         return " ".join(parts)
 
     def _path_ids(self, a: str, b: str, max_hops: int = 4) -> List[str]:
