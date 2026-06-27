@@ -1164,14 +1164,14 @@ def serve():
     try:
         acquire_storage_lock(root)
     except RuntimeError as ex:
-        print(f"[ATF GraphRAG] REFUSING TO START: {ex}")
+        print(f"[IntelliGraphRAG] REFUSING TO START: {ex}")
         raise SystemExit(1)
     import atexit
     atexit.register(release_storage_lock, root)
     host = _engine.settings["server"]["host"]
     port = _engine.settings["server"]["port"]
     key = "set" if Settings.openrouter_key() else "MISSING (offline fallback)"
-    print(f"[ATF GraphRAG] profile={_engine.settings['profile']} "
+    print(f"[IntelliGraphRAG] profile={_engine.settings['profile']} "
           f"llm={_engine.llm.name} embeddings={_engine.embedder.name} "
           f"OPENROUTER_API_KEY={key}")
     profile = _engine.settings.get("profile", "local")
@@ -1181,12 +1181,12 @@ def serve():
             # serve an unauthenticated, CORS-open API. Set a token to proceed.
             release_storage_lock(root)
             raise SystemExit(
-                f"[ATF GraphRAG] REFUSING to start: profile '{profile}' requires "
+                f"[IntelliGraphRAG] REFUSING to start: profile '{profile}' requires "
                 "auth. Set ATF_API_TOKEN (or server.auth_token) before deploying. "
                 "Use profile 'local' for unauthenticated local development.")
-        print("[ATF GraphRAG] WARNING: no API auth token set and CORS is open — "
+        print("[IntelliGraphRAG] WARNING: no API auth token set and CORS is open — "
               "fine for local dev; set ATF_API_TOKEN before any non-local deploy.")
-    print(f"[ATF GraphRAG] listening on http://{host}:{port}")
+    print(f"[IntelliGraphRAG] listening on http://{host}:{port}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 

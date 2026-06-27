@@ -94,7 +94,7 @@ python -m atf_graphrag visual chart.png visual
 Crawl a website via `sitemap.xml` (robots-aware, rate-limited, with headless-render fallback for JS/bot-protected pages and linked-PDF queueing):
 
 ```bash
-python scripts/crawl_site.py https://www.example.gov/sitemap.xml --corpus web --max-pages 50
+python scripts/crawl_site.py https://www.example.gov/sitemap.xml --render auto --corpus web --max 50
 ```
 
 ---
@@ -155,18 +155,19 @@ python -m atf_graphrag demo         # ingest the bundled sample and run sample q
 | Page | Topic |
 |---|---|
 | [Architecture](docs/wiki/Architecture.md) | End-to-end system design and data flow |
-| [Configuration](docs/wiki/Configuration.md) | Layered config, profiles, and every setting |
-| [Providers](docs/wiki/Providers.md) | Swappable LLM, vision, embeddings, store, and parser providers |
-| [Ingestion](docs/wiki/Ingestion.md) | Parsing, chunking, indexing, and table/chart extraction |
-| [Retrieval](docs/wiki/Retrieval.md) | The multi-lane agentic retrieval pipeline |
+| [Installation & Quickstart](docs/wiki/Installation-and-Quickstart.md) | Install, optional dependencies, Docker, first run |
+| [Configuration Reference](docs/wiki/Configuration-Reference.md) | Layered config, profiles, every setting and env var |
+| [Ingestion & Parsing](docs/wiki/Ingestion-and-Parsing.md) | Parsing, chunking, indexing, and table/chart extraction |
+| [Retrieval Lanes](docs/wiki/Retrieval-Lanes.md) | The multi-lane agentic retrieval pipeline |
 | [Knowledge Graph](docs/wiki/Knowledge-Graph.md) | Entity/relation extraction, resolution, and communities |
-| [Web Ingestion](docs/wiki/Web-Ingestion.md) | Sitemap crawling, render fallback, and web search |
+| [Tables & SQL](docs/wiki/Tables-and-SQL.md) | Table store, cell-level lookup, and text-to-SQL |
+| [Web Crawling](docs/wiki/Web-Crawling.md) | Sitemap crawling, BeautifulSoup + Playwright, render fallback |
 | [API Reference](docs/wiki/API-Reference.md) | Every HTTP endpoint |
-| [CLI Reference](docs/wiki/CLI-Reference.md) | Module CLI and the `scripts/` toolbox |
-| [Deployment](docs/wiki/Deployment.md) | Local, hybrid, and AWS-native deployment |
-| [AWS Native](docs/wiki/AWS-Native.md) | Bedrock, managed stores, and the AWS control plane |
-| [Evaluation](docs/wiki/Evaluation.md) | The evaluation harness and results |
-| [Security & Governance](docs/wiki/Security.md) | Guardrails, grounding, auth, and provenance |
+| [CLI & Scripts](docs/wiki/CLI-and-Scripts.md) | Module CLI and the `scripts/` toolbox |
+| [Deployment & AWS](docs/wiki/Deployment-and-AWS.md) | Local, hybrid, and AWS-native (Bedrock) deployment |
+| [Evaluation](docs/wiki/Evaluation.md) | The 50-question evaluation harness and results |
+| [Troubleshooting & FAQ](docs/wiki/Troubleshooting-and-FAQ.md) | Common issues, fixes, and frequently asked questions |
+| [Glossary](docs/wiki/Glossary.md) | Definitions of every key term |
 
 ---
 📖 [Docs Home](docs/wiki/Home.md) · [User Manual](docs/USER_MANUAL.md)

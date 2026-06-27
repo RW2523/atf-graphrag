@@ -205,7 +205,7 @@ class Guardrail(Component):
                 return self._ok("create", self._name() + " (exists)", resources=[existing])
             resp = bd.create_guardrail(
                 name=self._name(),
-                description="ATF GraphRAG guardrail",
+                description="IntelliGraphRAG guardrail",
                 blockedInputMessaging="This request was blocked by policy.",
                 blockedOutputsMessaging="This response was withheld by policy.",
                 contentPolicyConfig={"filtersConfig": [
@@ -435,7 +435,7 @@ class BdaProject(Component):
                 return self._ok("create", self._name() + " (exists)")
             resp = bda.create_data_automation_project(
                 projectName=self._name(),
-                projectDescription="ATF GraphRAG document extraction",
+                projectDescription="IntelliGraphRAG document extraction",
                 standardOutputConfiguration={"document": {"extraction": {
                     "granularity": {"types": ["PAGE", "ELEMENT"]},
                     "boundingBox": {"state": "ENABLED"}}}},

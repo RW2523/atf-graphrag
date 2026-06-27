@@ -1,6 +1,6 @@
 # Recommended setup (evidence-based)
 
-This is the **proven-best configuration** for the ATF GraphRAG platform, chosen
+This is the **proven-best configuration** for the IntelliGraphRAG platform, chosen
 from a head-to-head evaluation (75 question-runs across a 25- and a 50-question
 set on the live 137-document / 29,549-chunk corpus). It is already the default
 in `atf_graphrag/config.py` — this document records *why*.

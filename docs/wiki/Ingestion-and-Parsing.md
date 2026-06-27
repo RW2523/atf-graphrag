@@ -27,6 +27,7 @@ The entry points:
 ```bash
 python -m atf_graphrag ingest <path|dir> [corpus]   # index a file or directory
 python -m atf_graphrag visual <image> [corpus]      # vision ingestion of an image
+python scripts/crawl_site.py <url|sitemap> [opts]   # crawl & ingest a website
 ```
 
 The orchestration lives in `atf_graphrag/indexing/indexer.py` (`Indexer.index_file`,
@@ -380,6 +381,157 @@ entity/relation extraction is governed by `ingestion.llm_extraction`
 (`off | auto | on`); `auto` runs only on small docs
 (≤ `llm_extraction_auto_max_pages`, default 40) so bulk uploads stay fast. See
 the Graph documentation for details.
+
+---
+
+## 10. Web ingestion (crawling)
+
+IntelliGraphRAG can ingest a website directly, not just local files. The crawler
+discovers pages from a **sitemap** (never random scraping), extracts the main
+content with **BeautifulSoup**, and — crucially — turns every HTML `<table>` into
+an `[EXTRACTED TABLE]` markdown block so a table on a web page becomes
+**cell-queryable exactly like a table parsed from a PDF**. The whole subsystem
+lives in `atf_graphrag/ingestion/`:
+
+| File | Responsibility |
+|---|---|
+| `crawler.py` | sitemap discovery, polite fetching, page crawl, ingestion entrypoint |
+| `web_extract.py` | BeautifulSoup main-content extraction + HTML `<table>` → markdown |
+| `browser.py` | optional Playwright headless-Chromium render for JS / bot-walled pages |
+
+```bash
+python scripts/crawl_site.py <url-or-sitemap> \
+    [--max N] [--render auto|always|never] [--delay S] \
+    [--no-robots] [--corpus C] [--save]
+```
+
+### Content extraction (`web_extract.py`)
+
+`extract_content(html, url)` returns
+`{title, headings, date, linked_pdfs, content, n_tables}`. BeautifulSoup is the
+primary path; if `bs4` is not importable the module degrades to a small regex
+extractor (`_extract_regex`) so ingestion never hard-fails — but the regex path
+does **no** table extraction (`n_tables = 0`).
+
+The BeautifulSoup path (`_extract_bs4`, lxml parser with an html.parser
+fallback):
+
+- **Title** from `<title>`.
+- **Published date** from standard meta tags (`article:published_time`,
+  `name=date`, `og:updated_time`, `dcterms.date`), else a `<time datetime=…>`,
+  truncated to 40 chars.
+- **Linked PDFs** — every `<a href>` matching `.pdf` resolved to an absolute URL,
+  deduped and order-preserving.
+- **Headings** — first 10 non-empty `<h1>`/`<h2>`/`<h3>`.
+- **Main body text** — taken from `<main>` → `<article>` → `<body>` (in that
+  preference order) after **noise tags are decomposed**: `script`, `style`,
+  `noscript`, `nav`, `footer`, `header`, `aside`, `form`, `svg`, `button`,
+  `iframe`.
+
+### HTML tables → `[EXTRACTED TABLE]`
+
+`html_table_to_markdown(table)` renders a BeautifulSoup `<table>` as
+GitHub-flavoured markdown **with a header separator row**, so
+`parse_markdown_table()` recognises the header and yields a structured
+`{columns, rows}` grid. Cells are whitespace-normalised and ragged rows are
+padded to a common width; a table with fewer than two rows is rejected (returns
+`""`).
+
+Order of operations matters: tables are captured **first**, then the `<table>`
+elements are stripped from the DOM alongside the noise tags so table text isn't
+duplicated in the body text. Each captured table is appended to `content` as:
+
+```text
+[EXTRACTED TABLE]
+| State | 2022 | 2023 |
+| --- | --- | --- |
+| Texas | 1,234 | 1,310 |
+```
+
+Because the page's `content` carries the same `[EXTRACTED TABLE]` marker the PDF
+parsers emit (see §2), crawled tables flow through the **identical** downstream
+path: chunker → `parse_table` → `table_data` → table store → SQL / table_row
+deterministic cell lookup. No web-specific table handling exists; the marker is
+the contract.
+
+### Crawling & sitemaps (`crawler.py`)
+
+- **`find_sitemaps(base_url)`** resolves the sitemap(s) for a site. If `base_url`
+  itself ends in `.xml` it is used directly; otherwise `robots.txt` is read for
+  `Sitemap:` directives; otherwise it falls back to `/sitemap.xml`. Returns
+  absolute, deduped URLs.
+- **`discover_sitemap(sitemap_url)`** returns page URLs. A `<sitemapindex>`
+  (a sitemap of sitemaps) is followed **recursively** into its children (depth
+  capped at 3); a `<urlset>` yields its `<loc>` page URLs. If the XML won't
+  parse it falls back to a `<loc>` regex.
+- **`crawl_page` / `crawl_sitemap`** fetch and extract pages politely.
+- **`ingest_sitemap(indexer, …)`** indexes each page into the `web` corpus
+  (`source_type="website"`) and queues every linked PDF into the PDF pipeline,
+  **deduped across pages**; PDF locators in the returned map are prefixed
+  `pdf:`.
+- **`crawl_and_ingest(engine, indexer, base_url, **overrides)`** is the
+  config-driven entrypoint: it reads the `web` config block, builds a
+  Playwright-capable fetcher, resolves sitemaps from `base_url`, and ingests
+  every page plus its linked PDFs. `overrides` shadow individual `web` keys.
+
+**Politeness** is built in: `RobotsPolicy` checks `robots.txt` per host with
+**fail-open** semantics (if robots can't be fetched/parsed, fetching is
+allowed), and the crawler rate-limits between requests, honouring the larger of
+the configured `crawl_delay` and any robots `Crawl-delay`. All network calls
+(`fetch` / `sleep` / `download`) are injectable, so the crawler is unit-testable
+offline.
+
+### Optional headless render (`browser.py`)
+
+Some government sites serve a JS shell or a bot/JS challenge to non-browser
+clients, leaving urllib/httpx with an empty or blocked page.
+`make_fetcher(render=…)` builds a fetch function that is **static-first with a
+Playwright fallback**:
+
+| `render` | Behaviour |
+|---|---|
+| `never` | static HTTP GET only |
+| `auto` *(default)* | static first, then render only if `browser.needs_render()` says the page is a JS shell / bot challenge / too thin |
+| `always` | render only (static skipped) |
+
+`needs_render(html, min_words)` returns `True` when the fetch failed, the HTML
+contains an anti-bot/JS-challenge marker (e.g. `captcha`, `enable javascript`,
+`just a moment`, `cf-browser-verification`, `checking your browser`), or the
+visible word count is below `min_static_words` (default 80). When escalation is
+needed, `render_html()` drives **lazily-imported** Playwright headless Chromium,
+navigates with `wait_until="networkidle"`, and returns the final DOM HTML for
+BeautifulSoup to parse normally.
+
+Playwright is an **optional** dependency. Install it once to enable rendering:
+
+```bash
+pip install playwright && playwright install chromium
+```
+
+Every entry point degrades gracefully when Playwright or its browser binaries
+are absent — `render_html()` returns `None` (never raises) and the crawler keeps
+working in static-only mode.
+
+### `web` config block
+
+```jsonc
+{
+  "web": {
+    "sitemaps": [],              // optional explicit sitemap URLs
+    "max_pages": 50,             // page cap (per sitemap)
+    "crawl_delay": 1.0,          // seconds between requests (min; robots can raise)
+    "respect_robots": true,
+    "ingest_linked_pdfs": true,
+    "pdf_corpus": "pdf",         // corpus for linked PDFs
+    "corpus": "web",             // corpus for crawled pages
+    "render": "auto",            // auto|always|never
+    "render_wait_ms": 0,         // extra wait after networkidle
+    "render_timeout_ms": 30000,
+    "min_static_words": 80,      // below this, auto-render escalates
+    "user_agent": "ATF-GraphRAG-Crawler/1.0"
+  }
+}
+```
 
 ---
 

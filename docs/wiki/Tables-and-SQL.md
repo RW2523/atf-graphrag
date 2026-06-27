@@ -364,7 +364,7 @@ on first query via `get_store()` — so in practice you rarely need to call
 ## How it plugs into retrieval
 
 The table lanes are two of the lanes in the multi-lane pipeline (see
-[Retrieval](Retrieval.md)). A few behaviors worth noting:
+[Retrieval](Retrieval-Lanes.md)). A few behaviors worth noting:
 
 - The **EvaluationAgent** floors `table_row` and `sql` evidence at `0.72` and
   exempts `table_row` hits from the junk penalty — deterministic cell matches are
@@ -380,4 +380,4 @@ The net effect: cell facts come back exactly, aggregates are computed by SQL
 provenance.
 
 ---
-📖 [Docs Home](Home.md) · [User Manual](../USER_MANUAL.md) · [Architecture](Architecture.md) · [Retrieval](Retrieval.md)
+📖 [Docs Home](Home.md) · [User Manual](../USER_MANUAL.md) · [Architecture](Architecture.md) · [Retrieval](Retrieval-Lanes.md)

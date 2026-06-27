@@ -1,4 +1,4 @@
-# ATF GraphRAG — Full Evaluation Report
+# IntelliGraphRAG — Full Evaluation Report
 ## 20-File Corpus | OpenRouter gpt-4o-mini | June 8 2026
 
 ---
@@ -365,4 +365,4 @@ This is a genuine data gap — ATF arson statistical reports use BATS (Bomb-Arso
 
 ---
 
-*Report generated: 2026-06-08 | ATF GraphRAG v1.0 | OpenRouter gpt-4o-mini*
+*Report generated: 2026-06-08 | IntelliGraphRAG v1.0 | OpenRouter gpt-4o-mini*

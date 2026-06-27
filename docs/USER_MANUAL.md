@@ -320,9 +320,9 @@ The default corpus for `ingest` is `pdf`; for `visual` it is `visual`.
 
 ```bash
 $ python -m atf_graphrag serve
-[ATF GraphRAG] profile=local llm=openrouter embeddings=sentence_transformer ...
-[ATF GraphRAG] WARNING: no API auth token set and CORS is open — local dev only.
-[ATF GraphRAG] listening on http://127.0.0.1:8077
+[IntelliGraphRAG] profile=local llm=openrouter embeddings=sentence_transformer ...
+[IntelliGraphRAG] WARNING: no API auth token set and CORS is open — local dev only.
+[IntelliGraphRAG] listening on http://127.0.0.1:8077
 ```
 
 > If you set a profile that requires auth before deployment, the server **refuses
@@ -433,24 +433,37 @@ curl -s http://localhost:8077/ingest_visual \
 
 ### 5.3 Ingesting websites via sitemap
 
-Web ingestion is **sitemap-driven, never random scraping**. Point the ingester at
-a `sitemap.xml` URL and it discovers the listed pages, fetches each one politely,
-extracts title/headings/date/content (HTML `<table>` → markdown), and queues any
-**linked PDFs** into the PDF pipeline.
+Web ingestion is **sitemap-driven, never random scraping**. Point the crawler at
+a site root or a `sitemap.xml` URL and it discovers the listed pages, fetches each
+one politely, extracts title/headings/date/content, and queues any **linked PDFs**
+into the PDF pipeline. HTML `<table>` elements are converted to an
+`[EXTRACTED TABLE]` markdown block so that **crawled tables become cell-queryable**
+through the same `table_data` → table store → deterministic cell-lookup path as
+PDF tables.
 
-**Ingest a sitemap (or a single page) over HTTP:**
+**Crawl a site or sitemap with the CLI (`scripts/crawl_site.py`):**
 
 ```bash
-# A sitemap URL -> 'web' corpus (auto-detected by '.xml' / 'sitemap' in the URL)
-curl -s http://localhost:8077/ingest \
-  -H 'Content-Type: application/json' \
-  -d '{"path": "https://example.gov/sitemap.xml", "corpus": "web"}'
+# Site root: discovers the sitemap (explicit .xml, robots.txt Sitemap:, or /sitemap.xml)
+python scripts/crawl_site.py https://www.atf.gov/
 
-# A single page also works
-curl -s http://localhost:8077/ingest \
-  -H 'Content-Type: application/json' \
-  -d '{"path": "https://example.gov/reports/annual", "corpus": "web"}'
+# A sitemap URL, capped at 200 pages, with rendering decided per-page
+python scripts/crawl_site.py https://www.atf.gov/sitemap.xml --max 200 --render auto
+
+# A fully client-rendered site: force headless-browser rendering on every page
+python scripts/crawl_site.py https://example.gov/ --render always
 ```
+
+CLI flags (each overrides the matching `web` config key for this run):
+
+| Flag | Effect |
+|---|---|
+| `--max N` | Cap pages per sitemap (overrides `web.max_pages`). |
+| `--render auto\|always\|never` | Rendering mode (overrides `web.render`). |
+| `--delay S` | Polite delay in seconds between requests (overrides `web.crawl_delay`). |
+| `--no-robots` | Ignore `robots.txt` (sets `respect_robots=false`). |
+| `--corpus C` | Target corpus for crawled pages (default `web`). |
+| `--save` | Commit the index and write an updated seed after the crawl. |
 
 Crawl behavior is governed by the `web` config section (`atf_graphrag/config.py`):
 
@@ -462,20 +475,43 @@ Crawl behavior is governed by the `web` config section (`atf_graphrag/config.py`
 | `web.respect_robots` | `true` | Honor `robots.txt` (per host, fail-open if unreachable). |
 | `web.ingest_linked_pdfs` | `true` | Download linked PDFs and index them into `web.pdf_corpus`. |
 | `web.pdf_corpus` | `"pdf"` | Corpus for linked PDFs. |
+| `web.corpus` | `"web"` | Corpus that crawled pages land in. |
+| `web.render` | `"auto"` | Headless-browser rendering: `auto` (static, render only when a page looks JS-shelled), `always` (render every page), `never` (static only). |
+| `web.render_wait_ms` | `0` | Extra settle time after `networkidle` before reading the rendered DOM. |
+| `web.render_timeout_ms` | `30000` | Per-page render timeout. |
+| `web.min_static_words` | `80` | In `auto` mode, a static page below this visible-word count triggers a render. |
+| `web.user_agent` | `"ATF-GraphRAG-Crawler/1.0"` | User-Agent sent on fetches and matched against `robots.txt`. |
 
 How it works (`atf_graphrag/ingestion/crawler.py`):
 
-- **Sitemap discovery** parses `sitemap.xml` (and nested sitemap-index files) for
-  `<loc>` URLs.
+- **Sitemap discovery** resolves the sitemap from the input: an explicit `.xml` URL
+  is used as-is, otherwise `robots.txt` is read for `Sitemap:` directives, otherwise
+  it falls back to `/sitemap.xml`. A `<sitemapindex>` (sitemap of sitemaps) is
+  followed recursively into its child sitemaps; a `<urlset>` yields its `<loc>` page
+  URLs (with a `<loc>` regex fallback if the XML won't parse).
 - **robots.txt** is checked per host via `urllib.robotparser`; disallowed URLs are
   skipped, and the crawler **fails open** (allows) if robots can't be fetched.
 - **Rate limiting** sleeps `max(crawl_delay, robots-crawl-delay)` between pages.
+- **Rendering** (`make_fetcher`) tries a static HTTP GET first and escalates to a
+  Playwright headless Chromium render when the page is JS-shelled or bot-blocked;
+  it falls back to whatever it can get and only fails if both paths fail.
+- **HTML tables** are turned into `[EXTRACTED TABLE]` markdown by `web_extract.py`
+  (BeautifulSoup, with a regex fallback when `bs4` is absent) so they flow through
+  the same structured-table pipeline as PDF tables and stay cell-queryable.
 - **Linked PDFs** are resolved to absolute URLs, deduped across pages, downloaded
   to a temp file, and run through the normal PDF pipeline.
 
-> **JavaScript-rendered sites.** Pages are fetched with the stdlib HTTP client,
-> which handles server-rendered HTML. For sites that render content client-side,
-> install Playwright (see [§2.4](#24-playwright-for-javascript-heavy-or-bot-protected-sites)).
+> **JavaScript-rendered sites.** Static fetching handles server-rendered HTML with
+> no extra dependencies. To actually render client-side / bot-protected pages under
+> `--render auto` or `--render always`, install Playwright (see
+> [§2.4](#24-playwright-for-javascript-heavy-or-bot-protected-sites)):
+>
+> ```bash
+> pip install playwright && playwright install chromium
+> ```
+>
+> Playwright is **optional**: when it is not installed the crawler prints a note and
+> degrades to static fetch.
 
 > **On-demand web research.** Separately from crawling, IntelliGraphRAG can
 > augment a query with live web search (Tavily) into the `news` corpus when the
@@ -847,9 +883,9 @@ All resources are tagged `Project=graphrag`. Install AWS dependencies with
 
 > Full step-by-step provisioning, IAM, and architecture details live in the
 > deployment wiki:
-> [AWS Native Setup](../wiki/AWS-Native-Setup.md) ·
-> [Deployment Playbook](../wiki/Deployment-Playbook.md) ·
-> [Bedrock-Native](../wiki/Bedrock-Native.md).
+> [AWS Native Setup](wiki/Deployment-and-AWS.md) ·
+> [Deployment Playbook](wiki/Deployment-and-AWS.md) ·
+> [Bedrock-Native](wiki/Deployment-and-AWS.md).
 
 ---
 
@@ -877,4 +913,4 @@ All resources are tagged `Project=graphrag`. Install AWS dependencies with
 
 ---
 
-📖 [Docs Home](../wiki/Home.md) · [User Manual](USER_MANUAL.md) · [Architecture](../wiki/Architecture.md) · [AWS Native Setup](../wiki/AWS-Native-Setup.md)
+📖 [Docs Home](wiki/Home.md) · [User Manual](USER_MANUAL.md) · [Architecture](wiki/Architecture.md) · [AWS Native Setup](wiki/Deployment-and-AWS.md)

@@ -45,7 +45,7 @@ class OpenRouterLLM(LLMProvider):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "HTTP-Referer": "https://github.com/ajace/atf-graphrag",
-            "X-Title": "ATF GraphRAG Platform",
+            "X-Title": "IntelliGraphRAG Platform",
         }
         try:
             data = post_json(f"{self.base_url}/chat/completions", headers, payload)

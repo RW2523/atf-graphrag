@@ -1,4 +1,4 @@
-# How the ATF GraphRAG platform works — full architecture
+# How the IntelliGraphRAG platform works — full architecture
 
 A plain-English + technical walkthrough of the whole system: the three layers
 (**Ingestion → Indexing → Retrieval**), every algorithm used and where, and the

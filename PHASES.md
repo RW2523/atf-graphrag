@@ -1,4 +1,4 @@
-# ATF GraphRAG Platform — Three-Phase Build
+# IntelliGraphRAG Platform — Three-Phase Build
 
 This document describes the application as it was built, phase by phase. Each
 phase is self-contained and verifiable. All model requests route through

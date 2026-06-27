@@ -1,253 +1,347 @@
-# Web Crawling (sitemap-driven ingestion)
+# Web Crawling
 
-IntelliGraphRAG can ingest content directly from public websites — useful for
-government and institutional sites whose authoritative material lives on the web
-rather than in a folder of files. The crawler is deliberately **structured and
-polite**: it discovers pages from an XML sitemap (never random link-following),
-honours `robots.txt`, rate-limits itself between requests, and queues any linked
-PDFs into the regular document pipeline so they receive full table and chart
-extraction.
+> Structured web ingestion for IntelliGraphRAG — discover pages from XML
+> sitemaps (never random scraping), fetch them politely, extract main content
+> (with HTML tables turned into cell-queryable structured data), optionally
+> render JavaScript pages with a headless browser, and queue any linked PDFs
+> into the PDF pipeline.
 
-The implementation is **stdlib-only** at its core — it uses `urllib` for fetching,
-`urllib.robotparser` for robots policy, and `xml.etree.ElementTree` for sitemap
-parsing — so web ingestion works with nothing more than a Python install.
+IntelliGraphRAG can ingest a public website the same disciplined way it ingests
+a folder of PDFs. Instead of crawling links at random, it discovers a site's own
+`sitemap.xml`, fetches each listed page, extracts the meaningful content, and
+indexes it into the `web` corpus alongside everything else. Crawled HTML tables
+flow through the *exact same* structured-table pipeline as PDF tables, so a
+table on a government web page becomes cell-queryable just like one parsed from
+a document.
 
-> **Source of truth:** `atf_graphrag/ingestion/crawler.py` (crawler + ingestion),
-> `atf_graphrag/ingestion/loaders.py` (`_html_to_text` extraction), and
-> `atf_graphrag/ingestion/orchestrator.py` (`classify`, `_handle_sitemap`,
-> `_handle_website` — the routing that turns a URL into a crawl).
+The crawler is built to be polite (robots.txt + rate limiting), resilient
+(degrades gracefully when optional dependencies are missing), and deterministic
+in tests (every network call is injectable).
 
-> ℹ️ This page documents the crawler as it ships. It was validated against U.S.
-> government firearms/explosives (ATF) sites, used here purely as an example
-> public-sector dataset — IntelliGraphRAG itself is domain-agnostic.
+Relevant source:
+
+- `atf_graphrag/ingestion/crawler.py` — sitemap discovery, recursion, fetcher,
+  politeness, ingestion entrypoint
+- `atf_graphrag/ingestion/web_extract.py` — BeautifulSoup extraction + HTML
+  table → markdown
+- `atf_graphrag/ingestion/browser.py` — optional Playwright headless rendering
+- `scripts/crawl_site.py` — command-line entrypoint
+- `atf_graphrag/config.py` — the `web` config block
 
 ---
 
-## How a URL becomes ingested content
+## How a crawl flows
 
-There is no separate crawl binary. The same ingestion entry points you use for
-files accept URLs, and the orchestrator classifies them automatically.
-
-```python
-# atf_graphrag/ingestion/orchestrator.py  (classify)
-if source.startswith(("http://", "https://")):
-    path = urlparse(source).path.lower()
-    if "sitemap" in path or path.endswith(".xml"):
-        return RouteDecision(source, "sitemap", corpus or "web", ...)
-    return RouteDecision(source, "website", corpus or "web", ...)
+```
+base URL or sitemap.xml
+        │
+        ▼
+  find_sitemaps()        explicit .xml ? robots.txt "Sitemap:" ? /sitemap.xml
+        │
+        ▼
+  discover_sitemap()     <sitemapindex> recurses into child sitemaps;
+        │                <urlset> yields page <loc>s   (capped at max_pages)
+        ▼
+  for each page URL:
+     ├─ RobotsPolicy.can_fetch()   skip if robots.txt disallows
+     ├─ rate limit                 sleep max(crawl_delay, robots crawl-delay)
+     ├─ make_fetcher() fetch       static HTTP first, render fallback (auto/always)
+     ├─ extract_content()          BeautifulSoup: title/headings/date/content
+     │                             + HTML <table> → [EXTRACTED TABLE] markdown
+     ├─ indexer.index_text()       → web corpus
+     └─ linked PDFs                → downloaded + indexer.index_file() → pdf corpus
 ```
 
-| You pass… | Detected as | Handler | What happens |
-| --- | --- | --- | --- |
-| URL containing `sitemap` or ending `.xml` | `sitemap` | `_handle_sitemap` | Discover every page in the sitemap, crawl politely, index each into the `web` corpus, queue linked PDFs |
-| Any other `http(s)://` URL | `website` | `_handle_website` | Fetch and index that single page into the `web` corpus |
-| A local file or directory | `pdf` / `text` / `image` / `batch` | file handlers | Normal document ingestion |
-
-Both web handlers route everything into the **`web` corpus** by default (one of
-the standard corpora: `pdf`, `web`, `connected`, `visual`, `news`). Linked PDFs go
-to the **`pdf` corpus** so they sit alongside your other documents.
+Everything is config-driven through the `crawl_and_ingest()` entrypoint, which
+reads the `web` block and lets the CLI shadow individual keys.
 
 ---
 
-## Crawling a whole site (sitemap mode)
+## Sitemap discovery
 
-### CLI
+Discovery never guesses links to follow — it asks the site where its content is.
+`find_sitemaps(base_url)` resolves one or more sitemap URLs using this order:
+
+1. **Explicit sitemap.** If `base_url` already ends in `.xml`, it is used as-is.
+2. **robots.txt.** Otherwise the crawler fetches `/robots.txt` and collects every
+   `Sitemap:` directive it finds.
+3. **Convention fallback.** If robots.txt is unreachable or names no sitemaps, it
+   falls back to `/sitemap.xml`.
+
+The result is a deduplicated list of absolute sitemap URLs. robots.txt fetch
+failures are fail-open here (discovery still proceeds to `/sitemap.xml`).
+
+### Sitemap-index recursion
+
+`discover_sitemap(sitemap_url, limit)` parses the XML and handles both sitemap
+shapes:
+
+- A **`<urlset>`** (an ordinary sitemap) yields its page `<loc>` entries.
+- A **`<sitemapindex>`** (a "sitemap of sitemaps") is followed *recursively* into
+  each child sitemap, accumulating page URLs until the `limit` (page cap) is
+  reached. Recursion is bounded to a depth of 3 to avoid pathological nesting.
+
+If the XML cannot be parsed at all, the crawler falls back to a simple
+`<loc>…</loc>` regex so a slightly malformed sitemap still yields URLs. The
+number of returned page URLs is always capped at `limit` (the `max_pages`
+config / `--max` flag).
+
+---
+
+## Politeness: robots.txt + rate limiting
+
+Crawling a real (often government) site responsibly is a first-class concern.
+
+**robots.txt** is enforced per host by `RobotsPolicy`:
+
+- One `RobotFileParser` is fetched and cached per host.
+- `can_fetch(url)` is consulted before every page; disallowed URLs are skipped
+  with a log line and never fetched.
+- **Fail-open:** if robots.txt cannot be fetched or parsed, fetching is allowed
+  (standard RFC behaviour) — a missing robots.txt should not block a crawl.
+- Setting `respect_robots: false` (or `--no-robots`) disables the check
+  entirely, so every URL is considered fetchable.
+
+**Rate limiting** keeps the crawl gentle:
+
+- Between pages the crawler sleeps `max(crawl_delay, robots_crawl_delay)` — your
+  configured delay, but never shorter than the site's own robots.txt
+  `Crawl-delay` directive if it specifies a larger one.
+- No delay is applied before the first page.
+
+---
+
+## Content extraction (BeautifulSoup)
+
+`web_extract.extract_content(html, url)` turns a fetched page into a record:
+
+```
+{title, headings, date, linked_pdfs, content, n_tables}
+```
+
+The primary path uses **BeautifulSoup** (`lxml` parser, falling back to the
+stdlib `html.parser`):
+
+- **Title** from `<title>`.
+- **Headings** — up to 10 `<h1>`/`<h2>`/`<h3>` texts, whitespace-normalised.
+- **Published date** — checked in order across common meta tags
+  (`article:published_time`, `name="date"`, `og:updated_time`,
+  `dcterms.date`), then a `<time datetime=…>` element.
+- **Linked PDFs** — every `<a href>` ending in `.pdf` (with optional query or
+  fragment), resolved to absolute URLs and deduplicated in order.
+- **Main content** — noise tags (`script`, `style`, `noscript`, `nav`,
+  `footer`, `header`, `aside`, `form`, `svg`, `button`, `iframe`) are removed,
+  then text is taken from `<main>`, else `<article>`, else `<body>`. No
+  per-domain hardcoding.
+
+### HTML tables → cell-queryable data
+
+This is the key upgrade for tabular sites. Before the body text is extracted,
+every `<table>` is converted to a **GitHub-flavoured markdown table** by
+`html_table_to_markdown()`:
+
+- A header separator row is included so the downstream parser recognises a header
+  and produces structured `{columns, rows}`.
+- Ragged rows are padded to a common width; cells are whitespace-normalised.
+- Tables with fewer than two rows (empty or header-only) are dropped.
+
+Each table is emitted into `content` as an `[EXTRACTED TABLE]` block. That marker
+is exactly what the chunker and `parse_table()` look for, so a crawled web table
+flows through `table_data` → the **table store** → SQL and deterministic
+**cell-lookup** lanes — identical to a table parsed from a PDF. A figures table
+on a government web page becomes queryable cell-by-cell. See
+[Tables & SQL](Tables-and-SQL.md) for the table layer itself.
+
+### Regex fallback
+
+If BeautifulSoup is not importable, the module degrades to a small regex
+extractor (`title`/`headings`/`date`/`linked_pdfs`/`content`). The fallback does
+**not** extract tables (`n_tables` is `0`), but ingestion never hard-fails.
+
+---
+
+## Headless rendering (Playwright, optional)
+
+Many sites — especially modern government portals — serve a JavaScript shell or
+a bot/JS challenge to plain HTTP clients, so `urllib` gets an empty or blocked
+page. `browser.py` can render those pages with **Playwright headless Chromium**,
+running the page's JavaScript and returning the final DOM HTML, which the
+BeautifulSoup extractor then parses normally.
+
+Playwright is an **optional dependency**. It is imported lazily and every entry
+point degrades gracefully (returns `None`/`False`) if Playwright or its browser
+binaries are missing — the crawler simply stays in static-only mode. Install it
+once to enable rendering:
 
 ```bash
-# Ingest every page listed in a sitemap into the default "web" corpus
-python -m atf_graphrag ingest https://www.example.gov/sitemap.xml
-
-# Send the crawl to a specific corpus
-python -m atf_graphrag ingest https://www.example.gov/sitemap.xml web
+pip install playwright && playwright install chromium
 ```
 
-### HTTP API
+### Render modes
+
+The fetcher built by `make_fetcher(render=…)` chooses static vs. rendered per
+page:
+
+| Mode | Behaviour |
+|---|---|
+| `never` | Static HTTP fetch only — never launches a browser. |
+| `auto` *(default)* | Static fetch first; re-fetch via the browser **only when** `needs_render()` says the static HTML looks unusable. |
+| `always` | Skip the static fetch and render every page (slow; for fully client-rendered sites). |
+
+The fetcher is resilient: in `auto` mode a static failure falls through to a
+render attempt, and a page is only treated as a hard failure when **both** the
+static and render paths fail.
+
+### The `needs_render()` heuristic
+
+In `auto` mode, `needs_render(html, min_words)` decides whether to escalate a
+static fetch to the browser. It returns `True` when the static HTML:
+
+- is empty / the fetch failed, **or**
+- contains a known anti-bot / JS-challenge marker (e.g. `captcha`,
+  `enable javascript`, `cf-browser-verification`, `just a moment`,
+  `checking your browser`, `access denied`, `incapsula`, `ddos-guard`, …), **or**
+- has fewer than `min_words` visible words (a near-empty JS shell).
+
+`min_words` comes from `web.min_static_words` (default `80`) — the threshold for
+that thin-text check.
+
+---
+
+## Linked-PDF queuing
+
+When `ingest_linked_pdfs` is enabled (the default), every PDF link found across
+crawled pages is fed into the PDF pipeline:
+
+- Each PDF URL is downloaded to a temp file and indexed with `index_file()` into
+  the `pdf_corpus` (default `pdf`), then the temp file is cleaned up.
+- PDFs are **deduplicated across pages** — the same PDF linked from several pages
+  is ingested once.
+- Download or indexing failures are logged and skipped; they never abort the
+  crawl.
+
+In the returned `{locator: chunk_count}` map, PDF locators are prefixed with
+`pdf:` so you can tell pages and linked PDFs apart.
+
+---
+
+## `scripts/crawl_site.py` — command-line usage
 
 ```bash
-curl -X POST http://localhost:8077/ingest \
-  -H "Authorization: Bearer $ATF_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"path": "https://www.example.gov/sitemap.xml", "corpus": "web"}'
+python scripts/crawl_site.py <url-or-sitemap> [options]
 ```
 
-(Bearer auth is required off-`local`; see the API reference.)
+The single positional argument is the site root **or** a `sitemap.xml` URL. All
+flags default to the `web` config block and override it only when supplied:
 
-### A single page
+| Flag | Type | Default | Effect |
+|---|---|---|---|
+| `<url>` | positional | — | Site root or sitemap.xml URL to crawl. |
+| `--max N` | int | config `max_pages` | Maximum pages to crawl (per sitemap). |
+| `--render auto\|always\|never` | choice | config `render` | Headless-browser rendering mode. |
+| `--delay S` | float | config `crawl_delay` | Polite delay (seconds) between requests. |
+| `--no-robots` | flag | robots respected | Ignore robots.txt (sets `respect_robots=false`). |
+| `--corpus C` | str | config `corpus` (`web`) | Target corpus for crawled pages. |
+| `--save` | flag | off | Commit, rebuild the table store, and save an updated seed after the crawl. |
 
-Point the same command at a normal page URL and the orchestrator takes the
-`website` path — it fetches that one page, extracts title/date/text, and indexes it:
+What the script does:
+
+1. Loads the `Engine` and an `Indexer` (LLM extraction off for speed).
+2. Builds an `overrides` dict from the flags you passed.
+3. If the effective render mode is `auto`/`always` but Playwright is **not**
+   installed, prints a NOTE to stderr that JS/bot-protected pages will fall back
+   to static fetch, with the install command.
+4. Runs `crawl_and_ingest()` and prints a summary: pages indexed, linked PDFs,
+   total chunks, the target corpus, and the first 20 page locators with their
+   chunk counts.
+5. With `--save`: commits the engine, folds crawled tables into the table store,
+   and writes a new seed (so the parse-once corpus can be served cheaply later).
+
+---
+
+## The `web` config block
+
+All keys live under `web` in `atf_graphrag/config.py`. `crawl_and_ingest()`
+reads them and merges any CLI overrides on top.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sitemaps` | `[]` | sitemap.xml URLs to crawl. |
+| `max_pages` | `50` | Cap on pages crawled per sitemap. |
+| `crawl_delay` | `1.0` | Polite delay (seconds) between requests. |
+| `respect_robots` | `true` | Honour robots.txt (fail-open if unreachable). |
+| `ingest_linked_pdfs` | `true` | Queue linked PDFs into the PDF corpus. |
+| `pdf_corpus` | `"pdf"` | Corpus for ingested linked PDFs. |
+| `corpus` | `"web"` | Corpus that crawled pages land in. |
+| `render` | `"auto"` | Render mode: `auto` \| `always` \| `never`. |
+| `render_wait_ms` | `0` | Extra settle time (ms) after `networkidle` when rendering. |
+| `render_timeout_ms` | `30000` | Navigation timeout (ms) for a rendered page. |
+| `min_static_words` | `80` | Below this visible-word count, `auto` triggers a render. |
+| `user_agent` | `"ATF-GraphRAG-Crawler/1.0"` | User-Agent sent on fetches and used for robots.txt rules. |
+
+---
+
+## Worked example: crawling a government site
+
+The ATF dataset that ships as IntelliGraphRAG's example corpus has a public
+website, which makes it a good end-to-end demonstration. (ATF is only an example
+dataset here — the crawler has no per-site logic.)
+
+**1. Crawl the site root, letting discovery find the sitemap:**
 
 ```bash
-python -m atf_graphrag ingest https://www.example.gov/news/2024-report
+python scripts/crawl_site.py https://www.atf.gov/
 ```
 
----
+`find_sitemaps()` reads `robots.txt`, follows any `Sitemap:` directives (or
+falls back to `/sitemap.xml`), `discover_sitemap()` recurses any sitemap index,
+and pages are crawled politely into the `web` corpus.
 
-## What the crawler does, step by step
-
-`ingest_sitemap()` in `crawler.py` drives the full flow:
-
-1. **Discover** — `discover_sitemap()` fetches the sitemap URL and parses every
-   `<loc>` element with `ElementTree`, falling back to a regex
-   (`<loc>(.*?)</loc>`) if the XML is malformed. Results are capped at `max_pages`.
-2. **Robots check** — for each page URL, `RobotsPolicy.can_fetch()` consults the
-   host's `robots.txt`. Disallowed URLs are skipped with a log line.
-3. **Rate-limit** — between requests the crawler sleeps for
-   `max(crawl_delay, robots_crawl_delay)`, so an explicit `Crawl-delay:` in
-   `robots.txt` is always respected even if it is longer than your configured delay.
-4. **Fetch & extract** — `crawl_page()` pulls the HTML and extracts the page
-   `<title>`, the first ten `<h1>`–`<h3>` headings, a published date from
-   `<meta>` tags, the body text, and any linked PDFs (resolved to absolute URLs).
-5. **Index** — each page with content is indexed into the `web` corpus via
-   `indexer.index_text(...)`, carrying `source_type="website"`, the page URL,
-   title, and date as provenance.
-6. **Queue linked PDFs** — every distinct linked PDF is downloaded to a temp file
-   and handed to `indexer.index_file(...)` in the `pdf` corpus, then cleaned up.
-   PDFs are deduplicated across all pages in the crawl, so a footer link repeated
-   on every page is downloaded once.
-
-`ingest_sitemap()` returns a `{locator: chunk_count}` map; PDF locators are
-prefixed `pdf:` so you can tell page chunks from document chunks at a glance.
-
-### Sitemap discovery and sitemap indexes
-
-`discover_sitemap()` collects **every** `<loc>` in the document via
-`root.iter()`. For a standard `<urlset>` sitemap those are page URLs. For a
-`<sitemapindex>` (a sitemap that points at other sitemaps), the `<loc>` values are
-the child sitemap URLs themselves, so they are what gets returned. To crawl a site
-that publishes a sitemap index, point the ingest command at each child sitemap
-listed inside it.
-
----
-
-## Politeness: robots.txt and rate limiting
-
-`RobotsPolicy` (in `crawler.py`) is a small per-host robots checker with the
-correct **fail-open** semantics from the RFC: if `robots.txt` cannot be fetched or
-parsed, fetching is **allowed**. One parser is cached per host.
-
-| Behaviour | Detail |
-| --- | --- |
-| Per-host caching | `robots.txt` is fetched once per host and reused for the crawl |
-| Fail-open | Unreachable/unparseable `robots.txt` ⇒ crawling permitted |
-| `Disallow` honoured | Disallowed page URLs are skipped (logged), the crawl continues |
-| `Crawl-delay` honoured | The effective delay is `max(crawl_delay, robots_crawl_delay)` |
-| Toggle | Set `web.respect_robots` to `false` to bypass robots entirely |
-
-The crawler identifies itself with a fixed User-Agent string
-(`ATF-GraphRAG-Crawler/1.0`) on both page fetches and PDF downloads.
-
-> ⚠️ Disabling `respect_robots` is for sites you own or have permission to crawl.
-> Leave it on for third-party public sites.
-
----
-
-## HTML content extraction
-
-Page bodies are turned into clean text by `_html_to_text()` in
-`atf_graphrag/ingestion/loaders.py`. It is a zero-dependency `HTMLParser`
-subclass that drops `<script>` and `<style>` content and emits the remaining text,
-one block per element. The extracted text then flows through the **standard
-ingestion pipeline** — structure-aware chunking, context-prepended embeddings,
-and graph entity extraction — exactly like text pulled from a document.
-
-Linked PDFs are where the heavy lifting happens: because they are routed back
-through `index_file()`, they get the full parser stack (PyMuPDF/pdfplumber/Docling
-plus VLM for charts and scanned pages), tables emitted as `[EXTRACTED TABLE]`
-markdown, and rows stored in the SQLite table store. So the most table-rich,
-cell-queryable content from a government site typically arrives via its linked
-report PDFs rather than the surrounding HTML pages.
-
-> **Note:** HTML body text is captured as plain text. For pages whose primary
-> value is a tabular dataset, ingest the underlying PDF/CSV the page links to —
-> that is the path that becomes cell-queryable through the table-row and SQL lanes.
-
----
-
-## Configuration: the `web.*` keys
-
-All crawl behaviour is config-driven under the top-level `web` section
-(`atf_graphrag/config.py`, layered `DEFAULTS → config/settings.json →
-config/settings.<profile>.json → environment`). These are the keys the crawler
-actually reads:
-
-| Key | Default | Purpose |
-| --- | --- | --- |
-| `web.sitemaps` | `[]` | List of sitemap URLs (a place to record the sites you crawl) |
-| `web.max_pages` | `50` | Cap on pages discovered/crawled per sitemap |
-| `web.crawl_delay` | `1.0` | Polite delay (seconds) between requests; raised to the robots `Crawl-delay` when larger |
-| `web.respect_robots` | `true` | Honour `robots.txt` (fail-open if unreachable) |
-| `web.ingest_linked_pdfs` | `true` | Download and index PDFs linked from crawled pages into `web.pdf_corpus` |
-| `web.pdf_corpus` | `"pdf"` | Corpus that linked PDFs are indexed into |
-
-Example `config/settings.json` fragment:
-
-```json
-{
-  "web": {
-    "sitemaps": ["https://www.example.gov/sitemap.xml"],
-    "max_pages": 100,
-    "crawl_delay": 2.0,
-    "respect_robots": true,
-    "ingest_linked_pdfs": true,
-    "pdf_corpus": "pdf"
-  }
-}
-```
-
-`_handle_sitemap()` reads each of these at crawl time
-(`web.get("max_pages", 50)`, `web.get("crawl_delay", 1.0)`, and so on), so a
-change in settings takes effect on the next ingest.
-
----
-
-## Worked example
-
-Crawl a government site, slow and robots-respecting, sending pages to `web` and
-linked reports to `pdf`:
+**2. Crawl a specific sitemap, raise the page cap, keep auto rendering:**
 
 ```bash
-# 1. Configure polite limits in config/settings.json
-#    web.max_pages = 100, web.crawl_delay = 2.0, web.respect_robots = true
-
-# 2. Crawl the sitemap
-python -m atf_graphrag ingest https://www.example.gov/sitemap.xml web
-
-# 3. Verify what landed
-python -m atf_graphrag stats
-
-# 4. Ask a question grounded in the freshly crawled material
-python -m atf_graphrag query "What did the 2023 annual report say about production volumes?" --trace
+python scripts/crawl_site.py https://www.atf.gov/sitemap.xml --max 200 --render auto
 ```
 
-A typical run prints any skipped/disallowed URLs and download failures, and the
-`ingest_sitemap()` result records one entry per indexed page plus one
-`pdf:<url>` entry per linked report. Pages with no extractable content are
-dropped automatically, and the whole crawler is **network-safe**: a missing
-sitemap, an unreachable host, or a failed PDF download is logged and skipped
-rather than aborting the run.
+Static fetch is used for normal pages; only pages that look like a JS shell or a
+bot challenge are re-fetched through the headless browser (if Playwright is
+installed).
+
+**3. A fully client-rendered portal — force rendering and slow down:**
+
+```bash
+python scripts/crawl_site.py https://example.gov/ --render always --delay 2.0 --save
+```
+
+`--render always` renders every page, `--delay 2.0` is extra polite, and
+`--save` commits the result, rebuilds the table store, and writes a seed.
+
+**Sample output:**
+
+```
+[crawl_site] crawling https://www.atf.gov/sitemap.xml  (render=auto)
+[crawl_site] indexed 187 pages + 42 linked PDFs = 5310 chunks into corpus 'web'
+     38 chunks  https://www.atf.gov/firearms/listing-federal-firearms-licensees
+     27 chunks  https://www.atf.gov/resource-center/data-statistics
+     …
+   … 167 more
+```
+
+After this, a question like *"How many FFLs are in Texas?"* — if it sits in an
+HTML table on a crawled page — resolves through the same deterministic
+cell-lookup / SQL lanes as a PDF table, with full page-and-URL provenance.
 
 ---
 
-## Testing it offline
+## Robustness notes
 
-The crawler is built for deterministic, hermetic tests — `fetch`, `download`, and
-`sleep` are all injectable. `tests/test_crawler.py` exercises sitemap discovery,
-robots `Disallow` skipping, the robots toggle, rate-limit sleeping, web-corpus
-indexing, and cross-page PDF dedup with **no network access at all**:
-
-```python
-from atf_graphrag.ingestion import crawler as C
-
-pages = C.crawl_sitemap(
-    "https://example.gov/sitemap.xml",
-    fetch=my_fake_fetch,          # in-memory page map
-    delay=0, sleep=lambda s: None # no real waiting
-)
-```
-
-This makes it safe to add to CI and easy to validate new sitemap shapes before
-pointing the crawler at a live site.
+- **Network-safe:** sitemap fetch failures, page fetch failures, PDF download
+  failures, and render failures are all logged and skipped — never fatal.
+- **Optional dependencies degrade:** no BeautifulSoup → regex extraction (no
+  tables); no Playwright → static-only fetch.
+- **Deterministic & testable:** every network primitive (`fetch`, `download`,
+  `sleep`) is injectable, so the crawler runs fully offline in unit tests.
 
 ---
-📖 [Docs Home](Home.md) · [User Manual](../USER_MANUAL.md) · [Architecture](Architecture.md)
+
+📖 [Docs Home](Home.md) · [Ingestion & Parsing](Ingestion-and-Parsing.md) · [Tables & SQL](Tables-and-SQL.md) · [User Manual](../USER_MANUAL.md)

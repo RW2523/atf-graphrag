@@ -59,7 +59,7 @@ class OpenRouterVision(VisionProvider):
             ],
         }]
         headers = {"Authorization": f"Bearer {self.api_key}",
-                   "X-Title": "ATF GraphRAG Platform"}
+                   "X-Title": "IntelliGraphRAG Platform"}
         try:
             data = post_json(f"{self.base_url}/chat/completions", headers,
                              {"model": self.model, "messages": messages,

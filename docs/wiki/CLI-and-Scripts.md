@@ -144,28 +144,53 @@ summaries → save the `new` seed.
 ### `crawl_site.py` — web crawl
 
 ```bash
-python scripts/crawl_site.py https://www.example.gov/sitemap.xml --corpus web --max-pages 50
+python scripts/crawl_site.py <url-or-sitemap> [--max N] [--render auto|always|never] [--delay S] [--no-robots] [--corpus C] [--save]
 ```
 
-Crawls a website into a corpus via its `sitemap.xml`. It never random-scrapes:
-pages are discovered from the sitemap (with `sitemapindex` recursion), filtered
-through `robots.txt`, and rate-limited (honoring robots `crawl-delay`). Each page
-is extracted with BeautifulSoup (HTML `<table>` → markdown), and linked PDFs are
-queued into the PDF pipeline. JS / bot-protected pages fall back to a Playwright
-headless render. The crawl engine lives in `atf_graphrag/ingestion/crawler.py`
-(`ingest_sitemap` / `crawl_sitemap`).
+Crawls a website (or a `sitemap.xml`) into a corpus. It never random-scrapes:
+the positional argument can be a site root or a sitemap URL, and pages are
+discovered via sitemaps — `find_sitemaps()` checks an explicit `.xml`, the
+`Sitemap:` directives in `robots.txt`, and `/sitemap.xml`, and
+`discover_sitemap()` recurses `<sitemapindex>` entries. Discovered pages are
+filtered through `robots.txt` and rate-limited (honoring robots `crawl-delay`).
+Each page is extracted with BeautifulSoup (HTML `<table>` → an `[EXTRACTED
+TABLE]` markdown block, so crawled tables flow through the same structured table
+pipeline as PDFs and become cell-queryable), and linked PDFs are queued into the
+PDF pipeline. JS / bot-protected pages fall back to a Playwright headless render
+(`render=auto|always|never`). The config-driven entrypoint is
+`crawl_and_ingest()` in `atf_graphrag/ingestion/crawler.py`.
 
-| Flag / config | Meaning |
+```bash
+# crawl a site root (sitemap auto-discovered), cap at 200 pages
+python scripts/crawl_site.py https://www.atf.gov/ --max 200
+
+# crawl an explicit sitemap, force JS rendering, commit + save the seed
+python scripts/crawl_site.py https://www.atf.gov/sitemap.xml --render always --save
+```
+
+| Flag | Meaning |
 | --- | --- |
-| `--corpus <name>` | Target corpus for crawled pages (default `web`). |
-| `--max-pages <n>` | Page cap (config default `web.max_pages` = 50). |
-| `web.crawl_delay` | Per-request delay in seconds (default 1.0). |
-| `web.respect_robots` | Honor `robots.txt` (default on). |
-| `web.render` | Headless render policy: `auto` \| `always` \| `never`. |
-| `web.ingest_linked_pdfs`, `web.pdf_corpus` | Queue linked PDFs into the PDF pipeline / which corpus. |
+| `--max <N>` | Max pages to crawl (default: config `web.max_pages`). |
+| `--render <auto\|always\|never>` | Headless-browser rendering mode (default: config `web.render`). |
+| `--delay <S>` | Polite delay between requests, in seconds (default: config `web.crawl_delay`). |
+| `--no-robots` | Ignore `robots.txt` (default: respect it). |
+| `--corpus <C>` | Target corpus for crawled pages (default `web`). |
+| `--save` | Commit, rebuild the table store, and save the updated `new` seed after the crawl. |
 
-All web behavior is governed by the `web{…}` config section (sitemaps, user
-agent, render timeouts, `min_static_words`, etc.).
+**Playwright (optional)** — required only for `--render auto`/`always` to
+actually render JS / bot-protected pages. Install with:
+
+```bash
+pip install playwright && playwright install chromium
+```
+
+When Playwright is absent the crawler prints a note and degrades gracefully to
+static fetch.
+
+All other web behavior is governed by the `web{…}` config section: `sitemaps`,
+`max_pages`, `crawl_delay`, `respect_robots`, `ingest_linked_pdfs`, `pdf_corpus`,
+`corpus`, `render`, `render_wait_ms`, `render_timeout_ms`, `min_static_words`,
+and `user_agent`.
 
 ### Portable corpus — `export_corpus.py` / `import_corpus.py` / `reload_corpus.py`
 
@@ -268,7 +293,7 @@ pipeline work end-to-end with no external corpus.
 | Ask one question from the shell | `python -m atf_graphrag query "…" --trace` |
 | Clean rebuild from scratch | `scripts/build_kb.py` |
 | Resume after a failed LLM stage | `scripts/finish_kb.py` |
-| Crawl a website | `scripts/crawl_site.py <sitemap.xml> --corpus web` |
+| Crawl a website | `scripts/crawl_site.py <url-or-sitemap> --corpus web` |
 | Parse once, serve elsewhere | `export_corpus.py` → `import_corpus.py` |
 | Fast local re-ingest from source | `scripts/reload_corpus.py` |
 | Upgrade old chunks without re-ingest | `scripts/backfill_tables.py` |

@@ -69,7 +69,7 @@ correctness/completeness/faithfulness/context-relevance, results on S3.
 
 ## The powerful platform you can build (vision)
 
-Composing all of the above gives a fully managed, serverless ATF GraphRAG:
+Composing all of the above gives a fully managed, serverless IntelliGraphRAG:
 
 ```
  S3 (raw) ─► EventBridge ─► Step Functions ─► Bedrock DATA AUTOMATION

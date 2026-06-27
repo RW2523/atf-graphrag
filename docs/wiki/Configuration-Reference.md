@@ -229,20 +229,26 @@ The factory `make_guardrail` picks `BedrockGuardrail`, `LocalGuardrail`, or a no
 
 ---
 
-### `web` — sitemap crawling
+### `web` — web crawling
 
-Configuration for the sitemap-driven web crawler (`atf_graphrag/ingestion/crawler.py`).
+Configuration for the web crawler (`atf_graphrag/ingestion/crawler.py`). The crawler discovers sitemaps (explicit `.xml`, `robots.txt` `Sitemap:` entries, or `/sitemap.xml`), recurses `<sitemapindex>` documents, fetches pages static-first with an optional headless-Chromium (Playwright) fallback, extracts main content and HTML tables (`atf_graphrag/ingestion/web_extract.py`), respects `robots.txt`, rate-limits, and queues linked PDFs into the PDF pipeline.
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `sitemaps` | string[] | `[]` | `sitemap.xml` URLs to crawl. |
+| `sitemaps` | string[] | `[]` | Sitemap / page URLs to crawl. Each is resolved to one or more `sitemap.xml` documents (explicit `.xml`, `robots.txt` `Sitemap:` lines, or `/sitemap.xml`); `<sitemapindex>` entries are followed recursively. |
 | `max_pages` | int | `50` | Cap on pages crawled per sitemap. |
-| `crawl_delay` | float | `1.0` | Polite delay (seconds) between requests. |
-| `respect_robots` | bool | `true` | Honour `robots.txt`. |
-| `ingest_linked_pdfs` | bool | `true` | Queue linked PDFs into the PDF pipeline. |
+| `crawl_delay` | float | `1.0` | Polite delay (seconds) between requests (rate limiting). |
+| `respect_robots` | bool | `true` | Honour `robots.txt` (fetch rules and disallow paths). |
+| `ingest_linked_pdfs` | bool | `true` | Queue PDFs linked from crawled pages into the PDF ingestion pipeline. |
 | `pdf_corpus` | string | `"pdf"` | Corpus that linked PDFs are routed to. |
+| `corpus` | string | `"web"` | Corpus that crawled pages land in. |
+| `render` | string | `"auto"` | Headless-browser rendering mode: `auto` (static fetch, render only when a page looks JS-shelled/bot-challenged/thin) \| `always` (always render; for fully client-rendered sites) \| `never` (static fetch only). |
+| `render_wait_ms` | int | `0` | Extra settle time (ms) after `networkidle` before reading rendered HTML. |
+| `render_timeout_ms` | int | `30000` | Render timeout (ms) for the headless page load. |
+| `min_static_words` | int | `80` | In `auto` mode, render when the static fetch yields fewer than this many visible words. |
+| `user_agent` | string | `"ATF-GraphRAG-Crawler/1.0"` | User-Agent sent with crawl requests. |
 
-> The crawler also supports a `corpus`, headless `render` (`auto` \| `always` \| `never`) with `render_wait_ms` / `render_timeout_ms` / `min_static_words` thresholds, and a custom `user_agent`. These are honoured when present in your web config overlay; the keys above are the ones seeded in `DEFAULTS`.
+> Headless rendering uses Playwright (lazy, headless Chromium). It is optional — install with `pip install playwright && playwright install chromium`; when absent, the crawler degrades to static fetch regardless of `render`. The CLI `scripts/crawl_site.py` mirrors these keys: `python scripts/crawl_site.py <url-or-sitemap> [--max N] [--render auto|always|never] [--delay S] [--no-robots] [--corpus C] [--save]`.
 
 ---
 
