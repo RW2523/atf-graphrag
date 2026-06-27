@@ -38,10 +38,21 @@ _QUOTED = re.compile(r"[\"']([^\"']{3,60})[\"']")
 _LICENSEISH = re.compile(r"\b\d{6,}\b")          # license #s / long ids
 _YEAR = re.compile(r"\b(19|20)\d{2}\b")
 _TOKEN = re.compile(r"[A-Z0-9]{2,}")
+# A run of name-words for the FULL proper-noun phrase, unlike _PROPER_RUN this
+# admits single-letter tokens ("R", "U", "S") and bare ampersands so a name like
+# "R & R SPORTING ARMS" survives intact instead of collapsing to [SPORTING,ARMS].
+_NAME_RUN = re.compile(r"(?:&|[A-Z][A-Za-z&'\.\-]*)(?:\s+(?:&|[A-Z][A-Za-z&'\.\-]*))*")
 
 
 def _tokens(text: str) -> List[str]:
     return _TOKEN.findall((text or "").upper())
+
+
+def _norm(text: str) -> str:
+    """Lower-case and collapse every run of non-alphanumerics to one space, so
+    'R & R SPORTING ARMS INC' and 'r&r  sporting-arms inc' both become
+    'r r sporting arms inc' for substring comparison."""
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
 
 
 def extract_row_keys(question: str) -> List[List[str]]:
@@ -69,6 +80,57 @@ def extract_row_keys(question: str) -> List[List[str]]:
     # most tokens first = most specific = checked first
     keys.sort(key=lambda k: -len(k))
     return keys[:6]
+
+
+def extract_name_phrases(question: str) -> List[str]:
+    """Normalized full-name phrases for locality re-ranking.
+
+    The token-AND key path (extract_row_keys) deliberately drops single-letter
+    and ampersand tokens, so "R & R SPORTING ARMS INC" reduces to the key
+    [SPORTING, ARMS] and matches every unrelated SPORTING ARMS company. To break
+    that tie we also pull the *whole* proper-noun run between filler words —
+    keeping the '&' and single-letter tokens this time — and use it as a
+    high-precision substring signal.
+
+    Only phrases whose distinctive part is actually dropped by tokenization
+    (i.e. they contain a bare '&' or a single-letter token) are returned: for an
+    ordinary name like "EMCO" the key already captures everything, so adding a
+    phrase signal would only perturb scores with no precision gain. Generic —
+    no company is hardcoded. Returns _norm()'d phrases, most-specific first."""
+    phrases: List[str] = []
+    seen: Set[str] = set()
+    for m in _NAME_RUN.finditer(question):
+        words = m.group(0).split()
+        # trim filler (question words, corporate suffixes) and dangling '&' off
+        # both ends; interior single-letter / '&' tokens are the distinctive
+        # part and must stay.
+        while words and (words[0].upper() in _STOP or words[0] == "&"):
+            words.pop(0)
+        while words and (words[-1].upper() in _STOP or words[-1] == "&"):
+            words.pop()
+        if not words:
+            continue
+        # need a real name token (so a stray capitalized "Where"/"List" is out)
+        if not any(len(w) >= 2 and w.isalpha() and w.upper() not in _STOP
+                   for w in words):
+            continue
+        # need a token tokenization would drop, else the key already covers it
+        if not any(w == "&" or "&" in w or len(w) == 1 for w in words):
+            continue
+        norm = _norm(" ".join(words))
+        if len(norm) >= 3 and norm not in seen:
+            seen.add(norm)
+            phrases.append(norm)
+    phrases.sort(key=lambda p: -len(p))
+    return phrases[:4]
+
+
+def _phrase_in_cell(cell: str, phrases: List[str]) -> bool:
+    """True if any name phrase is a whole-token substring of this ONE cell.
+    Padding with spaces enforces token boundaries so 'phoenix arms' does not
+    match inside 'phoenix armstrong'."""
+    padded = " " + _norm(cell) + " "
+    return any(p and (" " + p + " ") in padded for p in phrases)
 
 
 class RowIndex:
@@ -154,6 +216,9 @@ def find_rows(question: str, engine, corpora: List[str],
     keys = extract_row_keys(question)
     if not keys:
         return []
+    # Full-name phrases (with their '&'/single-letter parts) used to rerank
+    # toward the exact-name row; never narrows candidate generation.
+    name_phrases = extract_name_phrases(question)
     qyear = None
     ym = _YEAR.search(question)
     if ym:
@@ -178,8 +243,18 @@ def find_rows(question: str, engine, corpora: List[str],
                 best: Optional[Tuple[str, float]] = None
                 for row in (td.get("rows") or []):
                     q = _row_match_quality(row, key)
-                    if q is not None and (best is None or q[1] > best[1]):
-                        best = q
+                    if q is None:
+                        continue
+                    # Strong locality bonus when the question's full name phrase
+                    # sits intact in a single cell — this is the exact-name row,
+                    # not just another company sharing the suffix tokens.
+                    bonus = 0.0
+                    if name_phrases and any(
+                            _phrase_in_cell(str(c), name_phrases) for c in row):
+                        bonus = 0.10
+                    cand = (q[0], q[1] + bonus)
+                    if best is None or cand[1] > best[1]:
+                        best = cand
                 if best is None:
                     continue
                 matched, locality = best
