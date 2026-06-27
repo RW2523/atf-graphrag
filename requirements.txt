@@ -21,6 +21,16 @@ networkx>=3.0
 # Faster HTTP (optional; stdlib urllib is used if absent)
 requests>=2.31
 
+# Web crawling: robust HTML + table extraction (ingestion/web_extract.py).
+# Falls back to a stdlib regex extractor if absent.
+beautifulsoup4>=4.12
+lxml>=5.0
+
+# Headless-browser rendering for JS/bot-protected sites (ingestion/browser.py).
+# OPTIONAL: render="auto"/"always" falls back to static fetch if not installed.
+# Enable with:  pip install playwright && playwright install chromium
+# playwright>=1.44
+
 # --- Optional production API server (instead of the bundled stdlib server) ---
 # fastapi>=0.110
 # uvicorn>=0.29
