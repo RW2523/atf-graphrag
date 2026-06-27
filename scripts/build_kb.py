@@ -16,14 +16,26 @@ def log(m):
     print(f"[build_kb] {m}", flush=True)
 
 
+def _make_engine():
+    """Engine with the parser chosen by ATF_PARSER (default config; we use
+    'advanced' for the full rebuild — Docling-on-CPU is too slow at corpus scale,
+    while the advanced PyMuPDF+pdfplumber+VLM path does tables + charts in ~hrs)."""
+    from atf_graphrag.config import Settings
+    from atf_graphrag.engine import Engine
+    s = Settings()
+    parser = os.environ.get("ATF_PARSER", "")
+    if parser:
+        s._cfg.setdefault("ingestion", {})["parser"] = {"provider": parser}
+    return Engine(s)
+
+
 def main():
     os.environ.setdefault("ATF_PROFILE", "local")
-    from atf_graphrag.engine import Engine
     from atf_graphrag.indexing.indexer import Indexer
     from atf_graphrag.storage_lock import acquire_storage_lock, release_storage_lock
     from atf_graphrag.storage_epoch import bump_epoch
 
-    eng = Engine()
+    eng = _make_engine()
     root = os.path.dirname(eng.settings["vector_store"]["path"])
     try:
         acquire_storage_lock(root)
@@ -49,10 +61,10 @@ def main():
     bump_epoch(eng.settings["graph_store"]["path"])
     log("cleared vectors/graph/blobs (vlm_cache preserved)")
 
-    # ── 2. ingest (fresh engine on empty stores) — Docling default, VLM on,
-    #       context-prepend embedding, per-chunk LLM extraction OFF (we enrich
-    #       the graph in parallel afterward — far faster than per-chunk inline).
-    eng = Engine()
+    # ── 2. ingest (fresh engine on empty stores) — parser per ATF_PARSER, VLM
+    #       on, context-prepend embedding, per-chunk LLM extraction OFF (we
+    #       enrich the graph in parallel afterward — far faster than inline).
+    eng = _make_engine()
     idx = Indexer(eng, use_llm_extraction=False)
     log(f"parser={ (eng.settings['ingestion'].get('parser') or {}).get('provider','?') } "
         f"vision={getattr(eng.vision,'name','?')}  — ingesting {DATASET}")
