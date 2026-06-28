@@ -2,10 +2,10 @@
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing.indexer import Indexer
-from atf_graphrag.stores.graph_store import LocalGraphStore
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.indexing.indexer import Indexer
+from intelligraphrag.stores.graph_store import LocalGraphStore
 
 
 def _graph_tmp():
@@ -27,9 +27,9 @@ def test_typed_relation_upgrades_co_occurs():
 
 def test_weight_accumulates_on_recurrence():
     g = _graph_tmp()
-    g.add_relation("a", "b", "SOLD_BY", weight=2)
-    g.add_relation("a", "b", "SOLD_BY", weight=2)
-    assert g.edges[(g._norm("a"), g._norm("b"))]["weight"] == 4
+    g.add_relation("acme guns", "smith wesson", "SOLD_BY", weight=2)
+    g.add_relation("acme guns", "smith wesson", "SOLD_BY", weight=2)
+    assert g.edges[(g._norm("acme guns"), g._norm("smith wesson"))]["weight"] == 4
 
 
 def test_typed_adjacency_excludes_co_occurs():

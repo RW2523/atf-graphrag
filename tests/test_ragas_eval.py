@@ -2,9 +2,9 @@
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing.indexer import Indexer
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.indexing.indexer import Indexer
 from eval.ragas_metrics import (
     context_precision, context_recall, context_recall_from_points, _claims)
 from eval.synth import generate_synthetic, write_jsonl

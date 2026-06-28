@@ -3,9 +3,9 @@ import tempfile
 
 import pytest
 
-from atf_graphrag.stores.graph_store import LocalGraphStore
-from atf_graphrag.graph.pruning import kept_edges, build_nx, default_cfg
-from atf_graphrag.graph.communities import CommunityBuilder, community_stats
+from intelligraphrag.stores.graph_store import LocalGraphStore
+from intelligraphrag.graph.pruning import kept_edges, build_nx, default_cfg
+from intelligraphrag.graph.communities import CommunityBuilder, community_stats
 
 pytest.importorskip("networkx")
 
@@ -93,7 +93,7 @@ def test_community_stats_shape():
 
 
 def test_hub_removal_identifies_supernode():
-    from atf_graphrag.graph.pruning import hub_nodes
+    from intelligraphrag.graph.pruning import hub_nodes
     g = LocalGraphStore(tempfile.mkdtemp())
     # 'firearm' is a stopword hub connected to many; leaves have low degree.
     for i in range(20):
@@ -110,5 +110,5 @@ def test_hub_removal_identifies_supernode():
 
 def test_hub_removal_off_by_default():
     g = _graph_with_noise()
-    from atf_graphrag.graph.pruning import hub_nodes
+    from intelligraphrag.graph.pruning import hub_nodes
     assert hub_nodes(g, 0) == set()           # disabled -> no hubs dropped

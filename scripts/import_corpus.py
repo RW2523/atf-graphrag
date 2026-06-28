@@ -15,15 +15,15 @@ import sys
 
 
 def main():
-    os.environ.setdefault("ATF_PROFILE", "local")
+    os.environ.setdefault("IGR_PROFILE", "local")
     path = sys.argv[1] if len(sys.argv) > 1 else "corpus_export.jsonl"
     if not os.path.isfile(path):
         print(f"[import] file not found: {path}")
         return 1
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.indexing.indexer import Indexer
-    from atf_graphrag.models import ChunkRecord
-    from atf_graphrag.storage_lock import acquire_storage_lock, release_storage_lock
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.indexing.indexer import Indexer
+    from intelligraphrag.models import ChunkRecord
+    from intelligraphrag.storage_lock import acquire_storage_lock, release_storage_lock
 
     e = Engine()
     root = os.path.dirname(e.settings["vector_store"]["path"])

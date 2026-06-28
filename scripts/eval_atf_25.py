@@ -202,17 +202,17 @@ QUESTIONS_EXTRA = [
 
 
 def main():
-    os.environ.setdefault("ATF_PROFILE", "local")
-    from atf_graphrag.config import Settings
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.retrieval.pipeline import Retriever
+    os.environ.setdefault("IGR_PROFILE", "local")
+    from intelligraphrag.config import Settings
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.retrieval.pipeline import Retriever
     from eval.faithfulness import judge_faithfulness
 
-    # A/B toggles (env): ATF_EVAL_PPR=1 -> graph_retriever=ppr,
-    #                    ATF_EVAL_BGE=1 -> reranker=bge.
-    use_ppr = os.environ.get("ATF_EVAL_PPR") == "1"
-    use_bge = os.environ.get("ATF_EVAL_BGE") == "1"
-    label = os.environ.get("ATF_EVAL_LABEL", "enhanced" if (use_ppr or use_bge) else "baseline")
+    # A/B toggles (env): IGR_EVAL_PPR=1 -> graph_retriever=ppr,
+    #                    IGR_EVAL_BGE=1 -> reranker=bge.
+    use_ppr = os.environ.get("IGR_EVAL_PPR") == "1"
+    use_bge = os.environ.get("IGR_EVAL_BGE") == "1"
+    label = os.environ.get("IGR_EVAL_LABEL", "enhanced" if (use_ppr or use_bge) else "baseline")
     s = Settings()
     s._cfg["retrieval"]["graph_retriever"] = "ppr" if use_ppr else "bfs"
     s._cfg["reranker"] = {"provider": "bge"} if use_bge else {"provider": "local"}
@@ -224,7 +224,7 @@ def main():
     r = Retriever(eng)
 
     questions = QUESTIONS + (QUESTIONS_EXTRA
-                             if os.environ.get("ATF_EVAL_50") == "1" else [])
+                             if os.environ.get("IGR_EVAL_50") == "1" else [])
     print(f"[eval] questions={len(questions)}", flush=True)
 
     rows = []

@@ -1,8 +1,8 @@
 """Stage-1 table layer: SQLite store + SQL lane (fake LLM, no network)."""
 import json
 
-from atf_graphrag.config import Settings
-from atf_graphrag.indexing.table_store import TableStore, get_store
+from intelligraphrag.config import Settings
+from intelligraphrag.indexing.table_store import TableStore, get_store
 
 
 def _engine(tmp_path):
@@ -12,13 +12,13 @@ def _engine(tmp_path):
     s._cfg["blob_store"]["path"] = str(tmp_path / "b")
     s._cfg["retrieval"]["llm_refine"] = False
     s._cfg["retrieval"]["multi_hop"] = False
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     return Engine(s)
 
 
 def _seed_tables(e):
     """Two same-category tables from different years (the client's case)."""
-    from atf_graphrag.models import ChunkRecord
+    from intelligraphrag.models import ChunkRecord
     vs = e.vstore("pdf")
     data = [("trace_2025.pdf", "2025", [["California", "4500"], ["Texas", "3900"],
                                         ["TOTAL", "8400"]]),
@@ -95,7 +95,7 @@ def test_get_store_lazy_build_and_refresh(tmp_path):
     st = get_store(e)
     assert st.count() == 2                             # built lazily
     # adding another table triggers rebuild on next access
-    from atf_graphrag.models import ChunkRecord
+    from intelligraphrag.models import ChunkRecord
     rec = ChunkRecord(text="| a | 1 |", corpus="pdf", chunk_id="tb9",
                       content_type="table", source_name="x.pdf", document_id="d9")
     rec.table_data = {"columns": ["a", "n"], "rows": [["a", "1"]]}
@@ -107,7 +107,7 @@ def test_pipeline_sql_lane_injects_result(tmp_path):
     e = _engine(tmp_path)
     _seed_tables(e)
     e.llm = _SqlLLM()
-    from atf_graphrag.retrieval.pipeline import Retriever
+    from intelligraphrag.retrieval.pipeline import Retriever
     res = Retriever(e).answer("Which state had the most firearm traces in 2026?",
                               trace=True)
     assert "3d_sql" in res["trace"], "SQL lane should have fired"

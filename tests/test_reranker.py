@@ -4,11 +4,11 @@ import types
 
 import pytest
 
-from atf_graphrag.config import Settings
-from atf_graphrag.providers import make_reranker
-from atf_graphrag.providers.reranker import (
+from intelligraphrag.config import Settings
+from intelligraphrag.providers import make_reranker
+from intelligraphrag.providers.reranker import (
     LocalReranker, LLMReranker, BGEReranker)
-from atf_graphrag.models import ChunkRecord, RetrievalHit
+from intelligraphrag.models import ChunkRecord, RetrievalHit
 
 
 def _hit(text, cid, eval_score=0.5):
@@ -83,8 +83,8 @@ def test_bge_reorders_with_mocked_cross_encoder(monkeypatch):
 
 
 def test_reranking_agent_uses_provider_when_present(monkeypatch):
-    from atf_graphrag.retrieval.agents import RerankingAgent
-    from atf_graphrag.models import QueryPlan
+    from intelligraphrag.retrieval.agents import RerankingAgent
+    from intelligraphrag.models import QueryPlan
 
     class _Engine:
         settings = {"reranker": {"provider": "bge"}}
@@ -106,8 +106,8 @@ def test_reranking_agent_uses_provider_when_present(monkeypatch):
 
 
 def test_reranking_agent_keeps_linear_when_provider_returns_none():
-    from atf_graphrag.retrieval.agents import RerankingAgent
-    from atf_graphrag.models import QueryPlan
+    from intelligraphrag.retrieval.agents import RerankingAgent
+    from intelligraphrag.models import QueryPlan
 
     class _Engine:
         settings = {"reranker": {"provider": "local"}}

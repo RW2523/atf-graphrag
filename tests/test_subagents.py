@@ -1,8 +1,8 @@
 """Layer-boundary subagents — quality gates between every pipeline stage."""
 import types
 
-from atf_graphrag.config import Settings
-from atf_graphrag.subagents import (ParseQualityAgent, ChunkGateAgent,
+from intelligraphrag.config import Settings
+from intelligraphrag.subagents import (ParseQualityAgent, ChunkGateAgent,
                                     MetadataAuditAgent, IndexAuditAgent,
                                     GraphQualityAgent, GroundingVerifierAgent,
                                     REPORTS)
@@ -14,7 +14,7 @@ def _engine(tmp_path):
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")
     s._cfg["blob_store"]["path"] = str(tmp_path / "b")
     s._cfg["retrieval"]["llm_refine"] = False
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     return Engine(s)
 
 
@@ -37,7 +37,7 @@ def test_parse_quality_ok_passthrough(tmp_path):
 
 # ── chunk → index ────────────────────────────────────────────────────────────
 def test_chunk_gate_blocks_junk_keeps_content():
-    from atf_graphrag.models import ChunkRecord
+    from intelligraphrag.models import ChunkRecord
     gate = ChunkGateAgent()
     junk = ChunkRecord(text="https://example.com/a https://example.com/b", chunk_id="j")
     prose = ChunkRecord(text="The Bureau traced 4,512 firearms recovered in "
@@ -54,7 +54,7 @@ def test_chunk_gate_blocks_junk_keeps_content():
 
 # ── enrich → index ───────────────────────────────────────────────────────────
 def test_metadata_audit_reports_gaps():
-    from atf_graphrag.models import ChunkRecord
+    from intelligraphrag.models import ChunkRecord
     full = ChunkRecord(text="x", chunk_id="1", source_name="a.pdf",
                        document_id="d", page_number=1, source_type="pdf")
     bare = ChunkRecord(text="x", chunk_id="2")
@@ -68,7 +68,7 @@ def test_metadata_audit_reports_gaps():
 # ── index → store ────────────────────────────────────────────────────────────
 def test_index_audit_round_trip(tmp_path):
     e = _engine(tmp_path)
-    from atf_graphrag.indexing.indexer import Indexer
+    from intelligraphrag.indexing.indexer import Indexer
     idx = Indexer(e, use_llm_extraction=False)
     n = idx.index_text("The National Tracing Center processes firearm trace "
                        "requests from law enforcement agencies nationwide. " * 6,
@@ -90,7 +90,7 @@ def test_graph_quality_counts(tmp_path):
 
 # ── generate → answer ────────────────────────────────────────────────────────
 def _hit(text):
-    from atf_graphrag.models import RetrievalHit, ChunkRecord
+    from intelligraphrag.models import RetrievalHit, ChunkRecord
     return RetrievalHit(chunk=ChunkRecord(text=text, chunk_id="h1"), score=0.9)
 
 
@@ -142,7 +142,7 @@ def test_grounding_ignores_citations_pages_years():
 # ── end-to-end: chunk gate active inside the indexer ─────────────────────────
 def test_indexer_applies_chunk_gate(tmp_path):
     e = _engine(tmp_path)
-    from atf_graphrag.indexing.indexer import Indexer
+    from intelligraphrag.indexing.indexer import Indexer
     idx = Indexer(e, use_llm_extraction=False)
     junk = ("https://a.example/x https://b.example/y https://c.example/z "
             "https://d.example/w https://e.example/v")

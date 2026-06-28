@@ -1,9 +1,9 @@
 # Recommended setup (evidence-based)
 
-This is the **proven-best configuration** for the ATF GraphRAG platform, chosen
+This is the **proven-best configuration** for the IntelliGraphRAG platform, chosen
 from a head-to-head evaluation (75 question-runs across a 25- and a 50-question
 set on the live 137-document / 29,549-chunk corpus). It is already the default
-in `atf_graphrag/config.py` — this document records *why*.
+in `intelligraphrag/config.py` — this document records *why*.
 
 ## The winning configuration
 
@@ -43,8 +43,8 @@ chunk that makes the grounded generator refuse. Reports:
   investigative workloads on a denser typed graph.
 - **Enable BGE** (`reranker.provider: "bge"`) only with a larger, noisier
   candidate pool where the right chunk is retrieved but ranked low.
-- Re-measure with `scripts/eval_atf_25.py` (`ATF_EVAL_50=1`, `ATF_EVAL_PPR=1`,
-  `ATF_EVAL_BGE=1`) before committing to either.
+- Re-measure with `scripts/eval_atf_25.py` (`IGR_EVAL_50=1`, `IGR_EVAL_PPR=1`,
+  `IGR_EVAL_BGE=1`) before committing to either.
 
 ## Frozen seed dataset (ingestion + indexing done; retrieval on demand)
 
@@ -65,8 +65,8 @@ everything retrieval needs. Ingestion/indexing stay frozen; only retrieval runs.
 
 ```bash
 export OPENROUTER_API_KEY=...          # generation + extraction (never committed)
-export ATF_PREVIEW_ROOTS=/path/to/Rag_Dataset   # enables KB PDF preview
-python -m atf_graphrag serve           # http://127.0.0.1:8077
+export IGR_PREVIEW_ROOTS=/path/to/Rag_Dataset   # enables KB PDF preview
+python -m intelligraphrag serve           # http://127.0.0.1:8077
 ```
 
 Profiles (config-only swap): `local` (default), `oss`, `hybrid`,

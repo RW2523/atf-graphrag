@@ -2,8 +2,8 @@
 whole-table reconstruction. No question/PDF-specific logic."""
 import tempfile
 
-from atf_graphrag.indexing.tables import parse_table, parse_columnar_table
-from atf_graphrag.retrieval.structured import (is_comparison, comparison_targets,
+from intelligraphrag.indexing.tables import parse_table, parse_columnar_table
+from intelligraphrag.retrieval.structured import (is_comparison, comparison_targets,
                                                expand_whole_tables)
 
 
@@ -43,9 +43,9 @@ def test_comparison_targets_states_and_years():
 # ── whole-table reconstruction ───────────────────────────────────────────────
 
 def test_expand_whole_tables_pulls_siblings(tmp_path):
-    from atf_graphrag.config import Settings
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.models import ChunkRecord, RetrievalHit
+    from intelligraphrag.config import Settings
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.models import ChunkRecord, RetrievalHit
     s = Settings(profile="local")
     s._cfg["vector_store"]["path"] = str(tmp_path / "v")
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")

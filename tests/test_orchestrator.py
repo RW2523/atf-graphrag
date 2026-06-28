@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.ingestion.orchestrator import (
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.ingestion.orchestrator import (
     classify, RouteDecision, IngestionOrchestrator)
 
 

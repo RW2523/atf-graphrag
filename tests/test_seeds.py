@@ -1,7 +1,7 @@
 """Named seed snapshots — save/list/naming (no engine needed)."""
 import os
 
-from atf_graphrag.api.seeds import (save_seed, list_seeds, write_meta,
+from intelligraphrag.api.seeds import (save_seed, list_seeds, write_meta,
                                     seed_zip_name)
 
 

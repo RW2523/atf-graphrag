@@ -10,9 +10,9 @@ import types
 
 import pytest
 
-from atf_graphrag.config import Settings
-from atf_graphrag import config as cfg_mod
-from atf_graphrag.engine import Engine
+from intelligraphrag.config import Settings
+from intelligraphrag import config as cfg_mod
+from intelligraphrag.engine import Engine
 
 
 @pytest.fixture(autouse=True)

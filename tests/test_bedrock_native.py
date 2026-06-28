@@ -43,7 +43,7 @@ def test_bda_parser_runs_async_and_returns_pages(monkeypatch, tmp_path):
             "# AFMER\n| Type | Count |\n|---|---|\n| Pistols | 217,691 |"}},
         {"page_index": 1, "representation": {"text": "Page two prose."}}]}}
     _bda_clients(monkeypatch, ["InProgress", "Success"], result)
-    from atf_graphrag.providers.bda import BedrockDataAutomationParser
+    from intelligraphrag.providers.bda import BedrockDataAutomationParser
     f = tmp_path / "afmer.pdf"
     f.write_bytes(b"%PDF-1.4 dummy")
     p = BedrockDataAutomationParser({"bucket": "b", "region": "us-east-1"})
@@ -55,7 +55,7 @@ def test_bda_parser_runs_async_and_returns_pages(monkeypatch, tmp_path):
 
 def test_bda_falls_back_without_bucket(monkeypatch, tmp_path):
     # no bucket -> must not call AWS; delegates to the fallback parser
-    from atf_graphrag.providers.bda import BedrockDataAutomationParser
+    from intelligraphrag.providers.bda import BedrockDataAutomationParser
     f = tmp_path / "x.txt"
     f.write_text("hello world this is a text file")
     p = BedrockDataAutomationParser({})    # no bucket
@@ -64,8 +64,8 @@ def test_bda_falls_back_without_bucket(monkeypatch, tmp_path):
 
 
 def test_make_parser_selects_bda():
-    from atf_graphrag.config import Settings
-    from atf_graphrag.providers import make_parser
+    from intelligraphrag.config import Settings
+    from intelligraphrag.providers import make_parser
     s = Settings(profile="aws")
     s._cfg["ingestion"]["parser"] = {"provider": "bda"}
     s._cfg["ingestion"]["bda"] = {"bucket": "mybucket", "region": "us-east-1"}
@@ -85,7 +85,7 @@ def test_guardrail_passes_automated_reasoning_policy(monkeypatch):
             captured.update(k)
             return {"action": "NONE", "outputs": [{"text": "ok"}]}
     monkeypatch.setattr(boto3, "client", lambda *a, **k: _RT())
-    from atf_graphrag.providers.bedrock import BedrockGuardrail
+    from intelligraphrag.providers.bedrock import BedrockGuardrail
     g = BedrockGuardrail({"enabled": True, "guardrail_id": "gid",
                           "guardrail_version": "1",
                           "automated_reasoning_policy": "arn:ar:policy:1"})

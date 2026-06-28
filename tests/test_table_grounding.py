@@ -4,9 +4,9 @@ import types
 
 import pytest
 
-from atf_graphrag.indexing.tables import (parse_markdown_table, table_to_text,
+from intelligraphrag.indexing.tables import (parse_markdown_table, table_to_text,
                                           table_title_from)
-from atf_graphrag.ingestion.metadata import detect_report_type, detect_us_state
+from intelligraphrag.ingestion.metadata import detect_report_type, detect_us_state
 
 
 # ── structured table parsing ─────────────────────────────────────────────────
@@ -53,9 +53,9 @@ def test_detect_us_state():
 # ── indexer populates structured table data ──────────────────────────────────
 
 def test_indexer_attaches_table_data(tmp_path):
-    from atf_graphrag.config import Settings
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.indexing.indexer import Indexer
+    from intelligraphrag.config import Settings
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.indexing.indexer import Indexer
     s = Settings(profile="local")
     s._cfg["vector_store"]["path"] = str(tmp_path / "v")
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")
@@ -94,7 +94,7 @@ def _engine_with_fake_llm(captured):
 
 
 def _hit(content_type="table", table_data=None, text="some text"):
-    from atf_graphrag.models import ChunkRecord, RetrievalHit
+    from intelligraphrag.models import ChunkRecord, RetrievalHit
     c = ChunkRecord(text=text, content_type=content_type, page_number=12,
                     source_name="afmer.pdf", table_data=table_data or {},
                     table_title="Exhibit 1", report_type="AFMER")
@@ -102,8 +102,8 @@ def _hit(content_type="table", table_data=None, text="some text"):
 
 
 def test_numeric_answer_forces_row_quoting():
-    from atf_graphrag.retrieval.agents import GenerationAgent
-    from atf_graphrag.models import QueryPlan
+    from intelligraphrag.retrieval.agents import GenerationAgent
+    from intelligraphrag.models import QueryPlan
     cap = {}
     eng = _engine_with_fake_llm(cap)
     plan = QueryPlan(question="How many pistols were manufactured in 2023?", intent="table")
@@ -117,8 +117,8 @@ def test_numeric_answer_forces_row_quoting():
 
 
 def test_numeric_answer_flags_incomplete_without_table():
-    from atf_graphrag.retrieval.agents import GenerationAgent
-    from atf_graphrag.models import QueryPlan
+    from intelligraphrag.retrieval.agents import GenerationAgent
+    from intelligraphrag.models import QueryPlan
     cap = {}
     eng = _engine_with_fake_llm(cap)
     plan = QueryPlan(question="How many firearms were manufactured in 2023?", intent="table")

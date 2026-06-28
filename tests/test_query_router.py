@@ -3,11 +3,11 @@ import json
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing.indexer import Indexer
-from atf_graphrag.retrieval.agents import QueryUnderstandingAgent
-from atf_graphrag.retrieval.pipeline import Retriever
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.indexing.indexer import Indexer
+from intelligraphrag.retrieval.agents import QueryUnderstandingAgent
+from intelligraphrag.retrieval.pipeline import Retriever
 
 
 def _engine(tmp):

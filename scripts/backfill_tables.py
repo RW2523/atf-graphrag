@@ -13,11 +13,11 @@ import sys
 
 
 def main():
-    os.environ.setdefault("ATF_PROFILE", "local")
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.indexing.tables import parse_table, table_title_from
-    from atf_graphrag.ingestion.metadata import detect_report_type, detect_us_state
-    from atf_graphrag.storage_lock import acquire_storage_lock, release_storage_lock
+    os.environ.setdefault("IGR_PROFILE", "local")
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.indexing.tables import parse_table, table_title_from
+    from intelligraphrag.ingestion.metadata import detect_report_type, detect_us_state
+    from intelligraphrag.storage_lock import acquire_storage_lock, release_storage_lock
 
     eng = Engine()
     root = os.path.dirname(eng.settings["vector_store"]["path"])

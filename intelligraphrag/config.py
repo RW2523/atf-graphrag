@@ -1,0 +1,322 @@
+"""Configuration system: defaults + optional JSON file + environment overrides.
+
+The whole point of the platform is that every component is swappable by config.
+Settings are layered (lowest to highest priority):
+  1. DEFAULTS (this file)
+  2. config/settings.json (optional)
+  3. config/settings.<profile>.json (optional, profile = local|hybrid|aws)
+  4. environment variables (IGR_* and the OPENROUTER_* / AWS_* keys)
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any, Dict
+
+ROOT = Path(__file__).resolve().parent.parent
+# Backward-compatible env aliases: IGR_* is canonical; legacy ATF_* still honored.
+for _k in [k for k in os.environ if k.startswith("ATF_")]:
+    os.environ.setdefault("IGR_" + _k[4:], os.environ[_k])
+
+
+DATA_DIR = Path(os.environ.get("IGR_DATA_DIR", ROOT / "storage"))
+
+# ---------------------------------------------------------------------------
+# Defaults — the "local / open-source" profile. Models go through OpenRouter.
+# ---------------------------------------------------------------------------
+DEFAULTS: Dict[str, Any] = {
+    "profile": "local",
+
+    # ---- LLM (all chat/generation requests) -------------------------------
+    "llm": {
+        "provider": "openrouter",           # openrouter | bedrock | offline
+        "model": "openai/gpt-4o-mini",      # any OpenRouter model id
+        "base_url": "https://openrouter.ai/api/v1",
+        "temperature": 0.1,
+        "max_tokens": 1024,
+        "offline_fallback": True,           # if no key/network, degrade gracefully
+        # Model tiering: cheap model for high-volume steps (per-chunk extraction,
+        # community summaries, map-reduce MAP); strong model for final synthesis.
+        # Both default to `model`, so behaviour is unchanged until configured.
+        "cheap_model": "",
+        "strong_model": "",
+    },
+
+    # ---- Vision / multimodal (images, charts, scanned pages) --------------
+    "vision": {
+        "provider": "openrouter",           # openrouter | bedrock | offline
+        "model": "openai/gpt-4o-mini",      # a multimodal-capable model id
+        "base_url": "https://openrouter.ai/api/v1",
+    },
+
+    # ---- Embeddings -------------------------------------------------------
+    # "sentence_transformer" = local neural embedder via sentence-transformers.
+    # "local" = dependency-free deterministic hashing (offline fallback).
+    # "openrouter" = OpenAI-compatible /embeddings endpoint on OpenRouter.
+    "embeddings": {
+        "provider": "sentence_transformer",  # sentence_transformer | local | openrouter | bedrock
+        "model": "all-MiniLM-L6-v2",         # 384-dim, fast, strong semantic quality
+        "base_url": "https://openrouter.ai/api/v1",
+        "dim": 384,
+        "batch_size": 64,
+    },
+
+    # ---- Reranker ---------------------------------------------------------
+    "reranker": {
+        "provider": "local",                # local (cross-feature) | llm | bedrock
+        "model": "openai/gpt-4o-mini",
+    },
+
+    # ---- Vector store -----------------------------------------------------
+    "vector_store": {
+        "provider": "local",                # local | qdrant | opensearch
+        "path": str(DATA_DIR / "vectors"),
+    },
+
+    # ---- Graph store ------------------------------------------------------
+    "graph_store": {
+        "provider": "local",                # local | neo4j | neptune
+        "path": str(DATA_DIR / "graph"),
+        # neo4j: uri/user/password read from env when provider == neo4j
+    },
+
+    # ---- Blob / metadata --------------------------------------------------
+    "blob_store": {"provider": "local", "path": str(DATA_DIR / "blobs")},
+
+    # ---- Ingestion --------------------------------------------------------
+    "ingestion": {
+        "chunk_size": 900,        # characters (approx tokens*4)
+        "chunk_overlap": 150,
+        "ocr": {"provider": "auto"},        # auto | tesseract | textract | off
+        "parser": {"provider": "docling"},  # docling | advanced | textract | bedrock | bda
+                                            #  docling  = DocLayNet+TableFormer
+                                            #             structured tables (default;
+                                            #             ~4.2s/page, falls back to
+                                            #             'advanced' if not installed)
+                                            #  advanced = fast PyMuPDF+pdfplumber
+                                            #  textract = AWS structured/OCR parsing
+                                            #  bedrock  = AWS foundation-model parsing
+                                            #  bda      = Amazon Bedrock Data Automation
+                                            #             (needs bda.bucket + project_arn)
+        # Bedrock Data Automation working config (used when parser.provider="bda").
+        "bda": {"region": "us-east-1", "bucket": "", "prefix": "bda/",
+                "project_arn": "", "profile_arn": ""},
+        "orchestrator": "sequential",       # sequential | langgraph
+        "llm_extraction": "auto",           # off | auto | on  (per-chunk LLM
+                                            # entity/relation extraction)
+        "llm_extraction_auto_max_pages": 40,  # 'auto' extracts docs up to this size
+        "auto_enrich": True,                # post-ingest typed-graph enrichment
+                                            # of NEW chunks (journaled, background)
+        "extraction": {"provider": "llm"},  # llm | comprehend (AWS-native NER+PII)
+    },
+
+    # ---- Layer-boundary subagents (quality gates between stages) ----------
+    "subagents": {
+        "parse_quality": True,     # parse→chunk: re-parse w/ fallback when bad
+        "chunk_gate": True,        # chunk→index: junk never enters the index
+        "metadata_audit": True,    # enrich→index: per-doc coverage report
+        "index_audit": True,       # index→store: round-trip retrieval probe
+        "graph_quality": True,     # graph→community: junk-rate + typed stats
+        "grounding_verify": True,  # generate→answer: numbers must match sources
+    },
+
+    # ---- Guardrails (content safety over LLM I/O) -------------------------
+    "guardrails": {
+        "provider": "none",        # none | local | bedrock
+        "enabled": False,          # master switch
+        "guardrail_id": "",        # Bedrock guardrail identifier
+        "guardrail_version": "DRAFT",
+        "redact_pii": True,        # local provider: regex PII redaction
+        "denied_terms": [],        # local provider: blocklist
+        "trace": False,            # bedrock: return policy assessments
+    },
+
+    # ---- Web crawling (sitemap.xml ingestion) -----------------------------
+    "web": {
+        "sitemaps": [],            # sitemap.xml URLs to crawl
+        "max_pages": 50,           # cap pages per sitemap
+        "crawl_delay": 1.0,        # polite delay (s) between requests
+        "respect_robots": True,    # honour robots.txt
+        "ingest_linked_pdfs": True,  # queue linked PDFs into the pdf corpus
+        "pdf_corpus": "pdf",
+        "corpus": "web",           # corpus that crawled pages land in
+        # Headless-browser rendering (Playwright) for JS/bot-protected sites:
+        #   auto   -> static fetch, render only when the page looks JS-shelled
+        #   always -> always render (slow; fully client-rendered sites)
+        #   never  -> static fetch only
+        "render": "auto",
+        "render_wait_ms": 0,       # extra settle time after networkidle
+        "render_timeout_ms": 30000,
+        "min_static_words": 80,    # below this visible-word count -> render
+        "user_agent": "IntelliGraphRAG-Crawler/1.0",
+    },
+
+    # ---- Retrieval --------------------------------------------------------
+    "retrieval": {
+        "default_top_k": 15,               # raised from 10: diverse 30+ doc corpora need wider net
+        "graph_hops": 2,
+        "hybrid": True,                    # vector + BM25 fusion
+        "evaluate": True,
+        "rerank": True,
+        "llm_refine": True,                # LLM query-plan refinement (eval pins off for determinism)
+        "graph_retriever": "bfs",          # bfs | ppr (personalized PageRank for relationship/pattern)
+        "sql_lane": True,                  # tabular questions -> SQL over the table store
+        "numeric_lane": True,              # rescue headline totals buried in number-dense text
+        "corrective": True,                # weak/insufficient evidence -> reformulate + retry
+        "corrective_max_retries": 1,
+        "weak_top": 0.45,                  # evidence considered weak below this top score
+        "multi_hop": True,                 # LLM decomposition for bridge/comparison questions
+        "multi_hop_min_words": 10,         # only decompose long/complex questions
+        "visual_boost": 1.05,              # score boost for table/chart/figure on table/visual intent
+        "min_confidence": 0.10,            # lowered to let more evidence reach LLM
+    },
+
+    # ---- Graph exploration (community detection + summaries) --------------
+    "graph": {
+        "communities": {
+            "enabled": False,          # gate the expensive build (LLM per cluster)
+            "max_cluster_size": 10,
+            "min_community_size": 3,
+        },
+        # Noise pruning (Phase A): drop weak, untyped edges between obscure nodes
+        # before clustering/traversal so communities tighten and context stays clean.
+        "prune": {
+            "enabled": False,
+            "min_edge_weight": 2,      # weight < this is "weak"
+            "min_degree": 2,           # both endpoints below this are "obscure"
+            "keep_typed": True,        # never prune evidence-backed typed edges
+            "drop_hub_percentile": 0,  # >0 drops top-X% highest-degree super-nodes
+                                       # before clustering (splits co-occ hairball)
+        },
+    },
+
+    # ---- Corpuses ---------------------------------------------------------
+    "corpora": ["pdf", "web", "connected", "visual", "news"],
+
+    # ---- On-demand web research (Tavily) ---------------------------------
+    # Agentic augmentation: when a question is about current events/cases that
+    # may live in news/articles/blogs/releases AND the local corpus is thin, the
+    # web-research agent searches, judges each result for relevance + novelty +
+    # worth, and ingests only worthy content into the 'news' corpus. Off by
+    # default (needs TAVILY_API_KEY); never fires unless enabled + needed.
+    "web_search": {
+        "provider": "offline",       # offline | tavily
+        "enabled": False,            # master switch
+        "auto": True,                # only augment when needed (not every query)
+        "corpus": "news",
+        "max_results": 5,
+        "min_relevance": 0.30,       # keyword/score floor to consider a result
+        "novelty_threshold": 0.88,   # skip if too similar to existing corpus
+        "min_content_chars": 200,    # ignore thin snippets
+        "max_ingest_per_query": 3,   # cap worthy docs added per question
+        "judge_with_llm": True,      # LLM worthiness judge when a key is set
+        "insufficient_conf": 0.45,   # local 'thin evidence' threshold
+    },
+
+    # ---- API server -------------------------------------------------------
+    # auth_token: empty = open (local dev). Set it (or env IGR_API_TOKEN) to
+    # require "Authorization: Bearer <token>" on POST endpoints before deploy.
+    # preview_roots: extra directories to resolve original source files for the
+    # KB document preview (also honours env IGR_PREVIEW_ROOTS). Uploads dir is
+    # always searched. Files are read locally and never copied off-machine.
+    "server": {"host": "127.0.0.1", "port": 8077, "auth_token": "",
+               "preview_roots": []},
+}
+
+
+def _deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _load_json(path: Path) -> Dict[str, Any]:
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except Exception as e:  # noqa: BLE001
+            print(f"[config] warning: could not parse {path}: {e}")
+    return {}
+
+
+def _apply_env(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Selected env overrides. Secrets are read at provider call-time."""
+    if os.environ.get("IGR_PROFILE"):
+        cfg["profile"] = os.environ["IGR_PROFILE"]
+    if os.environ.get("IGR_LLM_MODEL"):
+        cfg["llm"]["model"] = os.environ["IGR_LLM_MODEL"]
+    if os.environ.get("IGR_VISION_MODEL"):
+        cfg["vision"]["model"] = os.environ["IGR_VISION_MODEL"]
+    if os.environ.get("IGR_EMBED_PROVIDER"):
+        cfg["embeddings"]["provider"] = os.environ["IGR_EMBED_PROVIDER"]
+    if os.environ.get("IGR_PORT"):
+        cfg["server"]["port"] = int(os.environ["IGR_PORT"])
+    if os.environ.get("IGR_PARSER"):          # advanced | docling | textract | bedrock
+        cfg.setdefault("ingestion", {}).setdefault("parser", {})
+        cfg["ingestion"]["parser"] = {"provider": os.environ["IGR_PARSER"]}
+    # Setting TAVILY_API_KEY is enough to turn web research on (auto-enable).
+    # IGR_WEB_SEARCH=0 force-disables even when a key is present.
+    if os.environ.get("TAVILY_API_KEY") and os.environ.get("IGR_WEB_SEARCH") != "0":
+        cfg.setdefault("web_search", {})
+        cfg["web_search"]["provider"] = "tavily"
+        cfg["web_search"]["enabled"] = True
+    return cfg
+
+
+class Settings:
+    def __init__(self, profile: str | None = None):
+        import copy
+        # Deep copy so per-instance edits to nested config (e.g. ingestion.parser)
+        # never leak back into the module-global DEFAULTS.
+        cfg = copy.deepcopy(DEFAULTS)
+        cfg = _deep_merge(cfg, _load_json(ROOT / "config" / "settings.json"))
+        prof = profile or os.environ.get("IGR_PROFILE") or cfg.get("profile", "local")
+        cfg["profile"] = prof
+        cfg = _deep_merge(cfg, _load_json(ROOT / "config" / f"settings.{prof}.json"))
+        cfg = _apply_env(cfg)
+        self._cfg = cfg
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._cfg[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._cfg.get(key, default)
+
+    @property
+    def raw(self) -> Dict[str, Any]:
+        return self._cfg
+
+    @staticmethod
+    def openrouter_key() -> str:
+        # Runtime key (set from the browser UI) takes priority over env.
+        return _RUNTIME_KEY or os.environ.get("OPENROUTER_API_KEY", "")
+
+
+# Key set at runtime via the web UI (POST /api/key). In-memory only by default.
+_RUNTIME_KEY: str = ""
+
+
+def set_runtime_key(key: str) -> None:
+    """Set the OpenRouter API key at runtime (from the browser)."""
+    global _RUNTIME_KEY
+    _RUNTIME_KEY = (key or "").strip()
+
+
+def get_runtime_key() -> str:
+    return _RUNTIME_KEY
+
+
+_settings: Settings | None = None
+
+
+def get_settings(force_reload: bool = False) -> Settings:
+    global _settings
+    if _settings is None or force_reload:
+        _settings = Settings()
+    return _settings

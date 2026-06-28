@@ -41,7 +41,7 @@ def _fake_clients(monkeypatch, calls):
 
 def test_plan_is_offline_and_orders_correctly():
     # plan() does not need boto3 to work for the step list
-    from atf_graphrag.aws.provision import ControlPlane
+    from intelligraphrag.aws.provision import ControlPlane
     cp = ControlPlane(region="us-east-1", project="atf-test")
     prov = cp.plan("provision")
     tear = cp.plan("teardown")
@@ -55,7 +55,7 @@ def test_plan_is_offline_and_orders_correctly():
 def test_provision_creates_every_component(monkeypatch):
     calls = []
     _fake_clients(monkeypatch, calls)
-    from atf_graphrag.aws.provision import ControlPlane
+    from intelligraphrag.aws.provision import ControlPlane
     cp = ControlPlane(project="atf-test")
     out = cp.provision()
     assert out["ok"] is True
@@ -70,7 +70,7 @@ def test_provision_creates_every_component(monkeypatch):
 def test_teardown_deletes_in_reverse(monkeypatch):
     calls = []
     _fake_clients(monkeypatch, calls)
-    from atf_graphrag.aws.provision import ControlPlane
+    from intelligraphrag.aws.provision import ControlPlane
     cp = ControlPlane(project="atf-test")
     out = cp.teardown()
     assert out["ok"] is True
@@ -81,7 +81,7 @@ def test_teardown_deletes_in_reverse(monkeypatch):
 def test_inventory_reports_costs(monkeypatch):
     calls = []
     _fake_clients(monkeypatch, calls)
-    from atf_graphrag.aws.provision import ControlPlane
+    from intelligraphrag.aws.provision import ControlPlane
     inv = ControlPlane(project="atf-test").inventory()
     assert "components" in inv and inv["account_id"] == "111122223333"
     # the fakes make head_bucket/describe_table succeed (s3 + dynamodb exist),
@@ -94,14 +94,14 @@ def test_inventory_reports_costs(monkeypatch):
 def test_teardown_only_subset(monkeypatch):
     calls = []
     _fake_clients(monkeypatch, calls)
-    from atf_graphrag.aws.provision import ControlPlane
+    from intelligraphrag.aws.provision import ControlPlane
     out = ControlPlane(project="atf-test").teardown(only=["neptune_analytics"])
     assert [r["component"] for r in out["results"]] == ["neptune_analytics"]
 
 
 def test_graceful_without_boto3(monkeypatch):
     # simulate boto3 absent: _account_id + status degrade, no crash
-    import atf_graphrag.aws.provision as P
+    import intelligraphrag.aws.provision as P
     monkeypatch.setattr(P, "_client", lambda *a, **k: (_ for _ in ()).throw(
         ImportError("no boto3")))
     cp = P.ControlPlane(project="atf-test")

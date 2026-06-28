@@ -1,115 +1,188 @@
-# ATF Configurable GraphRAG Platform
+# IntelliGraphRAG
 
-A configurable GraphRAG platform for ATF-related data. It ingests PDFs/files,
-visual content (images/charts/tables), websites (via `sitemap.xml`), and
-connected document collections; builds metadata-rich vector indexes plus a
-knowledge graph across multiple corpuses; and answers questions through an
-agentic retrieval flow (query understanding → corpus selection → retrieval →
-evaluation → reranking → generation) with source citations.
+> An intelligent, configurable GraphRAG platform — graph-grounded retrieval with cell-level precision over documents, tables, and the web.
 
-**Every model request goes through OpenRouter** in the local/hybrid profiles, and
-**every component is swappable by config** so the same code runs locally
-(open-source) or on AWS (Bedrock + managed stores).
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-315%20passing-brightgreen)](https://github.com/RW2523/intelligraphrag)
+[![License](https://img.shields.io/badge/license-Proprietary-blue)](https://github.com/RW2523/intelligraphrag/blob/main/LICENSE)
+[![Version](https://img.shields.io/badge/version-1.0.0-informational)](https://github.com/RW2523/intelligraphrag)
 
-## Why it runs anywhere
-The core has **no hard dependencies** — it uses the Python standard library
-(`http.server` for the API, `urllib` for HTTP). `numpy`, `pypdf` and `requests`
-are used automatically if installed but are not required. So you can start it
-with nothing but Python 3.9+.
+**IntelliGraphRAG** (short: *IntelliGraph*) is a config-driven GraphRAG platform that fuses a knowledge graph, hybrid vector + BM25 search, deterministic table/cell lookup, and live web research into a single agentic retrieval pipeline. Its core is **stdlib-only** — it runs on nothing but Python — yet every component is swappable by configuration, so the same code runs locally on open-source providers or AWS-native on Bedrock and managed stores. Every answer ships with citations and passes through grounding and guardrail checks.
 
-## Quick start — set the API key in the browser (no file editing)
+It is domain-agnostic. It was built and validated end-to-end on a large example U.S. government firearms & explosives regulatory dataset — referenced below only as the sample government corpus.
+
+---
+
+## Why IntelliGraphRAG
+
+- **Graph-grounded with cell-level precision** — relationship reasoning over a typed knowledge graph *and* deterministic lookup of the exact table cell a number lives in.
+- **Multi-lane retrieval** — vector + BM25 hybrid, graph (BFS / personalized PageRank), table-row, text-to-SQL over tables, numeric rescue, community summaries, corrective retry, and multi-hop decomposition — the right lane fires for each question.
+- **Stdlib-core runs anywhere** — the API is `http.server`, HTTP is `urllib`; `numpy`, `pypdf`, `requests`, and `bs4` are optional accelerators, never requirements. Start with just Python 3.9+.
+- **Every component swappable by config** — LLM, embeddings, vision, reranker, vector store, graph store, blob store, and parser are all chosen via providers + profiles. No code changes to switch.
+- **Local OR AWS-native** — run open-source on your laptop, or flip to Bedrock + Qdrant/OpenSearch + Neptune/Neo4j + S3 with a one-click AWS control plane in the UI.
+- **Web + PDF + table + chart ingestion** — sitemap crawling with headless render fallback, layout-aware PDF parsing, row-atomic table extraction, and VLM chart understanding.
+- **Citations + guardrails** — sources on every answer, grounding verification that numbers match evidence, PII redaction, denied-term filtering, and Bearer auth off-local.
+
+---
+
+## Architecture at a glance
+
+```text
+                 ┌──────────────────────────────────────────────────────┐
+   Web UI  ─────▶│  HTTP API (stdlib http.server)  ·  :8077             │
+   curl / SDK ──▶│  POST /query · /ingest · /api/*  ·  Bearer off-local │
+                 └───────────────────────┬──────────────────────────────┘
+                                          │
+        ┌─────────────────────────────────┴──────────────────────────────┐
+        │                       RETRIEVAL PIPELINE                         │
+        │  understand → select corpus → multi-lane → eval → rerank → gen   │
+        │                                                                  │
+        │   vector+BM25 · graph(bfs/ppr) · table_row · sql · numeric ·     │
+        │   community · corrective · multi-hop · web research (Tavily)     │
+        └─────────────────────────────────┬──────────────────────────────┘
+                                          │
+        ┌─────────────────────────────────┴──────────────────────────────┐
+        │                          INGESTION                               │
+        │  parse (docling / advanced+VLM) → chunk → index → graph enrich   │
+        └─────────────────────────────────┬──────────────────────────────┘
+                                          │
+   ┌──────────────┬───────────────┬───────┴───────┬──────────────┬─────────────┐
+   │ vector store │  graph store  │  table store  │  blob store  │  providers  │
+   │ local/qdrant │ local/neo4j/  │   (SQLite)    │  local / S3  │ llm·vision· │
+   │ /opensearch  │   neptune     │ rows + cells  │              │ embed·rerank│
+   └──────────────┴───────────────┴───────────────┴──────────────┴─────────────┘
+```
+
+See [Architecture](docs/wiki/Architecture.md) for the full design.
+
+---
+
+## Quick start
+
 ```bash
-cd atf-graphrag
-# optional but recommended: pip install -r requirements.txt
-python3 -m atf_graphrag serve         # starts the app + web UI on http://localhost:8077
+git clone https://github.com/RW2523/intelligraphrag.git
+cd intelligraphrag
+
+pip install -r requirements.txt          # optional accelerators; core runs on stdlib alone
+python -m intelligraphrag serve             # HTTP API + web UI on http://localhost:8077
 ```
-Then open **http://localhost:8077** in your browser and:
-1. **Paste your OpenRouter API key** in *Connection* and click **Save key** (get one
-   at https://openrouter.ai/keys). The key is stored in your browser and sent only
-   to your local app; it switches generation from offline to OpenRouter instantly
-   (no restart). All LLM/vision requests then go through OpenRouter.
-2. Click **Load bundled ATF sample** (or paste your own text) to ingest.
-3. Ask questions and see the answer, citations, relationship paths, and the full
-   6-step pipeline trace.
 
-Without a key the app still runs end-to-end in **offline mode** (real retrieval,
-graph, eval, rerank; generation returns an extractive answer from the retrieved
-context).
+Then open **http://localhost:8077** and:
 
-### Alternative: key via environment / CLI
+1. Paste your **OpenRouter API key** in the *Connection* panel and click **Save key** (get one at <https://openrouter.ai/keys>). It is stored in your browser, sent only to your local app, and switches generation from offline to OpenRouter instantly — no restart.
+2. Load the bundled sample (or your own data) to ingest.
+3. Ask a question and inspect the answer, citations, relationship paths, and the full pipeline trace.
+
+> Without a key the app still runs end-to-end in **offline mode** — real retrieval, graph, eval, and rerank; generation returns an extractive answer from the retrieved context.
+
+Prefer a one-liner that loads `.env` first (copy `.env.example` to `.env` and fill it in):
+
 ```bash
-cp .env.example .env       # set OPENROUTER_API_KEY=sk-or-...
-python3 -m atf_graphrag demo          # ingest sample ATF data + run sample queries
-python3 -m atf_graphrag query "How is Marcus Webb connected to Eagle Point Firearms?"
+./run.sh                                 # honors IGR_PROFILE (local | hybrid | aws)
 ```
 
-### Key-related endpoints
+---
+
+## Ingest your data
+
 ```bash
-curl -X POST localhost:8077/api/key -d '{"key":"sk-or-...","model":"openai/gpt-4o-mini"}'
-curl localhost:8077/api/status        # {"key_set":true,"llm":"openrouter:...",...}
+# index a single file or a whole directory into a corpus
+python -m intelligraphrag ingest report.pdf pdf
+python -m intelligraphrag ingest data/sample pdf
+
+# vision (VLM) ingestion of a chart/table image
+python -m intelligraphrag visual chart.png visual
 ```
 
-## CLI
+Crawl a website via `sitemap.xml` (robots-aware, rate-limited, with headless-render fallback for JS/bot-protected pages and linked-PDF queueing):
+
 ```bash
-python3 -m atf_graphrag ingest data/sample pdf      # index a dir into the pdf corpus
-python3 -m atf_graphrag ingest report.pdf pdf       # index one file
-python3 -m atf_graphrag visual chart.png visual     # advanced (vision) ingestion
-python3 -m atf_graphrag query "How is Marcus Webb connected to Eagle Point Firearms?" --trace
-python3 -m atf_graphrag stats
-python3 -m atf_graphrag serve
+python scripts/crawl_site.py https://www.example.gov/sitemap.xml --render auto --corpus web --max 50
 ```
 
-## HTTP API
+> HTML tables discovered while crawling flow into the same structured table pipeline as PDFs, so crawled tables are cell-queryable. Linked PDFs are queued into the PDF pipeline. Pass `--save` to commit and persist a seed after the crawl.
+
+---
+
+## Ask a question
+
+**From the UI** — type your question and read the answer with citations, graph paths, and the step-by-step trace.
+
+**From the HTTP API:**
+
 ```bash
-curl localhost:8077/health
-curl localhost:8077/stats
-curl -X POST localhost:8077/ingest  -d '{"dir":"data/sample","corpus":"pdf"}'
-curl -X POST localhost:8077/ingest  -d '{"text":"...", "corpus":"web"}'
-curl -X POST localhost:8077/query   -d '{"question":"What patterns connect the trafficking incidents?","trace":true}'
-curl localhost:8077/graph/top
+curl -X POST localhost:8077/query \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What patterns connect the trafficking incidents?","trace":true}'
+# -> {"answer": "...", "citations": [...], "mode": "...", "trace": {...}}
 ```
 
-## Web ingestion (sitemap.xml)
-```python
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing import Indexer
-from atf_graphrag.ingestion.crawler import ingest_sitemap
-idx = Indexer(Engine())
-ingest_sitemap(idx, "https://www.atf.gov/sitemap.xml", corpus="web", limit=50)
+> In non-local profiles (`hybrid` / `aws`) the API requires a Bearer token —
+> add `-H "Authorization: Bearer $IGR_API_TOKEN"` to each request.
+
+**From the CLI:**
+
+```bash
+python -m intelligraphrag query "How is Marcus Webb connected to Eagle Point Firearms?" --trace
+python -m intelligraphrag stats        # engine statistics
+python -m intelligraphrag demo         # ingest the bundled sample and run sample queries
 ```
 
-## Profiles (config-only environment switching)
-Select with `ATF_PROFILE` (or `config/settings.json`). See `config/settings.*.json`.
+---
 
-| Component | local | hybrid | aws |
-|---|---|---|---|
-| LLM | OpenRouter | OpenRouter (Claude) | Bedrock |
-| Embeddings | local hashing | OpenRouter | Bedrock Titan |
-| Vector store | local | local | OpenSearch |
-| Graph store | local | Neo4j | Neptune |
-| OCR | tesseract/off | tesseract | Textract |
-| Reranker | local | LLM | Bedrock |
+## Features at a glance
 
-Switching profiles changes only what `Engine` constructs — no application code
-changes. AWS providers (`boto3`) and Neo4j are imported lazily, so the local
-profile never needs them.
+| Capability | What it does |
+|---|---|
+| **Multi-lane retrieval** | Vector+BM25, graph (BFS/PPR), table-row, text-to-SQL, numeric, community, corrective, multi-hop |
+| **Cell-level tables** | Row-atomic extraction, locality-scored cell lookup, whole-table expansion, exact-cell EVIDENCE quoting |
+| **Knowledge graph** | Typed entity/relation extraction, entity resolution, Leiden communities + summaries, rule+LLM pruning |
+| **Ingestion** | Docling or PyMuPDF+pdfplumber+VLM parsing; structure-aware chunking; tables/charts/figures typed |
+| **Web research** | Sitemap crawl + robots + rate limit, Playwright render fallback, Tavily augmentation into a `news` corpus |
+| **Swappable providers** | LLM, vision, embeddings, reranker, vector/graph/blob stores, parser — all by config + profiles |
+| **Deployment** | `local`, `hybrid`, `aws` profiles; one-click AWS control plane (Plan → Provision → Smoke → Teardown); Docker |
+| **Governance** | Citations everywhere, grounding verification, PII redaction, denied terms, Bedrock Guardrails, Bearer auth |
+| **Durability** | Storage epochs, PID locks, atomic commits, portable seed save/restore, corpus export/import |
 
-## Layout
-```
-atf_graphrag/
-  config.py            layered config + profiles
-  engine.py            wires providers + stores from config
-  models.py            ChunkRecord (full metadata set), QueryPlan, Answer
-  providers/           llm, embeddings, vision, ocr, bedrock, neo4j, http
-  stores/              vector_store (local), graph_store (local)
-  ingestion/           loaders, chunker, metadata, crawler (sitemap)
-  indexing/            indexer (chunk→embed→vector+graph), extract (LLM)
-  retrieval/           agents (6 subagents), bm25, pipeline (orchestrator)
-  api/server.py        stdlib HTTP API
-config/                settings.local|hybrid|aws.json
-data/sample/           sample ATF documents
-scripts/demo.py        end-to-end demo
-```
+---
 
-See `PHASES.md` for the three-phase build and `ATF_GraphRAG_Platform_Architecture.md`
-for the full architecture.
+## Project status
+
+- **315 automated tests** passing (`pytest`).
+- **0.90 overall** on a 50-question end-to-end evaluation harness (`scripts/eval_50.py`) spanning cell, aggregate, cross-year, comparison, fact, relationship, pattern, timeline, multi-doc, visual, and refusal questions — every lane fires; refusals 100%.
+- Validated end-to-end on a large example U.S. government firearms & explosives regulatory dataset, used purely as the sample/validation corpus.
+
+---
+
+## Documentation
+
+- [User Manual](docs/USER_MANUAL.md) — install, run, ingest, query, and operate the platform.
+
+**Wiki ([Docs Home](docs/wiki/Home.md)):**
+
+| Page | Topic |
+|---|---|
+| [Home](docs/wiki/Home.md) | Wiki landing page and navigation |
+| [Architecture](docs/wiki/Architecture.md) | End-to-end system design and data flow |
+| [Installation & Quickstart](docs/wiki/Installation-and-Quickstart.md) | Install, optional dependencies, Docker, first run |
+| [Configuration Reference](docs/wiki/Configuration-Reference.md) | Layered config, profiles, every setting and env var |
+| [Ingestion & Parsing](docs/wiki/Ingestion-and-Parsing.md) | Parsing, chunking, indexing, and table/chart extraction |
+| [Retrieval Lanes](docs/wiki/Retrieval-Lanes.md) | The multi-lane agentic retrieval pipeline |
+| [Knowledge Graph](docs/wiki/Knowledge-Graph.md) | Entity/relation extraction, resolution, and communities |
+| [Tables & SQL](docs/wiki/Tables-and-SQL.md) | Table store, cell-level lookup, and text-to-SQL |
+| [Web Crawling](docs/wiki/Web-Crawling.md) | Sitemap crawling, BeautifulSoup + Playwright, render fallback |
+| [API Reference](docs/wiki/API-Reference.md) | Every HTTP endpoint |
+| [CLI & Scripts](docs/wiki/CLI-and-Scripts.md) | Module CLI and the `scripts/` toolbox |
+| [Deployment & AWS](docs/wiki/Deployment-and-AWS.md) | Local, hybrid, and AWS-native (Bedrock) deployment |
+| [Evaluation](docs/wiki/Evaluation.md) | The 50-question evaluation harness and results |
+| [Troubleshooting & FAQ](docs/wiki/Troubleshooting-and-FAQ.md) | Common issues, fixes, and frequently asked questions |
+| [Glossary](docs/wiki/Glossary.md) | Definitions of every key term |
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).
+
+---
+📖 [Docs Home](docs/wiki/Home.md) · [User Manual](docs/USER_MANUAL.md) · [Repository](https://github.com/RW2523/intelligraphrag)

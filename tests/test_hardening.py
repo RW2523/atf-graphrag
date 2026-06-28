@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from atf_graphrag.providers import http as http_mod
-from atf_graphrag.providers.http import post_json, HTTPError
-from atf_graphrag.api import server as srv
+from intelligraphrag.providers import http as http_mod
+from intelligraphrag.providers.http import post_json, HTTPError
+from intelligraphrag.api import server as srv
 
 
 # ---- retry / backoff ------------------------------------------------------
@@ -75,16 +75,16 @@ def test_token_ok_requires_match_when_enabled():
 
 
 def test_expected_token_reads_env(monkeypatch):
-    monkeypatch.setenv("ATF_API_TOKEN", "envtok")
+    monkeypatch.setenv("IGR_API_TOKEN", "envtok")
     assert srv.expected_token() == "envtok"
 
 
 # ---- trace timings --------------------------------------------------------
 def test_trace_includes_per_stage_timings():
-    from atf_graphrag.config import Settings
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.indexing.indexer import Indexer
-    from atf_graphrag.retrieval.pipeline import Retriever
+    from intelligraphrag.config import Settings
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.indexing.indexer import Indexer
+    from intelligraphrag.retrieval.pipeline import Retriever
 
     tmp = Path(tempfile.mkdtemp())
     s = Settings(profile="oss")

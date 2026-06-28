@@ -2,10 +2,10 @@
 import tempfile
 from pathlib import Path
 
-from atf_graphrag.config import Settings
-from atf_graphrag.providers import make_parser
-from atf_graphrag.providers.parser import AdvancedParser
-from atf_graphrag.providers.docling_parser import (
+from intelligraphrag.config import Settings
+from intelligraphrag.providers import make_parser
+from intelligraphrag.providers.parser import AdvancedParser
+from intelligraphrag.providers.docling_parser import (
     DoclingParser, _table_to_markdown)
 
 
@@ -63,8 +63,8 @@ def test_table_to_markdown_helper_handles_missing_api():
 
 def test_indexer_routes_through_configured_parser(tmp_path, monkeypatch):
     # The indexer must parse via engine.parser (so docling/advanced is honoured).
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.indexing.indexer import Indexer
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.indexing.indexer import Indexer
     s = Settings(profile="oss")
     s._cfg["vector_store"]["path"] = str(tmp_path / "v")
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")

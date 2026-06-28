@@ -52,7 +52,7 @@ def _chart_pdf(path):
 
 
 def test_has_chart_drawings_detects_vector_chart():
-    from atf_graphrag.ingestion.advanced_loader import AdvancedPDFLoader
+    from intelligraphrag.ingestion.advanced_loader import AdvancedPDFLoader
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
         p = tf.name
     try:
@@ -65,7 +65,7 @@ def test_has_chart_drawings_detects_vector_chart():
 
 
 def test_vector_chart_page_gets_vlm_description():
-    from atf_graphrag.ingestion.advanced_loader import AdvancedPDFLoader
+    from intelligraphrag.ingestion.advanced_loader import AdvancedPDFLoader
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
         p = tf.name
     cache = tempfile.mkdtemp()
@@ -85,7 +85,7 @@ def test_vector_chart_page_gets_vlm_description():
 
 def test_no_chart_signal_no_page_vlm():
     """A plain prose page (no figure reference) must NOT trigger a page render."""
-    from atf_graphrag.ingestion.advanced_loader import AdvancedPDFLoader
+    from intelligraphrag.ingestion.advanced_loader import AdvancedPDFLoader
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
         p = tf.name
     cache = tempfile.mkdtemp()
@@ -104,9 +104,9 @@ def test_no_chart_signal_no_page_vlm():
 
 def test_indexer_tags_vlm_chunk_with_visual_metadata(tmp_path):
     """A [VLM CHART] block must index as a chart chunk carrying vision metadata."""
-    from atf_graphrag.config import Settings
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.indexing.indexer import Indexer
+    from intelligraphrag.config import Settings
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.indexing.indexer import Indexer
     s = Settings(profile="local")
     s._cfg["vector_store"]["path"] = str(tmp_path / "v")
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")
@@ -152,7 +152,7 @@ class _OfflineLikeVision:
 
 def test_offline_placeholder_never_indexed():
     """Offline placeholder text must be dropped, not stored as a description."""
-    from atf_graphrag.ingestion.advanced_loader import AdvancedPDFLoader, _is_vlm_refusal
+    from intelligraphrag.ingestion.advanced_loader import AdvancedPDFLoader, _is_vlm_refusal
     assert _is_vlm_refusal("[offline vision] visual asset 'x.png' registered; "
                            "set OPENROUTER_API_KEY to extract its content.")
     assert _is_vlm_refusal("[vision unavailable: timeout]")

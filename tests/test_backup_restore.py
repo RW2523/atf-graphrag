@@ -2,7 +2,7 @@
 import os
 import tempfile
 
-from atf_graphrag.api.backup import make_backup, list_backups, restore_backup
+from intelligraphrag.api.backup import make_backup, list_backups, restore_backup
 
 
 def _seed(root):

@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing.indexer import Indexer
-from atf_graphrag.retrieval.graph_retriever import GraphRetriever
-from atf_graphrag.stores.graph_store import LocalGraphStore
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.indexing.indexer import Indexer
+from intelligraphrag.retrieval.graph_retriever import GraphRetriever
+from intelligraphrag.stores.graph_store import LocalGraphStore
 
 nx = pytest.importorskip("networkx")
 
@@ -88,9 +88,9 @@ def test_relationship_query_uses_ppr_when_enabled(monkeypatch):
         relationships=[{"source": "Glock", "target": "Ruger", "relation": "COMPETES"}])
     e.commit()
 
-    from atf_graphrag.retrieval.agents import (
+    from intelligraphrag.retrieval.agents import (
         QueryUnderstandingAgent, CorpusSelectionAgent, RetrievalAgent)
-    from atf_graphrag.retrieval import graph_retriever as gr_mod
+    from intelligraphrag.retrieval import graph_retriever as gr_mod
 
     qu, cs, ra = QueryUnderstandingAgent(), CorpusSelectionAgent(), RetrievalAgent()
     plan = qu.plan("How is Acme connected to Ruger and Glock?", e)
@@ -120,9 +120,9 @@ def test_relationship_query_uses_bfs_by_default(monkeypatch):
         corpus="pdf", source_name="d1.pdf", document_id="d1",
         relationships=[{"source": "Acme", "target": "Glock", "relation": "SOLD_TO"}])
     e.commit()
-    from atf_graphrag.retrieval.agents import (
+    from intelligraphrag.retrieval.agents import (
         QueryUnderstandingAgent, CorpusSelectionAgent, RetrievalAgent)
-    from atf_graphrag.retrieval import graph_retriever as gr_mod
+    from intelligraphrag.retrieval import graph_retriever as gr_mod
     qu, cs, ra = QueryUnderstandingAgent(), CorpusSelectionAgent(), RetrievalAgent()
     plan = qu.plan("How is Acme connected to Glock?", e)
     called = {"ppr": False}

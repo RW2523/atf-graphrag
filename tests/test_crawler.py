@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from atf_graphrag.config import Settings
-from atf_graphrag.engine import Engine
-from atf_graphrag.indexing.indexer import Indexer
-from atf_graphrag.ingestion import crawler as C
+from intelligraphrag.config import Settings
+from intelligraphrag.engine import Engine
+from intelligraphrag.indexing.indexer import Indexer
+from intelligraphrag.ingestion import crawler as C
 
 
 SITEMAP = """<?xml version="1.0"?>

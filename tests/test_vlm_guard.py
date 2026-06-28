@@ -1,6 +1,6 @@
 """VLM description quality: refusal/empty responses must be dropped, real
 extractions kept and tagged."""
-from atf_graphrag.ingestion.advanced_loader import (
+from intelligraphrag.ingestion.advanced_loader import (
     AdvancedPDFLoader, _is_vlm_refusal)
 
 

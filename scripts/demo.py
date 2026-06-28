@@ -1,7 +1,7 @@
 """End-to-end demo: ingest bundled ATF sample data into multiple corpuses,
 then run representative queries (fact, relationship, pattern, timeline).
 
-Run:  python -m atf_graphrag demo
+Run:  python -m intelligraphrag demo
   or: python scripts/demo.py
 """
 from __future__ import annotations
@@ -12,9 +12,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from atf_graphrag.engine import Engine          # noqa: E402
-from atf_graphrag.indexing import Indexer       # noqa: E402
-from atf_graphrag.retrieval import Retriever    # noqa: E402
+from intelligraphrag.engine import Engine          # noqa: E402
+from intelligraphrag.indexing import Indexer       # noqa: E402
+from intelligraphrag.retrieval import Retriever    # noqa: E402
 
 SAMPLE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data", "sample")

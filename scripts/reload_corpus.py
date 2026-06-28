@@ -14,10 +14,10 @@ DATASET = "/Users/richardwatsonstephenamudha/Documents/flows/Rag_Dataset"
 
 
 def main():
-    os.environ.setdefault("ATF_PROFILE", "local")
-    from atf_graphrag.engine import Engine
-    from atf_graphrag.indexing.indexer import Indexer
-    from atf_graphrag.storage_lock import acquire_storage_lock, release_storage_lock
+    os.environ.setdefault("IGR_PROFILE", "local")
+    from intelligraphrag.engine import Engine
+    from intelligraphrag.indexing.indexer import Indexer
+    from intelligraphrag.storage_lock import acquire_storage_lock, release_storage_lock
 
     # Single-writer: refuse to run if a server (or another script) holds the
     # lock — prevents this heavy write pass from clobbering live data.
@@ -41,13 +41,13 @@ def main():
     print(f"[reload] cleared stores under {base}", flush=True)
 
     # fresh engine on the empty stores.
-    # Extraction mode is taken from ATF_EXTRACTION (off|auto|on); default off.
+    # Extraction mode is taken from IGR_EXTRACTION (off|auto|on); default off.
     # Per-chunk LLM extraction over the network is too slow for a 122-doc bulk
     # load in one session (one LLM call per chunk -> thousands of calls); we load
     # the full corpus fast with vectors + co-occurrence graph, then optionally
     # enrich with LLM entities in the background.
     eng = Engine()
-    mode = os.environ.get("ATF_EXTRACTION", "off")
+    mode = os.environ.get("IGR_EXTRACTION", "off")
     idx = Indexer(eng, use_llm_extraction=(True if mode == "on"
                                            else False if mode == "off" else None))
     print(f"[reload] extraction mode: {idx._extract_mode} (use_llm={idx.use_llm})",
@@ -73,7 +73,7 @@ def main():
             print(f"   - {k}", flush=True)
     # store-level doc count
     try:
-        from atf_graphrag.api import server as srv
+        from intelligraphrag.api import server as srv
         srv._engine = None
         srv._boot()
         print(f"[reload] store documents : "

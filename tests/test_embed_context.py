@@ -2,7 +2,7 @@
 inspired improvements, verified against our code)."""
 import types
 
-from atf_graphrag.config import Settings
+from intelligraphrag.config import Settings
 
 
 def _engine(tmp_path):
@@ -10,7 +10,7 @@ def _engine(tmp_path):
     s._cfg["vector_store"]["path"] = str(tmp_path / "v")
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")
     s._cfg["blob_store"]["path"] = str(tmp_path / "b")
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     return Engine(s)
 
 
@@ -23,7 +23,7 @@ def test_table_chunk_gets_context_prefixed_embed_text(tmp_path):
         captured["texts"] = list(texts)
         return real(texts)
     e.embedder.embed = spy
-    from atf_graphrag.indexing.indexer import Indexer
+    from intelligraphrag.indexing.indexer import Indexer
     # a table block — the chunker tags it content_type=table
     Indexer(e, use_llm_extraction=False).index_text(
         "[TABLE: Firearms Manufactured]\n| Pistols | 217,691 |\n| Rifles | 4,200,000 |",
@@ -42,7 +42,7 @@ def test_table_chunk_gets_context_prefixed_embed_text(tmp_path):
 def test_cross_year_rows_separate_in_vector_space(tmp_path):
     # identical row text from two years must NOT collapse to the same vector
     e = _engine(tmp_path)
-    from atf_graphrag.indexing.indexer import Indexer
+    from intelligraphrag.indexing.indexer import Indexer
     idx = Indexer(e, use_llm_extraction=False)
     # same row layout, different per-year values (the real cross-year case)
     for yr, pv in (("2024", "217,691"), ("2025", "231,004")):
@@ -59,7 +59,7 @@ def test_cross_year_rows_separate_in_vector_space(tmp_path):
 
 def test_plain_text_chunks_unaffected(tmp_path):
     e = _engine(tmp_path)
-    from atf_graphrag.indexing.indexer import Indexer
+    from intelligraphrag.indexing.indexer import Indexer
     Indexer(e, use_llm_extraction=False).index_text(
         "The National Tracing Center processes firearm trace requests from law "
         "enforcement agencies across the country every single working day.",
@@ -75,8 +75,8 @@ def _bbox(l, t, r, b):
 
 
 def test_picture_caption_receives_page_context(tmp_path, monkeypatch):
-    monkeypatch.setattr("atf_graphrag.config.DATA_DIR", tmp_path)
-    from atf_graphrag.providers.docling_parser import DoclingParser
+    monkeypatch.setattr("intelligraphrag.config.DATA_DIR", tmp_path)
+    from intelligraphrag.providers.docling_parser import DoclingParser
     p = DoclingParser({})
     seen = {}
     monkeypatch.setattr(p, "_describe_region",

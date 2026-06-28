@@ -2,11 +2,11 @@
 import json
 import types
 
-from atf_graphrag.config import Settings
-from atf_graphrag.retrieval.adaptive import (is_weak, reformulate,
+from intelligraphrag.config import Settings
+from intelligraphrag.retrieval.adaptive import (is_weak, reformulate,
                                              CorrectiveRetriever,
                                              MultiHopPlanner)
-from atf_graphrag.models import QueryPlan, RetrievalHit, ChunkRecord
+from intelligraphrag.models import QueryPlan, RetrievalHit, ChunkRecord
 
 
 def _engine(tmp_path):
@@ -15,7 +15,7 @@ def _engine(tmp_path):
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")
     s._cfg["blob_store"]["path"] = str(tmp_path / "b")
     s._cfg["retrieval"]["llm_refine"] = False
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     return Engine(s)
 
 
@@ -102,13 +102,13 @@ def test_multihop_runs_and_substitutes(tmp_path):
 def test_pipeline_trace_has_adaptive_steps(tmp_path):
     # offline end-to-end: corrective step present in trace; multihop skipped
     e = _engine(tmp_path)
-    from atf_graphrag.indexing.indexer import Indexer
+    from intelligraphrag.indexing.indexer import Indexer
     Indexer(e, use_llm_extraction=False).index_text(
         "The National Tracing Center processed about 640,000 trace requests "
         "in fiscal year 2023 for law enforcement agencies nationwide.",
         corpus="pdf", source_name="ntc.pdf", document_id="d1")
     e.commit()
-    from atf_graphrag.retrieval.pipeline import Retriever
+    from intelligraphrag.retrieval.pipeline import Retriever
     res = Retriever(e).answer("How many trace requests were processed?",
                               trace=True)
     assert "4b_corrective" in res["trace"]

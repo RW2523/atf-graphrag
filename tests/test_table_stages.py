@@ -1,8 +1,8 @@
 """Stage 2 (confidence-gated consolidation) + Stage 3 (catalog enrichment)."""
 import json
 
-from atf_graphrag.config import Settings
-from atf_graphrag.indexing.table_store import TableStore
+from intelligraphrag.config import Settings
+from intelligraphrag.indexing.table_store import TableStore
 
 
 def _engine(tmp_path):
@@ -11,12 +11,12 @@ def _engine(tmp_path):
     s._cfg["graph_store"]["path"] = str(tmp_path / "g")
     s._cfg["blob_store"]["path"] = str(tmp_path / "b")
     s._cfg["retrieval"]["llm_refine"] = False
-    from atf_graphrag.engine import Engine
+    from intelligraphrag.engine import Engine
     return Engine(s)
 
 
 def _add_table(e, cid, doc, year, title, columns, rows):
-    from atf_graphrag.models import ChunkRecord
+    from intelligraphrag.models import ChunkRecord
     rec = ChunkRecord(text="| " + " | ".join(columns) + " |", corpus="pdf",
                       chunk_id=cid, content_type="table", source_name=doc,
                       document_id=cid, page_number=2, document_date=year,
